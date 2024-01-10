@@ -1,0 +1,48 @@
+#include "color.effect"
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float multiplier;
+
+sampler_state def_sampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+float4 PSDrawForMacDrawPen(VertInOut vert_in) : TARGET
+{
+    float4 rgba = image.Sample(def_sampler, vert_in.uv);
+    
+    if (rgba.a < 1.0) {
+        rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+        rgba.rgb *= max(1. / rgba.a, 0.);
+        rgba.rgb = srgb_nonlinear_to_linear(rgba.rgb);
+    } else {
+        rgba.rgb = srgb_nonlinear_to_linear(rgba.rgb);
+        rgba.rgb *= multiplier;
+    }
+    return rgba;
+}
+
+technique DrawForMacDrawPen
+{
+    pass
+    {
+        vertex_shader = VSDefault(vert_in);
+        pixel_shader  = PSDrawForMacDrawPen(vert_in);
+    }
+}
