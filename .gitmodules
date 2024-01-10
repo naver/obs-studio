@@ -9,7 +9,7 @@
 	url = https://github.com/obsproject/obs-amd-encoder.git
 [submodule "plugins/obs-browser"]
 	path = plugins/obs-browser
-	url = https://oss.navercorp.com/cd-live-platform/obs-browser.git
+	url = https://github.com/naver/obs-browser.git
 [submodule "plugins/obs-outputs/ftl-sdk"]
 	path = plugins/obs-outputs/ftl-sdk
 	url = https://github.com/Mixer/ftl-sdk.git
