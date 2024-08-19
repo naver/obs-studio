@@ -43,12 +43,18 @@ enum obs_source_event_type {
 
 	//PRISM/LiuYing/20230224/#music loop state changed
 	OBS_SOURCE_MUSIC_LOOP_STATE_CHANGED,
-	// game capture failed
-	PLS_SOURCE_GAME_CAPTURE_FAILED,
+	//PRISM/LiuYing/20240326/#music mode state changed
+	OBS_SOURCE_MUSIC_MODE_STATE_CHANGED,
+	// game capture message
+	PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
 	//PRISM/Renjinbo/20230505/#timer button state changed
 	OBS_SOURCE_TIMER_BUTTON_STATE_CHANGED,
 	//PRISM/Chengbing/20230529/#/text template Source update param
-	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS
+	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS,
+	// game capture success msg
+	PLS_SOURCE_GAME_CAPTURE_SUCCESS_MSG,
+	//PRISM/Zengqin/20231229/#3744/notify ui to property param error status.
+	OBS_SOURCE_PROPERTY_ERROR_STATUS,
 };
 
 //PRISM/Zhangdewen/20230203/#/Chat Source Event
@@ -57,6 +63,7 @@ enum obs_chat_update_params_notify_sub_code {
 	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_EDIT_START,
 	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_LOADED,
 	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_CHECK_LIVE,
+	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_RESIZE_VIEW
 };
 //PRISM/Chengbing/20230529/#/text template Source Event
 enum obs_text_template_update_params_notify_sub_code {
@@ -72,7 +79,7 @@ enum obs_viewer_count_update_params_notify_sub_code {
 };
 
 enum obs_vst_verify_state {
-	VST_STATUS_AVAILABLE = 0,
+	VST_STATUS_AVAILABLE = 100,
 	VST_STATUS_INVALID_ARCH,
 	VST_STATUS_EFFECT_UNSUPPORT,
 	VST_STATUS_TIMEOUT,
@@ -81,11 +88,21 @@ enum obs_vst_verify_state {
 	VST_STATUS_CHANNEL_UNSUPPORT,
 	VST_STATUS_DLL_LOAD_FAIL,
 	VST_STATUS_UNKNOWN_ERROR,
+	VST_STATUS_EFFECT_NULLPTR,
 
 	//-----------------------------------------
 	VST_STATUS_SCAN_RESULT_END,
 	VST_STATUS_CHECKING,
 	VST_STATUS_PROCESS_DISAPPEAR,
+	VST_STATUS_PROCESS_READ_ERROR,
+	VST_STATUS_PROCESS_WRITE_ERROR,
+	VST_STATUS_PROCESS_FAILED_TO_START,
+	VST_STATUS_PROCESS_OPEN_DLL_ERROR,
+	VST_STATUS_PROCESS_GET_SCAN_FUNC_ERROR,
+	VST_STATUS_PROCESS_UNKNOWN_ERROR,
+
+	/* ON macos, exit code should between 0-255, values more than 255 will be moded by 256 */
+	VST_ENUM_MAX_VALUE = 256,
 };
 
 //Limit min resolution to 4
@@ -123,10 +140,9 @@ EXPORT void pls_load_all_modules2(struct obs_module_failure_info *mfi,
 				  pls_load_module_filter_t filter);
 
 //PRISM/Liuying/20230131/#/add load sources callback
-typedef bool (*obs_load_pld_cb)(void *private_data, obs_source_t *source,
-				size_t source_index, size_t source_count);
+typedef bool (*obs_load_pld_cb)(void *private_data, obs_source_t *source);
 EXPORT void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
-			     obs_load_pld_cb pldCb, void *private_data);
+			     obs_load_pld_cb pldCb, void *private_data, void *pld_private_data);
 
 //PRISM/Wangshaohui/20220422/#none/load plugin
 /*
@@ -164,13 +180,54 @@ EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode,
 EXPORT bool pls_is_dll_already_loaded(const char *dllName);
 EXPORT void pls_remember_dll_name(const char *dllName);
 
-//PRISM/Wangshaohui/20230912/#2541/separate stop and free
-EXPORT void stop_audio_thread(audio_t *audio);
+EXPORT bool pls_is_plugin_in_black_list(const char *dllName);
 
 //PRISM/Zhongling/20231027/#2902/exit crashed
 EXPORT void pls_set_obs_exiting(bool exiting);
 EXPORT bool pls_get_obs_exiting();
 
+//PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
+EXPORT void pls_set_obs_shutdowning(bool shutdowning);
+EXPORT bool pls_get_obs_shutdowning();
+
+//PRISM/Chengbing/20231108/#/prism version
+EXPORT void pls_update_prism_version(int major, int minor, int patch,
+				     int build);
+EXPORT int pls_prism_version_major();
+EXPORT int pls_prism_version_minor();
+EXPORT int pls_prism_version_patch();
+EXPORT int pls_prism_version_build();
+
+#if defined(_WIN32)
+EXPORT bool pls_get_enum_timeout_device(wchar_t *buffer, size_t size);
+EXPORT void pls_extract_file_name(const char *full_path, char *out_buf, int buf_len);
+// must be called after GDI+ startup
+EXPORT void pls_init_font_collection();
+// must be called before GDI+ shutdown
+EXPORT void pls_destory_font_collection();
+EXPORT void pls_enter_font_collection();
+EXPORT void pls_leave_font_collection();
+EXPORT void *pls_get_private_font_collection();
+EXPORT bool pls_add_font_to_private_collection(const char *font_path);
+#endif
+	
+EXPORT signal_handler_t* pls_freetype_get_signal();
+EXPORT void pls_freetype_add_font(const char *font_path);
+EXPORT const char *pls_freetype_pop_font_path();
+EXPORT bool pls_freetype_needs_reload();
+EXPORT void pls_freetype_set_needs_reload(bool reload);
+
+EXPORT void pls_set_all_mute(bool mute);
+EXPORT bool pls_get_all_mute();
+
+EXPORT size_t pls_get_active_output_count();
+//DON'T save result of this function
+EXPORT const char *pls_get_active_output_name(size_t);
+EXPORT void pls_set_design_mode(bool enable);
+EXPORT bool pls_design_mode();
+
+//PRISM/fanzirong/20240704/none/separate stop and free
+EXPORT void stop_audio_thread(audio_t *audio);
 #ifdef __cplusplus
 }
 #endif

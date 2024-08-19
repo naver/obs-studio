@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,11 @@
 #include <QApplication>
 #include <QTranslator>
 #include <QPointer>
+#ifndef _WIN32
+#include <QSocketNotifier>
+#else
+#include <QSessionManager>
+#endif
 #include <obs.hpp>
 #include <util/lexer.h>
 #include <util/profiler.h>
@@ -42,8 +47,9 @@ std::string GenerateSpecifiedFilename(const char *extension, bool noSpace,
 				      const char *format);
 std::string GetFormatString(const char *format, const char *prefix,
 			    const char *suffix);
-std::string GetOutputFilename(const char *path, const char *ext, bool noSpace,
-			      bool overwrite, const char *format);
+std::string GetFormatExt(const char *container);
+std::string GetOutputFilename(const char *path, const char *container,
+			      bool noSpace, bool overwrite, const char *format);
 QObject *CreateShortcutFilter();
 
 struct BaseLexer {
@@ -125,6 +131,14 @@ private:
 
 	bool notify(QObject *receiver, QEvent *e) override;
 
+#ifndef _WIN32
+	static int sigintFd[2];
+	QSocketNotifier *snInt = nullptr;
+#else
+private slots:
+	void commitData(QSessionManager &manager);
+#endif
+
 public:
 	OBSApp(int &argc, char **argv, profiler_name_store_t *store);
 	~OBSApp();
@@ -174,7 +188,7 @@ public:
 
 	const char *GetLastCrashLog() const;
 
-	std::string GetVersionString() const;
+	std::string GetVersionString(bool platform = true) const;
 	bool IsPortableMode();
 	bool IsUpdaterDisabled();
 	bool IsMissingFilesCheckDisabled();
@@ -208,9 +222,13 @@ public:
 	}
 
 	inline void PopUITranslation() { translatorHooks.pop_front(); }
+#ifndef _WIN32
+	static void SigIntSignalHandler(int);
+#endif
 
 public slots:
 	void Exec(VoidFunc func);
+	void ProcessSigInt();
 
 signals:
 	void StyleChanged();
@@ -237,7 +255,10 @@ inline const char *Str(const char *lookup)
 {
 	return App()->GetString(lookup);
 }
-#define QTStr(lookupVal) QString::fromUtf8(Str(lookupVal))
+inline QString QTStr(const char *lookupVal)
+{
+	return QString::fromUtf8(Str(lookupVal));
+}
 
 bool GetFileSafeName(const char *name, std::string &file);
 bool GetClosestUnusedFileName(std::string &path, const char *extension);
@@ -254,6 +275,8 @@ static inline int GetProfilePath(char *path, size_t size, const char *file)
 
 extern bool portable_mode;
 extern bool steam;
+extern bool safe_mode;
+extern bool disable_3p_plugins;
 
 extern bool opt_start_streaming;
 extern bool opt_start_recording;
@@ -263,8 +286,11 @@ extern bool opt_minimize_tray;
 extern bool opt_studio_mode;
 extern bool opt_allow_opengl;
 extern bool opt_always_on_top;
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-extern bool opt_disable_high_dpi_scaling;
-#endif
 extern std::string opt_starting_scene;
 extern bool restart;
+extern bool restart_safe;
+
+#ifdef _WIN32
+extern "C" void install_dll_blocklist_hook(void);
+extern "C" void log_blocked_dlls(void);
+#endif

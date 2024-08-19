@@ -20,11 +20,6 @@ struct texture_map_info {
 	uint32_t linesize[MAX_AV_PLANES];
 };
 
-/*graphics apis*/
-EXPORT gs_stagesurf_t *gs_device_canvas_map(uint32_t *cx, uint32_t *cy, enum gs_color_format *fmt, uint8_t **data, uint32_t *linesize);
-EXPORT void gs_device_canvas_unmap(gs_stagesurf_t *surface);
-EXPORT gs_adapters_info_t *gs_adapter_get_info();
-
 #ifdef __cplusplus
 }
 #endif

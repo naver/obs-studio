@@ -1174,7 +1174,6 @@ VPIDStandard DetermineVPIDStandard(IOSelection io, NTV2VideoFormat vf,
 				}
 			}
 		}
-	} else if (rd == RasterDefinition::UHD2_8K) {
 	}
 	return vpid;
 }
@@ -1184,4 +1183,4 @@ std::vector<NTV2DeviceID> MultiViewCards()
 	return {DEVICE_ID_IOX3};
 }
 
-} // aja
+} // namespace aja

@@ -20,7 +20,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QCloseEvent>
 
 EditorWidget::EditorWidget(QWidget *parent, VSTPlugin *plugin, void *s)
-        : QWidget(parent), plugin(plugin), sourceContext(s)
+	: QWidget(parent),
+	  plugin(plugin), 
+      sourceContext(s)
 {
 	setWindowFlags(this->windowFlags() |= Qt::MSWindowsFixedSizeDialogHint);
 }
@@ -35,4 +37,11 @@ void EditorWidget::closeEvent(QCloseEvent *event)
 void EditorWidget::resizeWindow(int width, int heigh)
 {
 	resize(width, heigh);
+}
+
+//PRISM/Xiewei/20231219/3637/add log
+void EditorWidget::showEvent(QShowEvent *event)
+{
+	UNUSED_PARAMETER(event);
+	info("VST editor widget shows: %dx%d", width(), height());
 }

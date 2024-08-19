@@ -22,10 +22,12 @@ struct ffmpeg_cfg {
 	int video_encoder_id;
 	const char *audio_encoder;
 	int audio_encoder_id;
+	int audio_bitrates[MAX_AUDIO_MIXES]; // multi-track
 	const char *video_settings;
 	const char *audio_settings;
 	int audio_mix_count;
 	int audio_tracks;
+	const char *audio_stream_names[MAX_AUDIO_MIXES];
 	enum AVPixelFormat format;
 	enum AVColorRange color_range;
 	enum AVColorPrimaries color_primaries;
@@ -39,7 +41,8 @@ struct ffmpeg_cfg {
 	int frame_size; // audio frame size
 	const char *username;
 	const char *password;
-	const char *key;
+	const char *stream_id;
+	const char *encrypt_passphrase;
 };
 
 struct ffmpeg_audio_info {
@@ -71,7 +74,7 @@ struct ffmpeg_data {
 
 	/* audio_tracks is a bitmask storing the indices of the mixes */
 	int audio_tracks;
-	struct circlebuf excess_frames[MAX_AUDIO_MIXES][MAX_AV_PLANES];
+	struct deque excess_frames[MAX_AUDIO_MIXES][MAX_AV_PLANES];
 	uint8_t *samples[MAX_AUDIO_MIXES][MAX_AV_PLANES];
 	AVFrame *aframe[MAX_AUDIO_MIXES];
 
@@ -86,6 +89,9 @@ struct ffmpeg_output {
 	obs_output_t *output;
 	volatile bool active;
 	struct ffmpeg_data ff_data;
+	
+	pthread_mutex_t video_mutex;
+	pthread_mutex_t audio_mutex;
 
 	bool connecting;
 	pthread_t start_thread;

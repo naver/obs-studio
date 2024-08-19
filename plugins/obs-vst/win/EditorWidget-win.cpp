@@ -18,6 +18,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QGridLayout>
 #include "../headers/EditorWidget.h"
 
+//PRISM/Xiewei/20231219/3637/add log
+const int default_width = 300;
+const int default_height = 300;
+
 void EditorWidget::buildEffectContainer(AEffect *effect)
 {
 	WNDCLASSEXW wcex{sizeof(wcex)};
@@ -28,14 +32,15 @@ void EditorWidget::buildEffectContainer(AEffect *effect)
 	RegisterClassExW(&wcex);
 
 	const auto style = WS_CAPTION | WS_THICKFRAME | WS_OVERLAPPEDWINDOW;
-	windowHandle =
-	        CreateWindowW(wcex.lpszClassName, TEXT(""), style, 0, 0, 0, 0, nullptr, nullptr, nullptr, nullptr);
+	windowHandle = CreateWindowW(wcex.lpszClassName, TEXT(""), style, 0, 0,
+				     0, 0, nullptr, nullptr, nullptr, nullptr);
 
 	// set pointer to vst effect for window long
 	LONG_PTR wndPtr = (LONG_PTR)effect;
 	SetWindowLongPtr(windowHandle, -21 /*GWLP_USERDATA*/, wndPtr);
 
-	QWidget *widget = QWidget::createWindowContainer(QWindow::fromWinId((WId)windowHandle), nullptr);
+	QWidget *widget = QWidget::createWindowContainer(
+		QWindow::fromWinId((WId)windowHandle), nullptr);
 	widget->move(0, 0);
 
 	QGridLayout *layout = new QGridLayout();
@@ -49,10 +54,25 @@ void EditorWidget::buildEffectContainer(AEffect *effect)
 	VstRect *vstRect = nullptr;
 	effect->dispatcher(effect, effEditGetRect, 0, 0, &vstRect, 0);
 	if (vstRect) {
-		widget->resize(vstRect->right - vstRect->left, vstRect->bottom - vstRect->top);
-		resize(vstRect->right - vstRect->left, vstRect->bottom - vstRect->top);
+		// on Windows, the size reported by 'effect' is larger than
+		// its actuall size by a factor of the monitor's ui scale,
+		// so the window size should be divided by the factor
+		qreal scale_factor = devicePixelRatioF();
+		int width = vstRect->right - vstRect->left;
+		int height = vstRect->bottom - vstRect->top;
+		width = static_cast<int>(width / scale_factor);
+		height = static_cast<int>(height / scale_factor);
+		widget->resize(width, height);
+		resize(width, height);
+		//PRISM/Xiewei/20231219/3637/add log
+		info("VST expected window size: %dx%d",
+		     vstRect->right - vstRect->left,
+		     vstRect->bottom - vstRect->top);
 	} else {
-		widget->resize(300, 300);
+		//PRISM/Xiewei/20231219/3637/add log
+		widget->resize(default_width, default_height);
+		info("Invalid VstRect, set VST expected window size: %dx%d",
+		     default_width, default_height);
 	}
 }
 
@@ -61,6 +81,34 @@ void EditorWidget::handleResizeRequest(int w, int h)
 	// Some plugins can't resize automatically (like SPAN by Voxengo),
 	// so we must resize window manually
 
+	//PRISM/Xiewei/20240611/none/upgrade obs start
+	// get pointer to vst effect from window long
+	//LONG_PTR wndPtr = (LONG_PTR)GetWindowLongPtrW(windowHandle,
+	//					      -21 /*GWLP_USERDATA*/);
+	//AEffect *effect = (AEffect *)(wndPtr);
+	//VstRect *rec = nullptr;
+
+	//effect->dispatcher(effect, effEditGetRect, 0, 0, &rec, 0);
+
+	//if (rec) {
+		// on Windows, the size reported by 'effect' is larger than
+		// its actuall size by a factor of the monitor's ui scale,
+		// so the window size should be divided by the factor
+	//	qreal scale_factor = devicePixelRatioF();
+	//	int width = rec->right - rec->left;
+	//	int height = rec->bottom - rec->top;
+	//	width = static_cast<int>(width / scale_factor);
+	//	height = static_cast<int>(height / scale_factor);
+	//	resize(width, height);
+	//}
+	//PRISM/Xiewei/20240611/none/upgrade obs end
+
+	//PRISM/Xiewei/20240611/none/upgrade obs start
 	// Resize window asynchronous. Reference to implementation of Audacity.
-	QMetaObject::invokeMethod(this, "resizeWindow", Q_ARG(int, w), Q_ARG(int, h));
+	qreal scale_factor = devicePixelRatioF();
+	int width = static_cast<int>(w / scale_factor);
+	int height = static_cast<int>(h / scale_factor);
+	QMetaObject::invokeMethod(this, "resizeWindow", Q_ARG(int, width),
+				  Q_ARG(int, height));
+	//PRISM/Xiewei/20240611/none/upgrade obs end
 }

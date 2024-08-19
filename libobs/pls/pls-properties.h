@@ -66,6 +66,15 @@ enum pls_property_type {
 
 	PLS_PROPERTY_TEMPLATE_LIST,        //OBS_PROPERTY_TEMPLATE_LIST
 	PLS_PROPERTY_COLOR_ALPHA_CHECKBOX, //OBS_PROPERTY_COLOR_ALPHA_CHECKBOX
+
+	PLS_PROPERTY_CT_DISPLAY,//chat source display
+	PLS_PROPERTY_CT_OPTIONS,//chat source options
+	PLS_PROPERTY_CT_MOTION,//chat source motion
+	PLS_PROPERTY_CT_FONT,//chat source font
+	PLS_PROPERTY_CT_TEXT_COLOR,//chat source text color
+	PLS_PROPERTY_CT_BK_COLOR,//chat source bk color
+	PLS_PROPERTY_CHZZK_SPONSOR, // chzzk sponsor
+
 };
 
 //PRISM/Wangshaohui/20200927/#4868/for property UI
@@ -660,6 +669,40 @@ pls_properties_add_color_alpha_checkbox(obs_properties_t *props,
 EXPORT obs_property_t *pls_properties_add_region_select(obs_properties_t *props,
 							const char *name,
 							const char *desc);
+
+//chat template source pls_properties_add_display
+
+EXPORT obs_property_t *pls_properties_add_display(obs_properties_t *props,
+						  const char *name,
+						  const char *desc);
+//chat template source pls_properties_add_options
+
+EXPORT obs_property_t *pls_properties_add_options(obs_properties_t *props,
+						  const char *name,
+						  const char *desc);
+//chat template source pls_properties_add_motion
+
+EXPORT obs_property_t *pls_properties_add_motion(obs_properties_t *props,
+						 const char *name,
+						 const char *desc);
+//chat template source pls_properties_add_font
+
+EXPORT obs_property_t *pls_properties_add_font(obs_properties_t *props,
+					       const char *name,
+					       const char *desc);
+//chat template source pls_properties_add_text_color
+
+EXPORT obs_property_t *pls_properties_add_text_color(obs_properties_t *props,
+						     const char *name,
+						     const char *desc);
+//chat template source pls_properties_add_bk_color
+
+EXPORT obs_property_t *pls_properties_add_bk_color(obs_properties_t *props,
+						   const char *name,
+						   const char *desc);
+//obs_properties_add_chzzk_sponsor
+EXPORT obs_property_t *pls_properties_add_chzzk_sponsor(obs_properties_t *props,
+							const char *name);
 #ifdef __cplusplus
 }
 #endif

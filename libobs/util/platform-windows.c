@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -21,6 +21,7 @@
 #include <intrin.h>
 #include <psapi.h>
 #include <math.h>
+#include <rpc.h>
 
 #include "base.h"
 #include "platform.h"
@@ -120,6 +121,28 @@ void *os_dlopen(const char *path)
 			LocalFree(message);
 	}
 
+	//PRISM//wangshaohui//20240627/none/send module info to KR server which helps debug.
+	if (h_library) {
+		wchar_t full_path[MAX_PATH] = {0};
+		GetModuleFileNameW(h_library, full_path, MAX_PATH);
+
+		char full_path_utf8[MAX_PATH];
+		os_wcs_to_utf8(full_path, 0, full_path_utf8, MAX_PATH);
+
+		char *base_addr = 0;
+		char *end_addr = 0;
+		MODULEINFO mod_info;
+		if (GetModuleInformation(GetCurrentProcess(), h_library,
+					 &mod_info, sizeof(MODULEINFO))) {
+			base_addr = (char *)mod_info.lpBaseOfDll;
+			end_addr = base_addr + mod_info.SizeOfImage;
+		}
+
+		// Note: Must use debug level so this log can be sent to KR server only.
+		blog(LOG_DEBUG, "successed to LoadLibrary [%p~%p] %s",
+		     base_addr, end_addr, full_path_utf8);
+	}
+
 	return h_library;
 }
 
@@ -137,7 +160,6 @@ void os_dlclose(void *module)
 	FreeLibrary(module);
 }
 
-#if OBS_QT_VERSION == 6
 static bool has_qt5_import(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 {
 	__try {
@@ -200,7 +222,6 @@ static bool has_qt5_import(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 
 	return false;
 }
-#endif
 
 static bool has_obs_export(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 {
@@ -334,13 +355,9 @@ void get_plugin_info(const char *path, bool *is_obs_plugin, bool *can_load)
 
 		*is_obs_plugin = has_obs_export(base, nt_headers);
 
-#if OBS_QT_VERSION == 6
 		if (*is_obs_plugin) {
 			*can_load = !has_qt5_import(base, nt_headers);
 		}
-#else
-		*can_load = true;
-#endif
 
 	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		/* we failed somehow, for compatibility let's assume it
@@ -1469,7 +1486,8 @@ uint64_t os_get_proc_virtual_size(void)
 uint64_t os_get_free_disk_space(const char *dir)
 {
 	wchar_t *wdir = NULL;
-	if (!os_utf8_to_wcs_ptr(dir, 0, &wdir))
+	os_utf8_to_wcs_ptr(dir, 0, &wdir);
+	if (!wdir)
 		return 0;
 
 	ULARGE_INTEGER free;
@@ -1477,4 +1495,22 @@ uint64_t os_get_free_disk_space(const char *dir)
 	bfree(wdir);
 
 	return success ? free.QuadPart : 0;
+}
+
+char *os_generate_uuid(void)
+{
+	UUID uuid;
+
+	RPC_STATUS res = UuidCreate(&uuid);
+	if (res != RPC_S_OK && res != RPC_S_UUID_LOCAL_ONLY)
+		bcrash("Failed to get UUID, RPC_STATUS: %l", res);
+
+	struct dstr uuid_str = {0};
+	dstr_printf(&uuid_str,
+		    "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		    uuid.Data1, uuid.Data2, uuid.Data3, uuid.Data4[0],
+		    uuid.Data4[1], uuid.Data4[2], uuid.Data4[3], uuid.Data4[4],
+		    uuid.Data4[5], uuid.Data4[6], uuid.Data4[7]);
+
+	return uuid_str.array;
 }

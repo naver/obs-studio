@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013-2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@
 #include <memory>
 #include "window-main.hpp"
 #include "window-basic-interaction.hpp"
+#include "window-basic-vcam.hpp"
 #include "window-basic-properties.hpp"
 #include "window-basic-transform.hpp"
 #include "window-basic-adv-audio.hpp"
@@ -35,6 +36,9 @@
 #include "window-missing-files.hpp"
 #include "window-projector.hpp"
 #include "window-basic-about.hpp"
+#ifdef YOUTUBE_ENABLED
+#include "window-dock-youtube-app.hpp"
+#endif
 #include "auth-base.hpp"
 #include "log-viewer.hpp"
 #include "undo-stack-obs.hpp"
@@ -51,6 +55,7 @@ class QMessageBox;
 class QListWidgetItem;
 class VolControl;
 class OBSBasicStats;
+class OBSBasicVCamConfig;
 
 #include "ui_OBSBasic.h"
 #include "ui_ColorSelect.h"
@@ -226,7 +231,11 @@ private:
 
 	std::vector<OBSSignal> signalHandlers;
 
-	QList<QPointer<QDockWidget>> extraDocks;
+	QList<QPointer<QDockWidget>> oldExtraDocks;
+	QStringList oldExtraDockNames;
+
+	OBSDataAutoRelease safeModeModuleData;
+	std::vector<OBSDataAutoRelease> safeModeTransitions;
 
 	bool loaded = false;
 	long disableSaving = 1;
@@ -243,6 +252,8 @@ private:
 	OBSWeakSourceAutoRelease copySourceTransition;
 
 	bool closing = false;
+	bool clearingFailed = false;
+
 	QScopedPointer<QThread> devicePropertiesThread;
 	QScopedPointer<QThread> whatsNewInitThread;
 	QScopedPointer<QThread> updateCheckThread;
@@ -255,6 +266,10 @@ private:
 	QPointer<OBSBasicAdvAudio> advAudioWindow;
 	QPointer<OBSBasicFilters> filters;
 	QPointer<QDockWidget> statsDock;
+#ifdef YOUTUBE_ENABLED
+	QPointer<YouTubeAppDock> youtubeAppDock;
+	uint64_t lastYouTubeAppDockCreationTime = 0;
+#endif
 	QPointer<OBSAbout> about;
 	QPointer<OBSMissingFiles> missDialog;
 	QPointer<OBSLogViewer> logView;
@@ -309,6 +324,7 @@ private:
 
 	QPointer<ControlsSplitButton> vcamButton;
 	bool vcamEnabled = false;
+	VCamConfig vcamConfig;
 
 	QScopedPointer<QSystemTrayIcon> trayIcon;
 	QPointer<QAction> sysTrayStream;
@@ -344,6 +360,7 @@ private:
 	std::string patronJson;
 
 	std::atomic<obs_scene_t *> currentScene = nullptr;
+	std::optional<std::pair<uint32_t, uint32_t>> lastOutputResolution;
 
 	void UpdateMultiviewProjectorMenu();
 
@@ -494,11 +511,12 @@ private:
 	OBSWeakSource lastScene;
 	OBSWeakSource swapScene;
 	OBSWeakSource programScene;
+	OBSWeakSource lastProgramScene;
 	bool editPropertiesMode = false;
 	bool sceneDuplicationMode = true;
 	bool swapScenesMode = true;
 	volatile bool previewProgramMode = false;
-	obs_hotkey_id togglePreviewProgramHotkey = 0;
+	obs_hotkey_pair_id togglePreviewProgramHotkeys = 0;
 	obs_hotkey_id transitionHotkey = 0;
 	obs_hotkey_id statsHotkey = 0;
 	obs_hotkey_id screenshotHotkey = 0;
@@ -541,14 +559,23 @@ private:
 	obs_data_array_t *SaveProjectors();
 	void LoadSavedProjectors(obs_data_array_t *savedProjectors);
 
+	void MacBranchesFetched(const QString &branch, bool manualUpdate);
 	void ReceivedIntroJson(const QString &text);
 	void ShowWhatsNew(const QString &url);
 
 	void UpdatePreviewProgramIndicators();
 
+	QStringList extraDockNames;
+	QList<std::shared_ptr<QDockWidget>> extraDocks;
+
+	QStringList extraCustomDockNames;
+	QList<QPointer<QDockWidget>> extraCustomDocks;
+
 #ifdef BROWSER_AVAILABLE
-	QList<QSharedPointer<QDockWidget>> extraBrowserDocks;
-	QList<QSharedPointer<QAction>> extraBrowserDockActions;
+	QPointer<QAction> extraBrowserMenuDocksSeparator;
+
+	QList<std::shared_ptr<QDockWidget>> extraBrowserDocks;
+	QStringList extraBrowserDockNames;
 	QStringList extraBrowserDockTargets;
 
 	void ClearExtraBrowserDocks();
@@ -611,10 +638,11 @@ private:
 	bool broadcastActive = false;
 	bool broadcastReady = false;
 	QPointer<QThread> youtubeStreamCheckThread;
-#if YOUTUBE_ENABLED
+#ifdef YOUTUBE_ENABLED
 	void YoutubeStreamCheck(const std::string &key);
 	void ShowYouTubeAutoStartWarning();
-	void YouTubeActionDialogOk(const QString &id, const QString &key,
+	void YouTubeActionDialogOk(const QString &broadcast_id,
+				   const QString &stream_id, const QString &key,
 				   bool autostart, bool autostop,
 				   bool start_now);
 #endif
@@ -638,10 +666,14 @@ private:
 	bool drawSpacingHelpers = true;
 
 	float GetDevicePixelRatio();
-	void SourceToolBarActionsSetEnabled(bool enable);
+	void SourceToolBarActionsSetEnabled();
 
 	std::string lastScreenshot;
 	std::string lastReplay;
+
+	void UpdatePreviewOverflowSettings();
+
+	bool restartingVCam = false;
 
 public slots:
 	void DeferSaveBegin();
@@ -735,8 +767,8 @@ private slots:
 
 	void ProcessHotkey(obs_hotkey_id id, bool pressed);
 
-	void AddTransition();
-	void RenameTransition();
+	void AddTransition(const char *id);
+	void RenameTransition(OBSSource transition);
 	void TransitionClicked();
 	void TransitionStopped();
 	void TransitionFullyStopped();
@@ -783,13 +815,14 @@ private slots:
 	void EnablePreview();
 	void DisablePreview();
 
+	void EnablePreviewProgram();
+	void DisablePreviewProgram();
+
 	void SceneCopyFilters();
 	void ScenePasteFilters();
 
 	void CheckDiskSpaceRemaining();
 	void OpenSavedProjector(SavedProjectorInfo *info);
-
-	void ScenesReordered();
 
 	void ResetStatsHotkey();
 
@@ -814,7 +847,11 @@ private slots:
 	void TBarReleased();
 
 	void LockVolumeControl(bool lock);
-	void ResetProxyStyleSliders();
+	void ThemeChanged();
+
+	void UpdateVirtualCamConfig(const VCamConfig &config);
+	void RestartVirtualCam(const VCamConfig &config);
+	void RestartingVirtualCam();
 
 private:
 	/* OBS Callbacks */
@@ -945,16 +982,33 @@ public:
 	void CreateInteractionWindow(obs_source_t *source);
 	void CreatePropertiesWindow(obs_source_t *source);
 	void CreateFiltersWindow(obs_source_t *source);
+	void CreateEditTransformWindow(obs_sceneitem_t *item);
 
 	QAction *AddDockWidget(QDockWidget *dock);
+	void AddDockWidget(QDockWidget *dock, Qt::DockWidgetArea area,
+			   bool extraBrowser = false);
+	void RemoveDockWidget(const QString &name);
+	bool IsDockObjectNameUsed(const QString &name);
+	void AddCustomDockWidget(QDockWidget *dock);
 
 	static OBSBasic *Get();
 
 	const char *GetCurrentOutputPath();
 
 	void DeleteProjector(OBSProjector *projector);
-	void AddProjectorMenuMonitors(QMenu *parent, QObject *target,
-				      const char *slot);
+
+	static QList<QString> GetProjectorMenuMonitorsFormatted();
+	template<typename Receiver, typename... Args>
+	static void AddProjectorMenuMonitors(QMenu *parent, Receiver *target,
+					     void (Receiver::*slot)(Args...))
+	{
+		auto projectors = GetProjectorMenuMonitorsFormatted();
+		for (int i = 0; i < projectors.size(); i++) {
+			QString str = projectors[i];
+			QAction *action = parent->addAction(str, target, slot);
+			action->setProperty("monitor", i);
+		}
+	}
 
 	QIcon GetSourceIcon(const char *id) const;
 	QIcon GetGroupIcon() const;
@@ -988,16 +1042,12 @@ public:
 	void SetDisplayAffinity(QWindow *window);
 
 	QColor GetSelectionColor() const;
+	inline bool Closing() { return closing; }
 
 protected:
 	virtual void closeEvent(QCloseEvent *event) override;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	virtual bool nativeEvent(const QByteArray &eventType, void *message,
 				 qintptr *result) override;
-#else
-	virtual bool nativeEvent(const QByteArray &eventType, void *message,
-				 long *result) override;
-#endif
 	virtual void changeEvent(QEvent *event) override;
 
 private slots:
@@ -1017,6 +1067,8 @@ private slots:
 	void on_actionViewCurrentLog_triggered();
 	void on_actionCheckForUpdates_triggered();
 	void on_actionRepair_triggered();
+	void on_actionShowWhatsNew_triggered();
+	void on_actionRestartSafe_triggered();
 
 	void on_actionShowCrashLogs_triggered();
 	void on_actionUploadLastCrashLog_triggered();
@@ -1042,6 +1094,8 @@ private slots:
 					  QListWidgetItem *prev);
 	void on_scenes_customContextMenuRequested(const QPoint &pos);
 	void GridActionClicked();
+	void on_actionSceneListMode_triggered();
+	void on_actionSceneGridMode_triggered();
 	void on_actionAddScene_triggered();
 	void on_actionRemoveScene_triggered();
 	void on_actionSceneUp_triggered();
@@ -1080,10 +1134,11 @@ private slots:
 	void on_actionHelpPortal_triggered();
 	void on_actionWebsite_triggered();
 	void on_actionDiscord_triggered();
+	void on_actionReleaseNotes_triggered();
 
-	void on_preview_customContextMenuRequested(const QPoint &pos);
-	void ProgramViewContextMenuRequested(const QPoint &pos);
-	void PreviewDisabledMenu(const QPoint &pos);
+	void on_preview_customContextMenuRequested();
+	void ProgramViewContextMenuRequested();
+	void on_previewDisabledWidget_customContextMenuRequested();
 
 	void on_actionNewSceneCollection_triggered();
 	void on_actionDupSceneCollection_triggered();
@@ -1113,8 +1168,7 @@ private slots:
 	void on_transitionAdd_clicked();
 	void on_transitionRemove_clicked();
 	void on_transitionProps_clicked();
-	void on_transitionDuration_valueChanged(int value);
-	void on_tbar_position_valueChanged(int value);
+	void on_transitionDuration_valueChanged();
 
 	void ShowTransitionProperties();
 	void HideTransitionProperties();
@@ -1133,6 +1187,7 @@ private slots:
 	void on_resetDocks_triggered(bool force = false);
 	void on_lockDocks_toggled(bool lock);
 	void on_multiviewProjectorWindowed_triggered();
+	void on_sideDocks_toggled(bool side);
 
 	void PauseToggled();
 
@@ -1142,33 +1197,22 @@ private slots:
 
 	void updateCheckFinished();
 
-	void AddSourceFromAction();
-
 	void MoveSceneToTop();
 	void MoveSceneToBottom();
 
 	void EditSceneName();
 	void EditSceneItemName();
 
-	void SceneNameEdited(QWidget *editor,
-			     QAbstractItemDelegate::EndEditHint endHint);
+	void SceneNameEdited(QWidget *editor);
 
 	void OpenSceneFilters();
 	void OpenFilters(OBSSource source = nullptr);
 	void OpenProperties(OBSSource source = nullptr);
 	void OpenInteraction(OBSSource source = nullptr);
+	void OpenEditTransform(OBSSceneItem item = nullptr);
 
 	void EnablePreviewDisplay(bool enable);
 	void TogglePreview();
-
-	void NudgeUp();
-	void NudgeDown();
-	void NudgeLeft();
-	void NudgeRight();
-	void NudgeUpFar();
-	void NudgeDownFar();
-	void NudgeLeftFar();
-	void NudgeRightFar();
 
 	void OpenStudioProgramProjector();
 	void OpenPreviewProjector();
@@ -1184,6 +1228,9 @@ private slots:
 	void StackedMixerAreaContextMenuRequested();
 
 	void ResizeOutputSizeOfSource();
+
+	void RepairOldExtraDockName();
+	void RepairCustomExtraDockName();
 
 public slots:
 	void on_actionResetTransform_triggered();
@@ -1217,7 +1264,14 @@ public:
 				   const char *file) const override;
 
 	static void InitBrowserPanelSafeBlock();
+#ifdef YOUTUBE_ENABLED
+	void NewYouTubeAppDock();
+	void DeleteYouTubeAppDock();
+	YouTubeAppDock *GetYouTubeAppDock();
+#endif
 };
+
+extern bool cef_js_avail;
 
 class SceneRenameDelegate : public QStyledItemDelegate {
 	Q_OBJECT

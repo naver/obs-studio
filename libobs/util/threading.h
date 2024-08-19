@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -89,7 +89,9 @@ EXPORT int os_sem_init(os_sem_t **sem, int value);
 EXPORT void os_sem_destroy(os_sem_t *sem);
 EXPORT int os_sem_post(os_sem_t *sem);
 EXPORT int os_sem_wait(os_sem_t *sem);
-
+//PRISM/cao.kewei/20240110/#3907/SCK Block
+EXPORT int os_sem_timedwait(os_sem_t *sem, unsigned int seconds);
+//PRISM/cao.kewei/20240110/#3907/SCK Block
 EXPORT void os_set_thread_name(const char *name);
 
 #ifdef _MSC_VER

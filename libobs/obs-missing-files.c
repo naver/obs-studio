@@ -28,6 +28,8 @@ struct obs_missing_file {
 	void *src;
 	char *src_name;
 	void *data;
+	//PRISM/chenguoxi/20240701/#5771/using ref for missing file
+	obs_source_t *source;
 };
 
 struct obs_missing_files {
@@ -96,6 +98,8 @@ obs_missing_file_t *obs_missing_file_create(const char *path,
 	switch (src_type) {
 	case OBS_MISSING_FILE_SOURCE:
 		file->src_name = bstrdup(obs_source_get_name(src));
+		//PRISM/chenguoxi/20240701/#5771/using ref for missing file
+		file->source = obs_source_get_ref(src);
 		break;
 	case OBS_MISSING_FILE_SCRIPT:
 		break;
@@ -118,10 +122,15 @@ void obs_missing_file_destroy(obs_missing_file_t *file)
 	switch (file->src_type) {
 	case OBS_MISSING_FILE_SOURCE:
 		bfree(file->src_name);
+		//PRISM/chenguoxi/20240701/#5771/using ref for missing file
+		if (file->source)
+			obs_source_release(file->source);
+
 		break;
 	case OBS_MISSING_FILE_SCRIPT:
 		break;
 	}
+
 	bfree(file->file_path);
 	bfree(file);
 }

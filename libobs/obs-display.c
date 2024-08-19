@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,15 +19,23 @@
 #include "obs.h"
 #include "obs-internal.h"
 
+#include "pls/pls-base.h"
+#include "pls/pls-obs-api.h"
+
 bool obs_display_init(struct obs_display *display,
 		      const struct gs_init_data *graphics_data)
 {
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Enter] graphics_data=%p", display, __FUNCTION__,
+	     graphics_data);
+
 	pthread_mutex_init_value(&display->draw_callbacks_mutex);
 	pthread_mutex_init_value(&display->draw_info_mutex);
 
 #if defined(_WIN32)
 	/* Conservative test for NVIDIA flickering in multi-GPU setups */
-	display->use_clear_workaround = gs_get_adapter_count() > 1;
+	display->use_clear_workaround = gs_get_adapter_count() > 1 &&
+					!gs_can_adapter_fast_clear();
 #elif defined(__APPLE__)
 	/* Apple Silicon GL driver doesn't seem to track SRGB clears correctly */
 	display->use_clear_workaround = true;
@@ -61,6 +69,10 @@ bool obs_display_init(struct obs_display *display,
 	}
 
 	display->enabled = true;
+
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
+
 	return true;
 }
 
@@ -68,6 +80,10 @@ obs_display_t *obs_display_create(const struct gs_init_data *graphics_data,
 				  uint32_t background_color)
 {
 	struct obs_display *display = bzalloc(sizeof(struct obs_display));
+
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Enter] graphics_data=%p, background_color=%u",
+	     display, __FUNCTION__, graphics_data, background_color);
 
 	gs_enter_context(obs->video.graphics);
 
@@ -88,6 +104,9 @@ obs_display_t *obs_display_create(const struct gs_init_data *graphics_data,
 
 	gs_leave_context();
 
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
+
 	return display;
 }
 
@@ -98,12 +117,15 @@ void obs_display_free_macos(void *context)
 	if (!context)
 		return;
 	
+	bool is_app_exiting = pls_get_obs_exiting();
+	
 	obs_display_t *display = context;
 	obs_enter_graphics();
-	bool is_destroy = gs_swapchain_destroy_if_need(display->swap);
+	bool is_destroyed = gs_swapchain_destroy_if_need(display->swap, is_app_exiting);
 	obs_leave_graphics();
 	
-	if (!is_destroy && !pls_get_obs_exiting()) {
+	if (!is_destroyed) {
+		//PRISM/Zhongling/20230816/#2251/crash on `gl_update`
 		os_async_on_main_queue(display, obs_display_free_macos);
 	} else {
 		bfree(display);
@@ -124,6 +146,9 @@ void obs_display_free(obs_display_t *display)
 
 void obs_display_free(obs_display_t *display)
 {
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Enter]", display, __FUNCTION__);
+
 	pthread_mutex_destroy(&display->draw_callbacks_mutex);
 	pthread_mutex_destroy(&display->draw_info_mutex);
 	da_free(display->draw_callbacks);
@@ -132,12 +157,18 @@ void obs_display_free(obs_display_t *display)
 		gs_swapchain_destroy(display->swap);
 		display->swap = NULL;
 	}
+
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 #endif
 
 
 void obs_display_destroy(obs_display_t *display)
 {
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Enter]", display, __FUNCTION__);
+
 	if (display) {
 		pthread_mutex_lock(&obs->data.displays_mutex);
 		if (display->prev_next)
@@ -158,6 +189,9 @@ void obs_display_destroy(obs_display_t *display)
 		bfree(display);
 #endif
 	}
+
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 
 void obs_display_resize(obs_display_t *display, uint32_t cx, uint32_t cy)
@@ -190,6 +224,9 @@ void obs_display_add_draw_callback(obs_display_t *display,
 						uint32_t cy),
 				   void *param)
 {
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Enter] draw=%p, param=%p", display, __FUNCTION__, draw, param);
+
 	if (!display)
 		return;
 
@@ -198,6 +235,9 @@ void obs_display_add_draw_callback(obs_display_t *display,
 	pthread_mutex_lock(&display->draw_callbacks_mutex);
 	da_push_back(display->draw_callbacks, &data);
 	pthread_mutex_unlock(&display->draw_callbacks_mutex);
+
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 
 void obs_display_remove_draw_callback(obs_display_t *display,
@@ -205,6 +245,10 @@ void obs_display_remove_draw_callback(obs_display_t *display,
 						   uint32_t cy),
 				      void *param)
 {
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Enter] draw=%p, param=%p", display,
+	     __FUNCTION__, draw, param);
+
 	if (!display)
 		return;
 
@@ -213,6 +257,9 @@ void obs_display_remove_draw_callback(obs_display_t *display,
 	pthread_mutex_lock(&display->draw_callbacks_mutex);
 	da_erase_item(display->draw_callbacks, &data);
 	pthread_mutex_unlock(&display->draw_callbacks_mutex);
+
+	//PRISM/WuLongyue/20231214/#3427/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 
 static inline bool render_display_begin(struct obs_display *display,
@@ -300,6 +347,16 @@ void render_display(struct obs_display *display)
 	if (render_display_begin(display, cx, cy, update_color_space)) {
 		GS_DEBUG_MARKER_BEGIN(GS_DEBUG_COLOR_DISPLAY, "obs_display");
 
+		//PRISM/Zengqin/20240528/none/add display draw profile
+		if (!display->display_draw_profile) {
+			display->display_draw_profile = profile_store_name(
+						obs_get_profiler_name_store(),
+						"render_display_draw_callback(%p)", display);
+		}
+		//PRISM/Zengqin/20240528/none/add display draw profile
+		if (display->display_draw_profile)
+			profile_start(display->display_draw_profile);
+
 		pthread_mutex_lock(&display->draw_callbacks_mutex);
 
 		for (size_t i = 0; i < display->draw_callbacks.num; i++) {
@@ -311,11 +368,29 @@ void render_display(struct obs_display *display)
 
 		pthread_mutex_unlock(&display->draw_callbacks_mutex);
 
+		//PRISM/Zengqin/20240528/none/add display draw profile
+		if (display->display_draw_profile)
+			profile_end(display->display_draw_profile);
+
 		render_display_end();
 
 		GS_DEBUG_MARKER_END();
 
+		//PRISM/Zengqin/20240528/none/add display present profile
+		if (!display->display_present_profile) {
+			display->display_present_profile = profile_store_name(
+				obs_get_profiler_name_store(),
+				"display_gs_present(%p)", display);
+		}
+		//PRISM/Zengqin/20240528/none/add display present profile
+		if (display->display_present_profile)
+			profile_start(display->display_present_profile);
+
 		gs_present();
+
+		//PRISM/Zengqin/20240528/none/add display present profile
+		if (display->display_present_profile)
+			profile_end(display->display_present_profile);
 	}
 }
 

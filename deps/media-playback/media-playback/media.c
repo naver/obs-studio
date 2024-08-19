@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -14,11 +14,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <obs.h>
 #include <util/platform.h>
 
 #include <assert.h>
 
+#include "media-playback.h"
 #include "media.h"
 #include "closest-format.h"
 
@@ -279,7 +279,7 @@ static bool mp_media_init_scaling(mp_media_t *m)
 	return true;
 }
 
-static bool mp_media_prepare_frames(mp_media_t *m)
+bool mp_media_prepare_frames(mp_media_t *m)
 {
 	bool actively_seeking = m->seek_next_ts && m->pause;
 
@@ -296,6 +296,14 @@ static bool mp_media_prepare_frames(mp_media_t *m)
 				return false;
 			}
 		}
+
+		/* kind of a cheap fix, but because a stinger might be
+		 * interrupted and restart playback, the request_preload signal
+		 * might happen when the current frame is invalid, so clear out
+		 * these pointers to signify they're not valid. (the obsframe
+		 * structure is only used in the media thread, so this isn't a
+		 * threading issue) */
+		m->obsframe.data[0] = NULL;
 
 		if (m->has_video && !mp_decode_frame(&m->v))
 			return false;
@@ -348,11 +356,13 @@ static inline int64_t mp_media_get_base_pts(mp_media_t *m)
 
 static inline bool mp_media_can_play_frame(mp_media_t *m, struct mp_decode *d)
 {
+	if (m->full_decode)
+		return d->frame_ready;
 	return d->frame_ready && (d->frame_pts <= m->next_pts_ns ||
 				  (d->frame_pts - m->next_pts_ns > MAX_TS_VAR));
 }
 
-static void mp_media_next_audio(mp_media_t *m)
+void mp_media_next_audio(mp_media_t *m)
 {
 	struct mp_decode *d = &m->a;
 	struct obs_source_audio audio = {0};
@@ -362,14 +372,15 @@ static void mp_media_next_audio(mp_media_t *m)
 	//PRISM/zengqin/20230206/Fixed f is nullptr.
 	if (!f)
 		return;
+
+	if (!mp_media_can_play_frame(m, d))
+		return;
+
 #if LIBAVFORMAT_VERSION_INT < AV_VERSION_INT(59, 19, 100)
 	channels = f->channels;
 #else
 	channels = f->ch_layout.nb_channels;
 #endif
-
-	if (!mp_media_can_play_frame(m, d))
-		return;
 
 	d->frame_ready = false;
 	if (!m->a_cb)
@@ -382,9 +393,10 @@ static void mp_media_next_audio(mp_media_t *m)
 	audio.speakers = convert_speaker_layout(channels);
 	audio.format = convert_sample_format(f->format);
 	audio.frames = f->nb_samples;
-
-	audio.timestamp = m->base_ts + d->frame_pts - m->start_ts +
-			  m->play_sys_ts - base_sys_ts;
+	audio.timestamp = m->full_decode
+				  ? d->frame_pts
+				  : m->base_ts + d->frame_pts - m->start_ts +
+					    m->play_sys_ts - base_sys_ts;
 
 	if (audio.format == AUDIO_FORMAT_UNKNOWN)
 		return;
@@ -392,7 +404,7 @@ static void mp_media_next_audio(mp_media_t *m)
 	m->a_cb(m->opaque, &audio);
 }
 
-static void mp_media_next_video(mp_media_t *m, bool preload)
+void mp_media_next_video(mp_media_t *m, bool preload)
 {
 	struct mp_decode *d = &m->v;
 	struct obs_source_frame *frame = &m->obsframe;
@@ -480,14 +492,16 @@ static void mp_media_next_video(mp_media_t *m, bool preload)
 	if (frame->format == VIDEO_FORMAT_NONE)
 		return;
 
-	frame->timestamp = m->base_ts + d->frame_pts - m->start_ts +
-			   m->play_sys_ts - base_sys_ts;
+	frame->timestamp = m->full_decode
+				   ? d->frame_pts
+				   : (m->base_ts + d->frame_pts - m->start_ts +
+				      m->play_sys_ts - base_sys_ts);
 
 	frame->width = f->width;
 	frame->height = f->height;
 	frame->max_luminance = d->max_luminance;
 	frame->flip = flip;
-	frame->flags |= m->is_linear_alpha ? OBS_SOURCE_FRAME_LINEAR_ALPHA : 0;
+	frame->flags = m->is_linear_alpha ? OBS_SOURCE_FRAME_LINEAR_ALPHA : 0;
 	switch (f->color_trc) {
 	case AVCOL_TRC_BT709:
 	case AVCOL_TRC_GAMMA22:
@@ -508,7 +522,12 @@ static void mp_media_next_video(mp_media_t *m, bool preload)
 	}
 
 	if (!m->is_local_file && !d->got_first_keyframe) {
+
+#if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(58, 29, 100)
 		if (!f->key_frame)
+#else
+		if (!(f->flags & AV_FRAME_FLAG_KEY))
+#endif
 			return;
 
 		d->got_first_keyframe = true;
@@ -517,7 +536,7 @@ static void mp_media_next_video(mp_media_t *m, bool preload)
 	if (preload) {
 		if (m->seek_next_ts && m->v_seek_cb) {
 			m->v_seek_cb(m->opaque, frame);
-		} else {
+		} else if (!m->request_preload) {
 			m->v_preload_cb(m->opaque, frame);
 		}
 	} else {
@@ -526,7 +545,7 @@ static void mp_media_next_video(mp_media_t *m, bool preload)
 }
 
 //PRISM/ZengQin/20230608/declaration mp_media_reset
-static bool mp_media_reset(mp_media_t *m, bool start);
+bool mp_media_reset(mp_media_t *m, bool start);
 
 static void mp_media_calc_next_ns(mp_media_t *m)
 {
@@ -585,7 +604,7 @@ static void seek_to(mp_media_t *m, int64_t pos)
 }
 
 //PRISM/ZengQin/20230427/fixed bgm when switching songs quickly, add 'start' param
-static bool mp_media_reset(mp_media_t *m, bool start)
+bool mp_media_reset(mp_media_t *m, bool start)
 {
 	bool stopping;
 	bool active;
@@ -627,12 +646,17 @@ static bool mp_media_reset(mp_media_t *m, bool start)
 		m->next_ns = 0;
 	}
 
-	m->pause = false;
+	//PRISM/ZengQin/20240111/#3905/Fixed the problem of pausing immediately after switching songs, and the paused state is invalid.
+	if (!(start && m->bgm_source))
+		m->pause = false;
 
 	if (!active && m->is_local_file && m->v_preload_cb)
 		mp_media_next_video(m, true);
 	if (stopping && m->stop_cb)
 		m->stop_cb(m->opaque);
+
+	//PRISM/FanZirong/20231206/issue none/to reduce log
+	m->time_less_than_next_nums = 0;
 	return true;
 }
 
@@ -656,11 +680,15 @@ static inline bool mp_media_sleep(mp_media_t *m)
 			//PRISM/Zengqin/20230728/issue 372/fixed media play faster after the computer wakes up after sleeping for a period of time
 			const uint32_t diff =
 				(uint32_t)((t - m->next_ns) / 1000000);
-			if (diff > 500) {
-				m->next_ns = 0;
-				blog(LOG_DEBUG,
-				     "MP:  Current time is less than next_ns. diff is %lld ms",
+			if (diff > 1000) {
+				m->next_ns = os_gettime_ns();
+				//PRISM/FanZirong/20231206/issue none/to reduce log
+				if( m->time_less_than_next_nums < 5 || 0 == m->time_less_than_next_nums % 3000){
+					blog(LOG_DEBUG,
+					 "MP:  Current time is less than next_ns. diff is %u ms",
 				     diff);
+				}
+				m->time_less_than_next_nums++;
 			}
 		}
 	}
@@ -668,7 +696,7 @@ static inline bool mp_media_sleep(mp_media_t *m)
 	return timeout;
 }
 
-static inline bool mp_media_eof(mp_media_t *m)
+bool mp_media_eof(mp_media_t *m)
 {
 	bool v_ended = !m->has_video || !m->v.frame_ready;
 	bool a_ended = !m->has_audio || !m->a.frame_ready;
@@ -736,21 +764,19 @@ static bool init_avformat(mp_media_t *m)
 	if (m->ffmpeg_options) {
 		int ret = av_dict_parse_string(&opts, m->ffmpeg_options, "=",
 					       " ", 0);
-		if (ret) {
+		if (ret)
 			blog(LOG_WARNING,
 			     "Failed to parse FFmpeg options: %s\n%s",
 			     av_err2str(ret), m->ffmpeg_options);
-		} else {
-			blog(LOG_INFO, "Set FFmpeg options: %s",
-			     m->ffmpeg_options);
-		}
 	}
 
 	m->fmt = avformat_alloc_context();
 	if (m->buffering == 0) {
 		m->fmt->flags |= AVFMT_FLAG_NOBUFFER;
 	}
-	if (!m->is_local_file) {
+	//PRISM/zengqin/20240111/#2943 #2940 #3682 #3882/to interrupt block
+	//PRISM/chenguoxi/20240403/#4964/to interrupt block
+	/* if (!m->is_local_file || m->bgm_source) */ {
 		av_dict_set(&opts, "stimeout", "30000000", 0);
 		m->fmt->interrupt_callback.callback = interrupt_callback;
 		m->fmt->interrupt_callback.opaque = m;
@@ -761,9 +787,11 @@ static bool init_avformat(mp_media_t *m)
 	av_dict_free(&opts);
 
 	if (ret < 0) {
+		//PRISM/zengqin/20240111/#2943 #2940/to ignore send stop signal to bgm
+		m->ignore_stop = (m->bgm_source && ret == AVERROR_EXIT);
 		if (!m->reconnecting)
-			blog(LOG_WARNING, "MP: Failed to open media: '%s'",
-			     m->path);
+			blog(LOG_WARNING, "MP: Failed to open media: '%s' %s (%d)",
+			     m->path, av_err2str(ret), ret);
 		return false;
 	}
 
@@ -796,11 +824,19 @@ static void reset_ts(mp_media_t *m)
 	m->next_ns = 0;
 }
 
+bool mp_media_init2(mp_media_t *m)
+{
+	if (!init_avformat(m)) {
+		return false;
+	}
+	return true;
+}
+
 static inline bool mp_media_thread(mp_media_t *m)
 {
 	os_set_thread_name("mp_media_thread");
 
-	if (!init_avformat(m)) {
+	if (!mp_media_init2(m)) {
 		return false;
 	}
 	if (!mp_media_reset(m, true)) {
@@ -808,7 +844,8 @@ static inline bool mp_media_thread(mp_media_t *m)
 	}
 
 	for (;;) {
-		bool reset, kill, is_active, seek, pause, reset_time;
+		bool reset, kill, is_active, seek, pause, reset_time,
+			preload_frame;
 		int64_t seek_pos;
 		bool timeout = false;
 
@@ -833,10 +870,12 @@ static inline bool mp_media_thread(mp_media_t *m)
 		m->reset = false;
 		m->kill = false;
 
+		preload_frame = m->preload_frame;
 		pause = m->pause;
 		seek_pos = m->seek_pos;
 		seek = m->seek;
 		reset_time = m->reset_ts;
+		m->preload_frame = false;
 		m->seek = false;
 		m->reset_ts = false;
 
@@ -868,6 +907,12 @@ static inline bool mp_media_thread(mp_media_t *m)
 		if (pause)
 			continue;
 
+		/* see note in mp_media_prepare_frames() for context on the
+		 * pointer check */
+		if (preload_frame && m->obsframe.data[0] && !is_active) {
+			m->v_preload_cb(m->opaque, &m->obsframe);
+		}
+
 		/* frames are ready */
 		if (is_active && !timeout) {
 			if (m->has_video)
@@ -896,7 +941,8 @@ static void *mp_media_thread_start(void *opaque)
 	mp_media_t *m = opaque;
 
 	if (!mp_media_thread(m)) {
-		if (m->stop_cb) {
+		//PRISM/zengqin/20240111/#2943 #2940/to ignore send stop signal to bgm
+		if (m->stop_cb && !m->ignore_stop) {
 			m->stop_cb(m->opaque);
 		}
 	}
@@ -919,6 +965,9 @@ static inline bool mp_media_init_internal(mp_media_t *m,
 	m->path = info->path ? bstrdup(info->path) : NULL;
 	m->format_name = info->format ? bstrdup(info->format) : NULL;
 	m->hw = info->hardware_decoding;
+
+	if (info->full_decode)
+		return true;
 
 	if (pthread_create(&m->thread, NULL, mp_media_thread_start, m) != 0) {
 		blog(LOG_WARNING, "MP: Could not create media thread");
@@ -944,7 +993,12 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 	media->is_linear_alpha = info->is_linear_alpha;
 	media->buffering = info->buffering;
 	media->speed = info->speed;
+	media->request_preload = info->request_preload;
 	media->is_local_file = info->is_local_file;
+	//PRISM/zengqin/20240111/#2943 #2940 #3682 #3882/for bgm source
+	media->bgm_source = info->bgm_source;
+	media->ignore_stop = false;
+
 	da_init(media->packet_pool);
 
 	if (!info->is_local_file || media->speed < 1 || media->speed > 200)
@@ -952,10 +1006,6 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 
 	static bool initialized = false;
 	if (!initialized) {
-#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
-		av_register_all();
-		avcodec_register_all();
-#endif
 		avdevice_register_all();
 		avformat_network_init();
 		initialized = true;
@@ -1035,6 +1085,16 @@ void mp_media_play_pause(mp_media_t *m, bool pause)
 	os_sem_post(m->sem);
 }
 
+void mp_media_preload_frame(mp_media_t *m)
+{
+	if (m->request_preload && m->thread_valid && m->v_preload_cb) {
+		pthread_mutex_lock(&m->mutex);
+		m->preload_frame = true;
+		pthread_mutex_unlock(&m->mutex);
+		os_sem_post(m->sem);
+	}
+}
+
 void mp_media_stop(mp_media_t *m)
 {
 	pthread_mutex_lock(&m->mutex);
@@ -1048,12 +1108,51 @@ void mp_media_stop(mp_media_t *m)
 	os_sem_post(m->sem);
 }
 
-int64_t mp_get_current_time(mp_media_t *m)
+int64_t mp_media_get_current_time(mp_media_t *m)
 {
 	return mp_media_get_base_pts(m) * (int64_t)m->speed / 100000000LL;
 }
 
-void mp_media_seek_to(mp_media_t *m, int64_t pos)
+int64_t mp_media_get_frames(mp_media_t *m)
+{
+	int64_t frames = 0;
+
+	if (!m->fmt) {
+		return 0;
+	}
+
+	int video_stream_index = av_find_best_stream(m->fmt, AVMEDIA_TYPE_VIDEO,
+						     -1, -1, NULL, 0);
+
+	if (video_stream_index < 0) {
+		blog(LOG_WARNING, "MP: Getting number of frames failed: No "
+				  "video stream in media file!");
+		return 0;
+	}
+
+	AVStream *stream = m->fmt->streams[video_stream_index];
+
+	if (stream->nb_frames > 0) {
+		frames = stream->nb_frames;
+	} else {
+		blog(LOG_DEBUG, "MP: nb_frames not set, estimating using frame "
+				"rate and duration");
+		AVRational avg_frame_rate = stream->avg_frame_rate;
+		frames = (int64_t)ceil((double)m->fmt->duration /
+				       (double)AV_TIME_BASE *
+				       (double)avg_frame_rate.num /
+				       (double)avg_frame_rate.den);
+	}
+
+	return frames;
+}
+
+int64_t mp_media_get_duration(mp_media_t *m)
+{
+	return m->fmt ? m->fmt->duration : 0;
+}
+
+void mp_media_seek(mp_media_t *m, int64_t pos)
 {
 	pthread_mutex_lock(&m->mutex);
 	if (m->active) {

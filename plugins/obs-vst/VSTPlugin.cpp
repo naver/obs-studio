@@ -15,12 +15,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *****************************************************************************/
-
 #include "headers/VSTPlugin.h"
 #include <util/platform.h>
 #include <algorithm>
 #include <QCryptographicHash>
 #include <QApplication>
+//PRISM/Xiewei/20231219/3637/add log
+#include <pls/pls-obs-api.h>
 
 #define SCAN_VST_TIMEOUT 60000 // in milliseconds
 
@@ -45,7 +46,8 @@ ScanVstInfo::ScanVstInfo(std::string vst)
 ScanVstInfo::~ScanVstInfo() {}
 
 ScanVstThread::ScanVstThread(VSTPlugin *p, void *s)
-	: plugin(p), sourceContext(s)
+	: plugin(p),
+	  sourceContext(s)
 {
 	qRegisterMetaType<SCAN_VST_INFO_PTR>("SCAN_VST_INFO_PTR");
 
@@ -78,7 +80,8 @@ void ScanVstThread::stopScanVST()
 
 void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 {
-	enum obs_vst_verify_state result = VST_STATUS_UNKNOWN_ERROR;
+	//enum obs_vst_verify_state result = VST_STATUS_UNKNOWN_ERROR;
+	std::optional<obs_vst_verify_state> result = std::nullopt;
 
 	char *exe_path = os_get_executable_path_ptr(VST_CHECK);
 
@@ -93,13 +96,26 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 #elif defined(__APPLE__)
 	auto pluginPath = getVstLibraryPath();
 	QString module_file_name =
-		QStringLiteral("--vst-module-path=") + QString::fromUtf8(pluginPath.c_str(), pluginPath.length());
+		QStringLiteral("--vst-module-path=") +
+		QString::fromUtf8(pluginPath.c_str(), pluginPath.length());
 #endif
 
-    if(scanProcess->state() == QProcess::Running)
-        scanProcess->kill();
-    
+	if (scanProcess->state() == QProcess::Running)
+		scanProcess->kill();
+
 	auto st = os_gettime_ns();
+
+#if defined(_WIN32)
+	scanProcess->setCreateProcessArgumentsModifier(
+		[](QProcess::CreateProcessArguments *args) {
+			STARTUPINFO si = {};
+			si.cb = sizeof(STARTUPINFO);
+			si.dwFlags = STARTF_FORCEOFFFEEDBACK;
+			si.wShowWindow = SW_HIDE;
+			memcpy(args->startupInfo, &si, sizeof(STARTUPINFO));
+		});
+#endif
+
 	scanProcess->start(QString::fromUtf8(exe_path),
 			   {vst_path, module_file_name});
 	if (exe_path)
@@ -107,7 +123,7 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 
 	if (!scanProcess->waitForStarted(SCAN_VST_TIMEOUT)) {
 		warn("Failed to wait scan result for start process failed.");
-		result = VST_STATUS_UNKNOWN_ERROR;
+		result = VST_STATUS_PROCESS_FAILED_TO_START;
 
 	} else if (scanProcess->waitForFinished(SCAN_VST_TIMEOUT)) {
 
@@ -116,7 +132,7 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 		scanProcess->kill();
 
 		auto tm = os_gettime_ns() - st;
-		info("Scan process exit code: %u, take time: %u ms", exitCode,
+		info("Scan process exit code: %u, take time: %llu ms", exitCode,
 		     tm / 1000000);
 
 		if (exitStatus == QProcess::CrashExit) {
@@ -125,7 +141,8 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 		} else {
 			if (exitCode < VST_STATUS_SCAN_RESULT_END) {
 				result = (enum obs_vst_verify_state)exitCode;
-			} else if (exitCode > VST_STATUS_PROCESS_DISAPPEAR) {
+			} else if (exitCode >
+				   VST_STATUS_PROCESS_UNKNOWN_ERROR) {
 				warn("Scan process return unknown exit code: %u, it will be treated as CRASH",
 				     exitCode);
 				result = VST_STATUS_CRASH;
@@ -142,7 +159,7 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 		switch (error) {
 		case QProcess::FailedToStart:
 			warn("Failed to wait scan result for start process failed.");
-			result = VST_STATUS_UNKNOWN_ERROR;
+			result = VST_STATUS_PROCESS_FAILED_TO_START;
 			break;
 		case QProcess::Crashed:
 			warn("Failed to wait scan result for Scan VST crashed.");
@@ -154,16 +171,15 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 			break;
 		case QProcess::ReadError:
 			warn("Failed to wait scan result for read error.");
-			result = VST_STATUS_UNKNOWN_ERROR;
+			result = VST_STATUS_PROCESS_READ_ERROR;
 			break;
 		case QProcess::WriteError:
 			warn("Failed to wait scan result for write error.");
-			result = VST_STATUS_UNKNOWN_ERROR;
+			result = VST_STATUS_PROCESS_WRITE_ERROR;
 			break;
 		case QProcess::UnknownError:
-			warn("Failed to wait scan result. res:%u LastError:%u",
-			     error);
-			result = VST_STATUS_UNKNOWN_ERROR;
+			warn("Failed to wait scan result. LastError:%u", error);
+			result = VST_STATUS_PROCESS_UNKNOWN_ERROR;
 			assert(false);
 			break;
 		default:
@@ -172,7 +188,12 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 	}
 
 	if (!info->isCanceled()) {
-		info->state = result;
+		if (result.has_value()) {
+			info->state = result.value();
+		} else {
+			warn("No vst check result, set it to unknown error.");
+			info->state = VST_STATUS_UNKNOWN_ERROR;
+		}
 		QMetaObject::invokeMethod(plugin, "scanFinish",
 					  Q_ARG(SCAN_VST_INFO_PTR, info));
 	}
@@ -182,6 +203,8 @@ intptr_t VSTPlugin::hostCallback_static(AEffect *effect, int32_t opcode,
 					int32_t index, intptr_t value,
 					void *ptr, float opt)
 {
+	UNUSED_PARAMETER(opt);
+
 	VSTPlugin *plugin = nullptr;
 	if (effect && effect->user) {
 		plugin = static_cast<VSTPlugin *>(effect->user);
@@ -203,6 +226,10 @@ intptr_t VSTPlugin::hostCallback_static(AEffect *effect, int32_t opcode,
 			return (intptr_t)plugin->GetSampleRate();
 		}
 		return 0;
+
+	case audioMasterGetVendorString:
+		strncpy((char *)ptr, "OBS Studio", 11);
+		return 1;
 
 	case audioMasterGetTime:
 		if (plugin) {
@@ -328,11 +355,9 @@ void VSTPlugin::checkActionLog(const std::string &path)
 		std::string target =
 			QFileInfo(path.c_str()).fileName().toStdString();
 
-		//obs_source_action_event_notify(
-		//sourceContext, OBS_SOURCE_VST_CHANGED, "init", "plugin", "vstPlugin", target.c_str());
-
-		//const char *fields[][2] = {{"plugin", "obs-vst"}, {"editEvent", target.c_str()}};
-		//blogex(false, LOG_INFO, fields, 2, "Nelo action log. <obs-vst> [editEvent : %s]", target.c_str());
+		obs_data_t *log = obs_data_create();
+		obs_data_set_string(log, "vstPlugin", target.c_str());
+		pls_source_send_message(sourceContext, OBS_SOURCE_VST_CHANGED, log);
 	}
 }
 
@@ -819,7 +844,7 @@ std::string getStateString(enum obs_vst_verify_state state)
 	default: {
 		assert(false);
 		char buf[200];
-		sprintf(buf, "Unknown_State_%u", state);
+		snprintf(buf, 200, "Unknown_State_%u", state);
 		return buf;
 	}
 	}

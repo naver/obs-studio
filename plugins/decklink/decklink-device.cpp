@@ -110,9 +110,17 @@ bool DeckLinkDevice::Init()
 	attributes->GetFlag(BMDDeckLinkSupportsInternalKeying,
 			    &supportsInternalKeyer);
 
+	attributes->GetFlag(BMDDeckLinkSupportsHDRMetadata,
+			    &supportsHDRMetadata);
+
 	// Sub Device Counts
 	attributes->GetInt(BMDDeckLinkSubDeviceIndex, &subDeviceIndex);
 	attributes->GetInt(BMDDeckLinkNumberOfSubDevices, &numSubDevices);
+
+	if (FAILED(attributes->GetInt(BMDDeckLinkMinimumPrerollFrames,
+				      &minimumPrerollFrames))) {
+		minimumPrerollFrames = 3;
+	}
 
 	decklink_string_t decklinkModelName;
 	decklink_string_t decklinkDisplayName;
@@ -245,6 +253,11 @@ bool DeckLinkDevice::GetSupportsInternalKeyer(void) const
 	return supportsInternalKeyer;
 }
 
+bool DeckLinkDevice::GetSupportsHDRMetadata(void) const
+{
+	return supportsHDRMetadata;
+}
+
 int64_t DeckLinkDevice::GetSubDeviceCount()
 {
 	return numSubDevices;
@@ -253,6 +266,11 @@ int64_t DeckLinkDevice::GetSubDeviceCount()
 int64_t DeckLinkDevice::GetSubDeviceIndex()
 {
 	return subDeviceIndex;
+}
+
+int64_t DeckLinkDevice::GetMinimumPrerollFrames()
+{
+	return minimumPrerollFrames;
 }
 
 const std::string &DeckLinkDevice::GetName(void) const

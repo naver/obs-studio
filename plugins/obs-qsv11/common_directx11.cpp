@@ -2,10 +2,10 @@
 
 #include <map>
 
-ID3D11Device *g_pD3D11Device;
-ID3D11DeviceContext *g_pD3D11Ctx;
-IDXGIFactory2 *g_pDXGIFactory;
-IDXGIAdapter *g_pAdapter;
+ID3D11Device *g_pD3D11Device = nullptr;
+ID3D11DeviceContext *g_pD3D11Ctx = nullptr;
+IDXGIFactory2 *g_pDXGIFactory = nullptr;
+IDXGIAdapter *g_pAdapter = nullptr;
 
 std::map<mfxMemId *, mfxHDL> allocResponses;
 std::map<mfxHDL, mfxFrameAllocResponse> allocDecodeResponses;
@@ -136,7 +136,7 @@ CComPtr<ID3D11DeviceContext> GetHWDeviceContext()
 	return g_pD3D11Ctx;
 }
 
-/* (Hugh) Functions currently unused */
+/* (Lain) Functions currently unused */
 #if 0
 void ClearYUVSurfaceD3D(mfxMemId memId)
 {

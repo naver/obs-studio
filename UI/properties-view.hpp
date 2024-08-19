@@ -51,7 +51,9 @@ private:
 public:
 	inline WidgetInfo(OBSPropertiesView *view_, obs_property_t *prop,
 			  QWidget *widget_)
-		: view(view_), property(prop), widget(widget_)
+		: view(view_),
+		  property(prop),
+		  widget(widget_)
 	{
 	}
 
@@ -77,8 +79,6 @@ public slots:
 	void EditListEdit();
 	void EditListUp();
 	void EditListDown();
-	void EditListReordered(const QModelIndex &parent, int start, int end,
-			       const QModelIndex &destination, int row);
 };
 
 /* ------------------------------------------------------------------------- */
@@ -107,9 +107,11 @@ private:
 	std::string lastFocused;
 	QWidget *lastWidget = nullptr;
 	bool deferUpdate;
+	bool enableDefer = true;
 
-	QWidget *NewWidget(obs_property_t *prop, QWidget *widget,
-			   const char *signal);
+	template<typename Sender, typename SenderParent, typename... Args>
+	QWidget *NewWidget(obs_property_t *prop, Sender *widget,
+			   void (SenderParent::*signal)(Args...));
 
 	QWidget *AddCheckbox(obs_property_t *prop);
 	QWidget *AddText(obs_property_t *prop, QFormLayout *layout,
@@ -138,12 +140,14 @@ private:
 
 	void resizeEvent(QResizeEvent *event) override;
 
-	void GetScrollPos(int &h, int &v);
-	void SetScrollPos(int h, int v);
+	void GetScrollPos(int &h, int &v, int &hend, int &vend);
+	void SetScrollPos(int h, int v, int old_hend, int old_vend);
+
+private slots:
+	void RefreshProperties();
 
 public slots:
 	void ReloadProperties();
-	void RefreshProperties();
 	void SignalChanged();
 
 signals:
@@ -193,6 +197,7 @@ public:
 			visUpdateCb(OBSGetStrongRef(weakObj), settings);
 	}
 	inline bool DeferUpdate() const { return deferUpdate; }
+	inline void SetDeferrable(bool deferrable) { enableDefer = deferrable; }
 
 	inline OBSObject GetObject() const { return OBSGetStrongRef(weakObj); }
 

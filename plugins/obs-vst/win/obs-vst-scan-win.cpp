@@ -96,7 +96,7 @@ bool InitEffect(const wchar_t *path, int *result)
 	}
 
 	if (!effect) {
-		*result = VST_STATUS_UNKNOWN_ERROR;
+		*result = VST_STATUS_EFFECT_NULLPTR;
 		return false;
 	}
 

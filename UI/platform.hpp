@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -101,6 +101,7 @@ bool isInBundle();
 void InstallNSApplicationSubclass();
 void InstallNSThreadLocks();
 void disableColorSpaceConversion(QWidget *window);
+void SetMacOSDarkMode(bool dark);
 
 MacPermissionStatus CheckPermissionWithPrompt(MacPermissionType type,
 					      bool prompt_for_permission);

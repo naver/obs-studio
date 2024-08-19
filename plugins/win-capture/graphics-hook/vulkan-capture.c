@@ -66,6 +66,18 @@ struct vk_queue_data {
 	uint32_t frame_count;
 };
 
+struct vk_swap_view_data {
+	struct vk_obj_node node;
+};
+
+#define OBS_COLOR_ATTACHMENT_LIMIT 8
+struct vk_framebuffer_data {
+	struct vk_obj_node node;
+
+	VkFramebuffer alternates[1 << OBS_COLOR_ATTACHMENT_LIMIT];
+	uint32_t color_attachment_mask;
+};
+
 struct vk_frame_data {
 	VkCommandPool cmd_pool;
 	VkCommandBuffer cmd_buffer;
@@ -103,6 +115,8 @@ struct vk_data {
 	struct vk_swap_data *cur_swap;
 
 	struct vk_obj_list queues;
+	struct vk_obj_list swap_views;
+	struct vk_obj_list framebuffers;
 
 	VkExternalMemoryProperties external_mem_props;
 
@@ -247,6 +261,13 @@ static struct vk_data *get_device_data_by_queue(VkQueue queue)
 					      (uint64_t)GET_LDT(queue));
 }
 
+static struct vk_data *
+get_device_data_by_command_buffer(VkCommandBuffer commandBuffer)
+{
+	return (struct vk_data *)get_obj_data(&devices,
+					      (uint64_t)GET_LDT(commandBuffer));
+}
+
 static struct vk_data *remove_device_data(VkDevice device)
 {
 	return (struct vk_data *)remove_obj_data(&devices,
@@ -285,11 +306,6 @@ static struct vk_queue_data *get_queue_data(struct vk_data *data, VkQueue queue)
 						    (uint64_t)queue);
 }
 
-static VkQueue get_queue_key(const struct vk_queue_data *queue_data)
-{
-	return (VkQueue)(uintptr_t)queue_data->node.obj;
-}
-
 static void remove_free_queue_all(struct vk_data *data,
 				  const VkAllocationCallbacks *ac)
 {
@@ -317,6 +333,73 @@ static struct vk_queue_data *queue_walk_next(struct vk_queue_data *queue_data)
 static void queue_walk_end(struct vk_data *data)
 {
 	obj_walk_end(&data->queues);
+}
+
+/* ------------------------------------------------------------------------- */
+
+static struct vk_swap_view_data *
+add_swap_view_data(struct vk_data *data, VkImageView imageView,
+		   const VkAllocationCallbacks *ac)
+{
+	struct vk_swap_view_data *const swap_view_data =
+		vk_alloc(ac, sizeof(struct vk_swap_view_data),
+			 _Alignof(struct vk_swap_view_data),
+			 VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+	add_obj_data(&data->swap_views, (uint64_t)imageView, swap_view_data);
+	return swap_view_data;
+}
+
+static struct vk_swap_view_data *get_swap_view_data(struct vk_data *data,
+						    VkImageView imageView)
+{
+	return (struct vk_swap_view_data *)get_obj_data(&data->swap_views,
+							(uint64_t)imageView);
+}
+
+static void remove_free_swap_view_data(struct vk_data *data,
+				       VkImageView imageView,
+				       const VkAllocationCallbacks *ac)
+{
+	struct vk_swap_data *const swap_view_data =
+		(struct vk_swap_data *)remove_obj_data(&data->swap_views,
+						       (uint64_t)imageView);
+	vk_free(ac, swap_view_data);
+}
+
+/* ------------------------------------------------------------------------- */
+
+static struct vk_framebuffer_data *
+add_framebuffer_data(struct vk_data *data, VkFramebuffer framebuffer,
+		     const VkAllocationCallbacks *ac)
+{
+	struct vk_framebuffer_data *const framebuffer_data =
+		vk_alloc(ac, sizeof(struct vk_framebuffer_data),
+			 _Alignof(struct vk_framebuffer_data),
+			 VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+	add_obj_data(&data->framebuffers, (uint64_t)framebuffer,
+		     framebuffer_data);
+	for (size_t i = 0; i < _countof(framebuffer_data->alternates); ++i) {
+		framebuffer_data->alternates[i] = VK_NULL_HANDLE;
+	}
+	framebuffer_data->color_attachment_mask = 0;
+	return framebuffer_data;
+}
+
+static struct vk_framebuffer_data *
+get_framebuffer_data(struct vk_data *data, VkFramebuffer framebuffer)
+{
+	return (struct vk_framebuffer_data *)get_obj_data(
+		&data->framebuffers, (uint64_t)framebuffer);
+}
+
+static void remove_free_framebuffer_data(struct vk_data *data,
+					 VkFramebuffer framebuffer,
+					 const VkAllocationCallbacks *ac)
+{
+	struct vk_swap_data *const framebuffer_data =
+		(struct vk_swap_data *)remove_obj_data(&data->framebuffers,
+						       (uint64_t)framebuffer);
+	vk_free(ac, framebuffer_data);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -548,13 +631,15 @@ static inline bool vk_shtex_init_d3d11(struct vk_data *data)
 	IDXGIAdapter1 *adapter;
 	HRESULT hr;
 
-	HMODULE d3d11 = load_system_library("d3d11.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	HMODULE d3d11 = load_system_library(L"d3d11.dll");
 	if (!d3d11) {
 		flog("failed to load d3d11: %d", GetLastError());
 		return false;
 	}
 
-	HMODULE dxgi = load_system_library("dxgi.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	HMODULE dxgi = load_system_library(L"dxgi.dll");
 	if (!dxgi) {
 		flog("failed to load dxgi: %d", GetLastError());
 		return false;
@@ -1468,6 +1553,8 @@ static VkResult VKAPI_CALL OBS_CreateDevice(VkPhysicalDevice phy_device,
 		return VK_ERROR_OUT_OF_HOST_MEMORY;
 
 	init_obj_list(&data->queues);
+	init_obj_list(&data->swap_views);
+	init_obj_list(&data->framebuffers);
 
 	/* -------------------------------------------------------- */
 	/* create device and initialize hook data                   */
@@ -1502,6 +1589,10 @@ static VkResult VKAPI_CALL OBS_CreateDevice(VkPhysicalDevice phy_device,
 			funcs_found = false;               \
 		}                                          \
 	} while (false)
+#define GETADDR_OPTIONAL(x)                                \
+	do {                                               \
+		dfuncs->x = (void *)gdpa(device, "vk" #x); \
+	} while (false)
 
 	GETADDR(GetDeviceProcAddr);
 	GETADDR(DestroyDevice);
@@ -1531,6 +1622,14 @@ static VkResult VKAPI_CALL OBS_CreateDevice(VkPhysicalDevice phy_device,
 	GETADDR(DestroyFence);
 	GETADDR(WaitForFences);
 	GETADDR(ResetFences);
+	GETADDR(CreateImageView);
+	GETADDR(DestroyImageView);
+	GETADDR(CreateFramebuffer);
+	GETADDR(DestroyFramebuffer);
+	GETADDR(CmdBeginRenderPass);
+	GETADDR_OPTIONAL(CmdBeginRenderPass2KHR);
+	GETADDR_OPTIONAL(CmdBeginRenderPass2);
+#undef GETADDR_OPTIONAL
 #undef GETADDR
 
 	if (!funcs_found) {
@@ -1699,7 +1798,6 @@ OBS_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *cinfo,
 	if ((res == VK_SUCCESS) && (count > 0)) {
 		struct vk_swap_data *swap_data = alloc_swap_data(ac);
 		if (swap_data) {
-			init_swap_data(swap_data, data, sc);
 			swap_data->swap_images = vk_alloc(
 				ac, count * sizeof(VkImage), _Alignof(VkImage),
 				VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
@@ -1719,10 +1817,351 @@ OBS_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *cinfo,
 			swap_data->shtex_info = NULL;
 			swap_data->d3d11_tex = NULL;
 			swap_data->captured = false;
+			init_swap_data(swap_data, data, sc);
 		}
 	}
 
 	return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL
+OBS_CreateImageView(VkDevice device, const VkImageViewCreateInfo *pCreateInfo,
+		    const VkAllocationCallbacks *pAllocator, VkImageView *pView)
+{
+	bool from_swap_chain = false;
+
+	struct vk_data *const data = get_device_data(device);
+	if (data->valid) {
+		struct vk_swap_data *swap = swap_walk_begin(data);
+
+		while (swap) {
+			for (uint32_t i = 0, count = swap->image_count;
+			     i < count; ++i) {
+				from_swap_chain = swap->swap_images[i] ==
+						  pCreateInfo->image;
+				if (from_swap_chain)
+					break;
+			}
+			if (from_swap_chain)
+				break;
+
+			swap = swap_walk_next(swap);
+		}
+
+		swap_walk_end(data);
+	}
+
+	if (from_swap_chain) {
+		const void *pCurrent = pCreateInfo->pNext;
+		while (pCurrent) {
+			VkBaseInStructure baseIn;
+			memcpy(&baseIn, pCurrent, sizeof(baseIn));
+			if (baseIn.sType ==
+			    VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO) {
+				((VkImageViewUsageCreateInfo *)pCurrent)
+					->usage |=
+					VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+				break;
+			}
+
+			pCurrent = baseIn.pNext;
+		}
+	}
+
+	const PFN_vkCreateImageView func = data->funcs.CreateImageView;
+	VkResult result = func(device, pCreateInfo, pAllocator, pView);
+	if ((result == VK_SUCCESS) && from_swap_chain)
+		add_swap_view_data(data, *pView, pAllocator);
+	return result;
+}
+
+static void VKAPI_CALL
+OBS_DestroyImageView(VkDevice device, VkImageView imageView,
+		     const VkAllocationCallbacks *pAllocator)
+{
+	struct vk_data *const data = get_device_data(device);
+
+	if (data->valid && (imageView != VK_NULL_HANDLE)) {
+		struct vk_swap_view_data *swap_view_data =
+			get_swap_view_data(data, imageView);
+		if (swap_view_data)
+			remove_free_swap_view_data(data, imageView, pAllocator);
+	}
+
+	data->funcs.DestroyImageView(device, imageView, pAllocator);
+}
+
+static void generate_framebuffer_variants(
+	PFN_vkCreateFramebuffer func, VkDevice device,
+	const VkFramebufferCreateInfo *pCreateInfo,
+	const VkAllocationCallbacks *pAllocator,
+	struct vk_framebuffer_data *framebuffer_data,
+	const VkFramebufferAttachmentsCreateInfo *pAttachmentsCreateInfo,
+	uint32_t colorCount)
+{
+	const uint32_t variantCount = 1 << colorCount;
+	for (uint32_t colorMask = 0; colorMask < variantCount; ++colorMask) {
+		VkImageUsageFlags pPreviousUsage[OBS_COLOR_ATTACHMENT_LIMIT];
+		uint32_t colorIndex = 0;
+		for (uint32_t infoIndex = 0,
+			      count = pAttachmentsCreateInfo
+					      ->attachmentImageInfoCount;
+		     infoIndex < count; ++infoIndex) {
+			const VkFramebufferAttachmentImageInfo *const pInfo =
+				&pAttachmentsCreateInfo
+					 ->pAttachmentImageInfos[infoIndex];
+			const VkImageUsageFlags usage = pInfo->usage;
+			if (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
+				pPreviousUsage[colorIndex] = usage;
+				if (colorMask & (1 << colorIndex)) {
+					((VkFramebufferAttachmentImageInfo *)
+						 pInfo)
+						->usage |=
+						VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+				}
+
+				++colorIndex;
+				if (colorIndex == OBS_COLOR_ATTACHMENT_LIMIT)
+					break;
+			}
+		}
+
+		VkFramebuffer framebuffer;
+		const VkResult result =
+			func(device, pCreateInfo, pAllocator, &framebuffer);
+		if (result == VK_SUCCESS)
+			framebuffer_data->alternates[colorMask] = framebuffer;
+
+		colorIndex = 0;
+		for (uint32_t infoIndex = 0,
+			      count = pAttachmentsCreateInfo
+					      ->attachmentImageInfoCount;
+		     infoIndex < count; ++infoIndex) {
+			const VkFramebufferAttachmentImageInfo *const pInfo =
+				&pAttachmentsCreateInfo
+					 ->pAttachmentImageInfos[infoIndex];
+			if (pInfo->usage &
+			    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
+				if (colorMask & (1 << colorIndex)) {
+					((VkFramebufferAttachmentImageInfo *)
+						 pInfo)
+						->usage =
+						pPreviousUsage[colorIndex];
+				}
+
+				++colorIndex;
+				if (colorIndex == OBS_COLOR_ATTACHMENT_LIMIT)
+					break;
+			}
+		}
+	}
+}
+
+static VkResult VKAPI_CALL OBS_CreateFramebuffer(
+	VkDevice device, const VkFramebufferCreateInfo *pCreateInfo,
+	const VkAllocationCallbacks *pAllocator, VkFramebuffer *pFramebuffer)
+{
+	struct vk_data *const data = get_device_data(device);
+	const PFN_vkCreateFramebuffer func = data->funcs.CreateFramebuffer;
+	VkResult result = func(device, pCreateInfo, pAllocator, pFramebuffer);
+	if (data->valid && (result == VK_SUCCESS) &&
+	    (pCreateInfo->flags & VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT)) {
+		struct vk_framebuffer_data *const framebuffer_data =
+			add_framebuffer_data(data, *pFramebuffer, pAllocator);
+		const void *pCurrent = pCreateInfo->pNext;
+		while (pCurrent) {
+			VkBaseInStructure baseIn;
+			memcpy(&baseIn, pCurrent, sizeof(baseIn));
+			if (baseIn.sType ==
+			    VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENTS_CREATE_INFO) {
+				uint32_t attachmentMask = 0;
+				uint32_t colorCount = 0;
+				const VkFramebufferAttachmentsCreateInfo *const
+					pAttachmentsCreateInfo = pCurrent;
+				for (uint32_t
+					     infoIndex = 0,
+					     count = min(
+						     sizeof(attachmentMask) * 8,
+						     pAttachmentsCreateInfo
+							     ->attachmentImageInfoCount);
+				     infoIndex < count; ++infoIndex) {
+					if (pAttachmentsCreateInfo
+						    ->pAttachmentImageInfos
+							    [infoIndex]
+						    .usage &
+					    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) {
+						attachmentMask |= 1
+								  << infoIndex;
+						++colorCount;
+						if (colorCount ==
+						    OBS_COLOR_ATTACHMENT_LIMIT)
+							break;
+					}
+				}
+
+				generate_framebuffer_variants(
+					func, device, pCreateInfo, pAllocator,
+					framebuffer_data,
+					pAttachmentsCreateInfo, colorCount);
+				framebuffer_data->color_attachment_mask =
+					attachmentMask;
+				break;
+			}
+
+			pCurrent = baseIn.pNext;
+		}
+	}
+
+	return result;
+}
+
+static void VKAPI_CALL
+OBS_DestroyFramebuffer(VkDevice device, VkFramebuffer framebuffer,
+		       const VkAllocationCallbacks *pAllocator)
+{
+	struct vk_data *const data = get_device_data(device);
+	struct vk_device_funcs *const funcs = &data->funcs;
+
+	if (data->valid && (framebuffer != VK_NULL_HANDLE)) {
+		struct vk_framebuffer_data *framebuffer_data =
+			get_framebuffer_data(data, framebuffer);
+		if (framebuffer_data) {
+			for (size_t i = 0;
+			     i < _countof(framebuffer_data->alternates); ++i) {
+				if (framebuffer_data->alternates[i] !=
+				    VK_NULL_HANDLE) {
+					funcs->DestroyFramebuffer(
+						device,
+						framebuffer_data->alternates[i],
+						pAllocator);
+					framebuffer_data->alternates[i] =
+						VK_NULL_HANDLE;
+				}
+			}
+
+			remove_free_framebuffer_data(data, framebuffer,
+						     pAllocator);
+		}
+	}
+
+	funcs->DestroyFramebuffer(device, framebuffer, pAllocator);
+}
+
+static const VkRenderPassBeginInfo *
+process_render_pass_begin_info(const VkRenderPassBeginInfo *pRenderPassBegin,
+			       VkRenderPassBeginInfo *pAlternateBegin,
+			       struct vk_data *data)
+{
+	const void *pCurrent = pRenderPassBegin->pNext;
+	while (pCurrent) {
+		VkBaseInStructure baseIn;
+		memcpy(&baseIn, pCurrent, sizeof(baseIn));
+		if (baseIn.sType ==
+		    VK_STRUCTURE_TYPE_RENDER_PASS_ATTACHMENT_BEGIN_INFO) {
+			struct vk_framebuffer_data *const framebuffer_data =
+				get_framebuffer_data(
+					data, pRenderPassBegin->framebuffer);
+			if (framebuffer_data) {
+				const VkRenderPassAttachmentBeginInfo
+					*const pAttachmentInfo = pCurrent;
+				uint32_t swapMask = 0;
+				uint32_t colorIndex = 0;
+				for (uint32_t infoIndex = 0,
+					      count = pAttachmentInfo
+							      ->attachmentCount;
+				     infoIndex < count; ++infoIndex) {
+					if (framebuffer_data
+						    ->color_attachment_mask &
+					    (1 << infoIndex)) {
+						if (get_swap_view_data(
+							    data,
+							    pAttachmentInfo->pAttachments
+								    [infoIndex])) {
+							swapMask |=
+								1 << colorIndex;
+						}
+
+						++colorIndex;
+						if (colorIndex ==
+						    OBS_COLOR_ATTACHMENT_LIMIT)
+							break;
+					}
+				}
+
+				if (swapMask > 0) {
+					VkFramebuffer alternate =
+						framebuffer_data
+							->alternates[swapMask];
+					if (alternate != VK_NULL_HANDLE) {
+						*pAlternateBegin =
+							*pRenderPassBegin;
+						pAlternateBegin->framebuffer =
+							framebuffer_data->alternates
+								[swapMask];
+						pRenderPassBegin =
+							pAlternateBegin;
+					}
+				}
+			}
+
+			break;
+		}
+
+		pCurrent = baseIn.pNext;
+	}
+
+	return pRenderPassBegin;
+}
+
+static void VKAPI_CALL
+OBS_CmdBeginRenderPass(VkCommandBuffer commandBuffer,
+		       const VkRenderPassBeginInfo *pRenderPassBegin,
+		       VkSubpassContents contents)
+{
+	struct vk_data *const data =
+		get_device_data_by_command_buffer(commandBuffer);
+	VkRenderPassBeginInfo alternateBegin;
+	if (data->valid) {
+		pRenderPassBegin = process_render_pass_begin_info(
+			pRenderPassBegin, &alternateBegin, data);
+	}
+
+	data->funcs.CmdBeginRenderPass(commandBuffer, pRenderPassBegin,
+				       contents);
+}
+
+static void VKAPI_CALL
+OBS_CmdBeginRenderPass2KHR(VkCommandBuffer commandBuffer,
+			   const VkRenderPassBeginInfo *pRenderPassBegin,
+			   const VkSubpassBeginInfo *pSubpassBeginInfo)
+{
+	struct vk_data *const data =
+		get_device_data_by_command_buffer(commandBuffer);
+	VkRenderPassBeginInfo alternateBegin;
+	if (data->valid) {
+		pRenderPassBegin = process_render_pass_begin_info(
+			pRenderPassBegin, &alternateBegin, data);
+	}
+
+	data->funcs.CmdBeginRenderPass2KHR(commandBuffer, pRenderPassBegin,
+					   pSubpassBeginInfo);
+}
+
+static void VKAPI_CALL
+OBS_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
+			const VkRenderPassBeginInfo *pRenderPassBegin,
+			const VkSubpassBeginInfo *pSubpassBeginInfo)
+{
+	struct vk_data *const data =
+		get_device_data_by_command_buffer(commandBuffer);
+	VkRenderPassBeginInfo alternateBegin;
+	if (data->valid) {
+		pRenderPassBegin = process_render_pass_begin_info(
+			pRenderPassBegin, &alternateBegin, data);
+	}
+
+	data->funcs.CmdBeginRenderPass2(commandBuffer, pRenderPassBegin,
+					pSubpassBeginInfo);
 }
 
 static void VKAPI_CALL OBS_DestroySwapchainKHR(VkDevice device,
@@ -1776,6 +2215,7 @@ static void VKAPI_CALL OBS_DestroySurfaceKHR(VkInstance inst, VkSurfaceKHR surf,
 	destroy_surface(inst, surf, ac);
 }
 
+/* clang-format off */
 #define GETPROCADDR(func)               \
 	if (!strcmp(pName, "vk" #func)) \
 		return (PFN_vkVoidFunction)&OBS_##func;
@@ -1783,6 +2223,7 @@ static void VKAPI_CALL OBS_DestroySurfaceKHR(VkInstance inst, VkSurfaceKHR surf,
 #define GETPROCADDR_IF_SUPPORTED(func)  \
 	if (!strcmp(pName, "vk" #func)) \
 		return funcs->func ? (PFN_vkVoidFunction)&OBS_##func : NULL;
+/* clang-format on */
 
 static PFN_vkVoidFunction VKAPI_CALL OBS_GetDeviceProcAddr(VkDevice device,
 							   const char *pName)
@@ -1797,6 +2238,13 @@ static PFN_vkVoidFunction VKAPI_CALL OBS_GetDeviceProcAddr(VkDevice device,
 	GETPROCADDR_IF_SUPPORTED(CreateSwapchainKHR);
 	GETPROCADDR_IF_SUPPORTED(DestroySwapchainKHR);
 	GETPROCADDR_IF_SUPPORTED(QueuePresentKHR);
+	GETPROCADDR(CreateImageView);
+	GETPROCADDR(DestroyImageView);
+	GETPROCADDR(CreateFramebuffer);
+	GETPROCADDR(DestroyFramebuffer);
+	GETPROCADDR(CmdBeginRenderPass);
+	GETPROCADDR_IF_SUPPORTED(CmdBeginRenderPass2KHR);
+	GETPROCADDR_IF_SUPPORTED(CmdBeginRenderPass2);
 
 	if (funcs->GetDeviceProcAddr == NULL)
 		return NULL;

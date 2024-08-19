@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,169 +15,32 @@
  */
 
 #include <ctype.h>
+
 #include "dstr.h"
 #include "text-lookup.h"
 #include "lexer.h"
 #include "platform.h"
-
-//PRISM/Zhangdewen/20230105/#/for translation can't find when first letter is lowercase
-#include <ctype.h>
+#include "uthash.h"
 
 /* ------------------------------------------------------------------------- */
 
-struct text_leaf {
+struct text_item {
 	char *lookup, *value;
+	UT_hash_handle hh;
 };
 
-static inline void text_leaf_destroy(struct text_leaf *leaf)
+static inline void text_item_destroy(struct text_item *item)
 {
-	if (leaf) {
-		bfree(leaf->lookup);
-		bfree(leaf->value);
-		bfree(leaf);
-	}
-}
-
-/* ------------------------------------------------------------------------- */
-
-struct text_node {
-	struct dstr str;
-	struct text_node *first_subnode;
-	struct text_leaf *leaf;
-
-	struct text_node *next;
-};
-
-static void text_node_destroy(struct text_node *node)
-{
-	struct text_node *subnode;
-
-	if (!node)
-		return;
-
-	subnode = node->first_subnode;
-	while (subnode) {
-		struct text_node *destroy_node = subnode;
-
-		subnode = subnode->next;
-		text_node_destroy(destroy_node);
-	}
-
-	dstr_free(&node->str);
-	if (node->leaf)
-		text_leaf_destroy(node->leaf);
-	bfree(node);
-}
-
-static struct text_node *text_node_bychar(struct text_node *node, char ch)
-{
-	struct text_node *subnode = node->first_subnode;
-
-	while (subnode) {
-		if (!dstr_is_empty(&subnode->str) &&
-		    //PRISM/Zhangdewen/20230105/#/for translation can't find when first letter is lowercase
-		    tolower(subnode->str.array[0]) == tolower(ch))
-			return subnode;
-
-		subnode = subnode->next;
-	}
-
-	return NULL;
-}
-
-static struct text_node *text_node_byname(struct text_node *node,
-					  const char *name)
-{
-	struct text_node *subnode = node->first_subnode;
-
-	while (subnode) {
-		if (astrcmpi_n(subnode->str.array, name, subnode->str.len) == 0)
-			return subnode;
-
-		subnode = subnode->next;
-	}
-
-	return NULL;
+	bfree(item->lookup);
+	bfree(item->value);
+	bfree(item);
 }
 
 /* ------------------------------------------------------------------------- */
 
 struct text_lookup {
-	struct dstr language;
-	struct text_node *top;
+	struct text_item *items;
 };
-
-static void lookup_createsubnode(const char *lookup_val, struct text_leaf *leaf,
-				 struct text_node *node)
-{
-	struct text_node *new = bzalloc(sizeof(struct text_node));
-	new->leaf = leaf;
-	new->next = node->first_subnode;
-	dstr_copy(&new->str, lookup_val);
-
-	node->first_subnode = new;
-}
-
-static void lookup_splitnode(const char *lookup_val, size_t len,
-			     struct text_leaf *leaf, struct text_node *node)
-{
-	struct text_node *split = bzalloc(sizeof(struct text_node));
-
-	dstr_copy(&split->str, node->str.array + len);
-	split->leaf = node->leaf;
-	split->first_subnode = node->first_subnode;
-	node->first_subnode = split;
-
-	dstr_resize(&node->str, len);
-
-	if (lookup_val[len] != 0) {
-		node->leaf = NULL;
-		lookup_createsubnode(lookup_val + len, leaf, node);
-	} else {
-		node->leaf = leaf;
-	}
-}
-
-static inline void lookup_replaceleaf(struct text_node *node,
-				      struct text_leaf *leaf)
-{
-	text_leaf_destroy(node->leaf);
-	node->leaf = leaf;
-}
-
-static void lookup_addstring(const char *lookup_val, struct text_leaf *leaf,
-			     struct text_node *node)
-{
-	struct text_node *child;
-
-	/* value already exists, so replace */
-	if (!lookup_val || !*lookup_val) {
-		lookup_replaceleaf(node, leaf);
-		return;
-	}
-
-	child = text_node_bychar(node, *lookup_val);
-	if (child) {
-		size_t len;
-
-		for (len = 0; len < child->str.len; len++) {
-			char val1 = child->str.array[len],
-			     val2 = lookup_val[len];
-
-			if (val1 != val2)
-				break;
-		}
-
-		if (len == child->str.len) {
-			lookup_addstring(lookup_val + len, leaf, child);
-			return;
-		} else {
-			lookup_splitnode(lookup_val, len, leaf, child);
-		}
-	} else {
-		lookup_createsubnode(lookup_val, leaf, node);
-	}
-}
 
 static void lookup_getstringtoken(struct lexer *lex, struct strref *token)
 {
@@ -288,6 +151,7 @@ static char *convert_string(const char *str, size_t len)
 	dstr_replace(&out, "\\t", "\t");
 	dstr_replace(&out, "\\r", "\r");
 	dstr_replace(&out, "\\\"", "\"");
+
 	// PRISM/Liuying/20230516/#724/replace obs to prism
 	dstr_replace(&out, "OBS Studio", "PRISM Live Studio");
 	dstr_replace(&out, "OBS", "PRISM");
@@ -307,7 +171,8 @@ static void lookup_addfiledata(struct text_lookup *lookup,
 	strref_clear(&value);
 
 	while (lookup_gettoken(&lex, &name)) {
-		struct text_leaf *leaf;
+		struct text_item *item;
+		struct text_item *old;
 		bool got_eq = false;
 
 		if (*name.array == '\n')
@@ -322,14 +187,20 @@ static void lookup_addfiledata(struct text_lookup *lookup,
 			goto getval;
 		}
 
-		leaf = bmalloc(sizeof(struct text_leaf));
-		leaf->lookup = bstrdup_n(name.array, name.len);
-		leaf->value = convert_string(value.array, value.len);
+		item = bzalloc(sizeof(struct text_item));
+		item->lookup = bstrdup_n(name.array, name.len);
+		item->value = convert_string(value.array, value.len);
 
-		for (size_t i = 0; i < name.len; i++)
-			leaf->lookup[i] = toupper(leaf->lookup[i]);
+		//PRISM/wangshaohui/20231122/none/compatible using incorrect key 
+		size_t len = strlen(item->lookup);
+		for (size_t i = 0; i < len; i++) {
+			item->lookup[i] = tolower(item->lookup[i]);
+		}
 
-		lookup_addstring(leaf->lookup, leaf, lookup->top);
+		HASH_REPLACE_STR(lookup->items, lookup, item, old);
+
+		if (old)
+			text_item_destroy(old);
 
 		if (!lookup_goto_nextline(&lex))
 			break;
@@ -338,28 +209,54 @@ static void lookup_addfiledata(struct text_lookup *lookup,
 	lexer_free(&lex);
 }
 
+/*
+//PRISM/wangshaohui/20231122/none/compatible using incorrect key 
 static inline bool lookup_getstring(const char *lookup_val, const char **out,
-				    struct text_node *node)
+				    struct text_lookup *lookup)
 {
-	struct text_node *child;
-	char ch;
+	struct text_item *item;
 
-	if (!node)
+	if (!lookup->items)
 		return false;
 
-	child = text_node_byname(node, lookup_val);
-	if (!child)
+	HASH_FIND_STR(lookup->items, lookup_val, item);
+
+	if (!item)
 		return false;
 
-	lookup_val += child->str.len;
-	ch = *lookup_val;
-	if (ch)
-		return lookup_getstring(lookup_val, out, child);
+	*out = item->value;
+	return true;
+}
+*/
 
-	if (!child->leaf)
+//PRISM/wangshaohui/20231122/none/compatible using incorrect key
+#define MAX_KEY_LEN 256
+static inline bool lookup_getstring(const char *lookup_val, const char **out,
+				    struct text_lookup *lookup)
+{
+	struct text_item *item;
+
+	if (!lookup->items || !lookup_val || !out)
 		return false;
 
-	*out = child->leaf->value;
+	size_t len = strlen(lookup_val);
+	if (len >= MAX_KEY_LEN) {
+		assert(false && "key too long");
+		return false;
+	}
+
+	char key[MAX_KEY_LEN]; // we'd better avoid using heap memory every time
+	for (size_t i = 0; i < len; i++) {
+		key[i] = (char)tolower(lookup_val[i]);
+	}
+	key[len] = 0;
+
+	HASH_FIND_STR(lookup->items, key, item);
+
+	if (!item)
+		return false;
+
+	*out = item->value;
 	return true;
 }
 
@@ -394,9 +291,6 @@ bool text_lookup_add(lookup_t *lookup, const char *path)
 	if (!file_str.array)
 		return false;
 
-	if (!lookup->top)
-		lookup->top = bzalloc(sizeof(struct text_node));
-
 	dstr_replace(&file_str, "\r", " ");
 	lookup_addfiledata(lookup, file_str.array);
 	dstr_free(&file_str);
@@ -407,9 +301,11 @@ bool text_lookup_add(lookup_t *lookup, const char *path)
 void text_lookup_destroy(lookup_t *lookup)
 {
 	if (lookup) {
-		dstr_free(&lookup->language);
-		text_node_destroy(lookup->top);
-
+		struct text_item *item, *tmp;
+		HASH_ITER (hh, lookup->items, item, tmp) {
+			HASH_DELETE(hh, lookup->items, item);
+			text_item_destroy(item);
+		}
 		bfree(lookup);
 	}
 }
@@ -418,6 +314,6 @@ bool text_lookup_getstr(lookup_t *lookup, const char *lookup_val,
 			const char **out)
 {
 	if (lookup)
-		return lookup_getstring(lookup_val, out, lookup->top);
+		return lookup_getstring(lookup_val, out, lookup);
 	return false;
 }

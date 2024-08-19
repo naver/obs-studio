@@ -23,6 +23,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "text-freetype2.h"
 #include "obs-convenience.h"
 #include "find-font.h"
+//PRISM/cao.kewei/20240524/custom font path
+#include <pls/pls-obs-api.h>
 
 FT_Library ft2_lib;
 
@@ -33,7 +35,8 @@ MODULE_EXPORT const char *obs_module_description(void)
 	return "FreeType2 text source";
 }
 
-uint32_t texbuf_w = 2048, texbuf_h = 2048;
+//PRISM/cao.kewei/20240621/PRISM_PC-386/magic numbers
+uint32_t texbuf_w = 4096, texbuf_h = 4096;
 
 static struct obs_source_info freetype2_source_info_v1 = {
 	.id = "text_ft2_source",
@@ -76,6 +79,25 @@ static struct obs_source_info freetype2_source_info_v2 = {
 	.icon_type = OBS_ICON_TYPE_TEXT,
 };
 
+//PRISM/cao.kewei/20240524/custom font path
+static void load_queued_font_paths() {
+#if defined(__APPLE__)
+	char *path;
+	while ((path = (char *)pls_freetype_pop_font_path())) {
+		load_custom_font(path);
+		free(path);
+	}
+	pls_freetype_set_needs_reload(true);
+#endif
+}
+
+void add_font_path(void *data, calldata_t *params) {
+	UNUSED_PARAMETER(data);
+	UNUSED_PARAMETER(params);
+
+	load_queued_font_paths();
+}
+
 static bool plugin_initialized = false;
 
 static void init_plugin(void)
@@ -94,6 +116,9 @@ static void init_plugin(void)
 		load_os_font_list();
 
 	plugin_initialized = true;
+	
+	//PRISM/cao.kewei/20240524/custom font path
+	load_queued_font_paths();
 }
 
 bool obs_module_load()
@@ -106,7 +131,10 @@ bool obs_module_load()
 
 	obs_register_source(&freetype2_source_info_v1);
 	obs_register_source(&freetype2_source_info_v2);
-
+	
+	//PRISM/cao.kewei/20240524/custom font path
+	signal_handler_add(pls_freetype_get_signal(), "void freetype_add_font()");
+	signal_handler_connect(pls_freetype_get_signal(), "freetype_add_font", add_font_path, NULL);
 	return true;
 }
 
@@ -116,6 +144,10 @@ void obs_module_unload(void)
 		free_os_font_list();
 		FT_Done_FreeType(ft2_lib);
 	}
+	
+	//PRISM/cao.kewei/20240524/custom font path
+	signal_handler_disconnect(pls_freetype_get_signal(), "freetype_add_font", add_font_path, NULL);
+	signal_handler_destroy(pls_freetype_get_signal());
 }
 
 static const char *ft2_source_get_name(void *unused)
@@ -138,6 +170,22 @@ static uint32_t ft2_source_get_height(void *data)
 	return srcdata->cy + srcdata->outline_width;
 }
 
+static bool from_file_modified(obs_properties_t *props, obs_property_t *prop,
+			       obs_data_t *settings)
+{
+	UNUSED_PARAMETER(prop);
+
+	bool from_file = obs_data_get_bool(settings, "from_file");
+
+	obs_property_t *text = obs_properties_get(props, "text");
+	obs_property_t *text_file = obs_properties_get(props, "text_file");
+
+	obs_property_set_visible(text, !from_file);
+	obs_property_set_visible(text_file, from_file);
+
+	return true;
+}
+
 static obs_properties_t *ft2_source_properties(void *unused)
 {
 	UNUSED_PARAMETER(unused);
@@ -153,11 +201,23 @@ static obs_properties_t *ft2_source_properties(void *unused)
 
 	obs_properties_add_font(props, "font", obs_module_text("Font"));
 
+	obs_property_t *from_file = obs_properties_add_list(
+		props, "from_file", obs_module_text("TextInputMode"),
+		OBS_COMBO_TYPE_RADIO, OBS_COMBO_FORMAT_BOOL);
+	obs_property_list_add_bool(
+		from_file, obs_module_text("TextInputMode.Manual"), false);
+	obs_property_list_add_bool(
+		from_file, obs_module_text("TextInputMode.FromFile"), true);
+	obs_property_set_modified_callback(from_file, from_file_modified);
+
+	obs_property_t *text_file = obs_properties_add_path(
+		props, "text_file", obs_module_text("TextFile"), OBS_PATH_FILE,
+		obs_module_text("TextFileFilter"), NULL);
+	obs_property_set_long_description(text_file,
+					  obs_module_text("TextFile.Encoding"));
+
 	obs_properties_add_text(props, "text", obs_module_text("Text"),
 				OBS_TEXT_MULTILINE);
-
-	obs_properties_add_bool(props, "from_file",
-				obs_module_text("ReadFromFile"));
 
 	obs_properties_add_bool(props, "antialiasing",
 				obs_module_text("Antialiasing"));
@@ -167,10 +227,6 @@ static obs_properties_t *ft2_source_properties(void *unused)
 
 	obs_properties_add_int(props, "log_lines",
 			       obs_module_text("ChatLogLines"), 1, 1000, 1);
-
-	obs_properties_add_path(props, "text_file", obs_module_text("TextFile"),
-				OBS_PATH_FILE,
-				obs_module_text("TextFileFilter"), NULL);
 
 	obs_properties_add_color_alpha(props, "color1",
 				       obs_module_text("Color1"));
@@ -197,8 +253,11 @@ static void ft2_source_destroy(void *data)
 	struct ft2_source *srcdata = data;
 
 	if (srcdata->font_face != NULL) {
-		FT_Done_Face(srcdata->font_face);
-		srcdata->font_face = NULL;
+		//PRISM/cao.kewei/20240519/#5313/nil check
+		if (srcdata->font_face->family_name) {
+			FT_Done_Face(srcdata->font_face);
+			srcdata->font_face = NULL;
+		}
 	}
 
 	for (uint32_t i = 0; i < num_cache_slots; i++) {
@@ -376,7 +435,10 @@ static void ft2_source_update(void *data, obs_data_t *settings)
 		srcdata->log_lines = log_lines;
 		vbuf_needs_update = true;
 	}
-	srcdata->log_mode = chat_log_mode;
+	if (srcdata->log_mode != chat_log_mode) {
+		srcdata->log_mode = chat_log_mode;
+		vbuf_needs_update = true;
+	}
 
 	if (ft2_lib == NULL)
 		goto error;
@@ -421,7 +483,8 @@ static void ft2_source_update(void *data, obs_data_t *settings)
 		if (strcmp(font_name, srcdata->font_name) == 0 &&
 		    strcmp(font_style, srcdata->font_style) == 0 &&
 		    font_flags == srcdata->font_flags &&
-		    font_size == srcdata->font_size)
+		    font_size == srcdata->font_size &&
+			!pls_freetype_needs_reload())
 			goto skip_font_load;
 
 		bfree(srcdata->font_name);
@@ -430,6 +493,7 @@ static void ft2_source_update(void *data, obs_data_t *settings)
 		srcdata->font_style = NULL;
 		srcdata->max_h = 0;
 		vbuf_needs_update = true;
+		pls_freetype_set_needs_reload(false);
 	}
 
 	srcdata->font_name = bstrdup(font_name);

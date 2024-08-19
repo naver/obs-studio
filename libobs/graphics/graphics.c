@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -82,7 +82,8 @@ void gs_enum_adapters(bool (*callback)(void *param, const char *name,
 		return;
 
 	if (graphics->exports.device_enum_adapters) {
-		if (graphics->exports.device_enum_adapters(callback, param)) {
+		if (graphics->exports.device_enum_adapters(graphics->device,
+							   callback, param)) {
 			return;
 		}
 	}
@@ -2210,7 +2211,7 @@ void gs_swapchain_destroy(gs_swapchain_t *swapchain)
 }
 
 #ifdef __APPLE__
-bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain)
+bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain, bool force)
 {
 	graphics_t *graphics = thread_graphics;
 	
@@ -2219,7 +2220,7 @@ bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain)
 	if (!swapchain)
 		return true;
 	
-	return graphics->exports.gs_swapchain_destroy_if_need(swapchain);
+	return graphics->exports.gs_swapchain_destroy_if_need(swapchain, force);
 }
 #endif // __APPLE__
 
@@ -2924,6 +2925,94 @@ void gs_debug_marker_end(void)
 		thread_graphics->device);
 }
 
+bool gs_texture_create_nv12(gs_texture_t **tex_y, gs_texture_t **tex_uv,
+			    uint32_t width, uint32_t height, uint32_t flags)
+{
+	graphics_t *graphics = thread_graphics;
+	bool success = false;
+
+	if (!gs_valid("gs_texture_create_nv12"))
+		return false;
+
+	if ((width & 1) == 1 || (height & 1) == 1) {
+		blog(LOG_ERROR, "NV12 textures must have dimensions "
+				"divisible by 2.");
+		return false;
+	}
+
+	if (graphics->exports.device_texture_create_nv12) {
+		success = graphics->exports.device_texture_create_nv12(
+			graphics->device, tex_y, tex_uv, width, height, flags);
+		if (success)
+			return true;
+	}
+
+	*tex_y = gs_texture_create(width, height, GS_R8, 1, NULL, flags);
+	*tex_uv = gs_texture_create(width / 2, height / 2, GS_R8G8, 1, NULL,
+				    flags);
+
+	if (!*tex_y || !*tex_uv) {
+		if (*tex_y)
+			gs_texture_destroy(*tex_y);
+		if (*tex_uv)
+			gs_texture_destroy(*tex_uv);
+		*tex_y = NULL;
+		*tex_uv = NULL;
+		return false;
+	}
+
+	return true;
+}
+
+bool gs_texture_create_p010(gs_texture_t **tex_y, gs_texture_t **tex_uv,
+			    uint32_t width, uint32_t height, uint32_t flags)
+{
+	graphics_t *graphics = thread_graphics;
+	bool success = false;
+
+	if (!gs_valid("gs_texture_create_p010"))
+		return false;
+
+	if ((width & 1) == 1 || (height & 1) == 1) {
+		blog(LOG_ERROR, "P010 textures must have dimensions "
+				"divisible by 2.");
+		return false;
+	}
+
+	if (graphics->exports.device_texture_create_p010) {
+		success = graphics->exports.device_texture_create_p010(
+			graphics->device, tex_y, tex_uv, width, height, flags);
+		if (success)
+			return true;
+	}
+
+	*tex_y = gs_texture_create(width, height, GS_R16, 1, NULL, flags);
+	*tex_uv = gs_texture_create(width / 2, height / 2, GS_RG16, 1, NULL,
+				    flags);
+
+	if (!*tex_y || !*tex_uv) {
+		if (*tex_y)
+			gs_texture_destroy(*tex_y);
+		if (*tex_uv)
+			gs_texture_destroy(*tex_uv);
+		*tex_y = NULL;
+		*tex_uv = NULL;
+		return false;
+	}
+
+	return true;
+}
+
+uint32_t gs_get_adapter_count(void)
+{
+	if (!gs_valid("gs_get_adapter_count"))
+		return 0;
+	if (!thread_graphics->exports.gs_get_adapter_count)
+		return 0;
+
+	return thread_graphics->exports.gs_get_adapter_count();
+}
+
 #ifdef __APPLE__
 
 /** Platform specific functions */
@@ -3046,14 +3135,15 @@ bool gs_duplicator_update_frame(gs_duplicator_t *duplicator)
 	return thread_graphics->exports.gs_duplicator_update_frame(duplicator);
 }
 
-uint32_t gs_get_adapter_count(void)
+bool gs_can_adapter_fast_clear(void)
 {
-	if (!gs_valid("gs_get_adapter_count"))
-		return 0;
-	if (!thread_graphics->exports.gs_get_adapter_count)
-		return 0;
+	if (!gs_valid("gs_can_adapter_fast_clear"))
+		return false;
+	if (!thread_graphics->exports.device_can_adapter_fast_clear)
+		return false;
 
-	return thread_graphics->exports.gs_get_adapter_count();
+	return thread_graphics->exports.device_can_adapter_fast_clear(
+		thread_graphics->device);
 }
 
 gs_texture_t *gs_duplicator_get_texture(gs_duplicator_t *duplicator)
@@ -3064,6 +3154,28 @@ gs_texture_t *gs_duplicator_get_texture(gs_duplicator_t *duplicator)
 		return NULL;
 
 	return thread_graphics->exports.gs_duplicator_get_texture(duplicator);
+}
+
+enum gs_color_space gs_duplicator_get_color_space(gs_duplicator_t *duplicator)
+{
+	if (!gs_valid_p("gs_duplicator_get_color_space", duplicator))
+		return GS_CS_SRGB;
+	if (!thread_graphics->exports.gs_duplicator_get_color_space)
+		return GS_CS_SRGB;
+
+	return thread_graphics->exports.gs_duplicator_get_color_space(
+		duplicator);
+}
+
+float gs_duplicator_get_sdr_white_level(gs_duplicator_t *duplicator)
+{
+	if (!gs_valid_p("gs_duplicator_get_sdr_white_level", duplicator))
+		return 80.f;
+	if (!thread_graphics->exports.gs_duplicator_get_sdr_white_level)
+		return 80.f;
+
+	return thread_graphics->exports.gs_duplicator_get_sdr_white_level(
+		duplicator);
 }
 
 /** creates a windows GDI-lockable texture */
@@ -3167,84 +3279,6 @@ int gs_texture_release_sync(gs_texture_t *tex, uint64_t key)
 	if (graphics->exports.device_texture_release_sync)
 		return graphics->exports.device_texture_release_sync(tex, key);
 	return -1;
-}
-
-bool gs_texture_create_nv12(gs_texture_t **tex_y, gs_texture_t **tex_uv,
-			    uint32_t width, uint32_t height, uint32_t flags)
-{
-	graphics_t *graphics = thread_graphics;
-	bool success = false;
-
-	if (!gs_valid("gs_texture_create_nv12"))
-		return false;
-
-	if ((width & 1) == 1 || (height & 1) == 1) {
-		blog(LOG_ERROR, "NV12 textures must have dimensions "
-				"divisible by 2.");
-		return false;
-	}
-
-	if (graphics->exports.device_texture_create_nv12) {
-		success = graphics->exports.device_texture_create_nv12(
-			graphics->device, tex_y, tex_uv, width, height, flags);
-		if (success)
-			return true;
-	}
-
-	*tex_y = gs_texture_create(width, height, GS_R8, 1, NULL, flags);
-	*tex_uv = gs_texture_create(width / 2, height / 2, GS_R8G8, 1, NULL,
-				    flags);
-
-	if (!*tex_y || !*tex_uv) {
-		if (*tex_y)
-			gs_texture_destroy(*tex_y);
-		if (*tex_uv)
-			gs_texture_destroy(*tex_uv);
-		*tex_y = NULL;
-		*tex_uv = NULL;
-		return false;
-	}
-
-	return true;
-}
-
-bool gs_texture_create_p010(gs_texture_t **tex_y, gs_texture_t **tex_uv,
-			    uint32_t width, uint32_t height, uint32_t flags)
-{
-	graphics_t *graphics = thread_graphics;
-	bool success = false;
-
-	if (!gs_valid("gs_texture_create_p010"))
-		return false;
-
-	if ((width & 1) == 1 || (height & 1) == 1) {
-		blog(LOG_ERROR, "P010 textures must have dimensions "
-				"divisible by 2.");
-		return false;
-	}
-
-	if (graphics->exports.device_texture_create_p010) {
-		success = graphics->exports.device_texture_create_p010(
-			graphics->device, tex_y, tex_uv, width, height, flags);
-		if (success)
-			return true;
-	}
-
-	*tex_y = gs_texture_create(width, height, GS_R16, 1, NULL, flags);
-	*tex_uv = gs_texture_create(width / 2, height / 2, GS_RG16, 1, NULL,
-				    flags);
-
-	if (!*tex_y || !*tex_uv) {
-		if (*tex_y)
-			gs_texture_destroy(*tex_y);
-		if (*tex_uv)
-			gs_texture_destroy(*tex_uv);
-		*tex_y = NULL;
-		*tex_uv = NULL;
-		return false;
-	}
-
-	return true;
 }
 
 gs_stagesurf_t *gs_stagesurface_create_nv12(uint32_t width, uint32_t height)

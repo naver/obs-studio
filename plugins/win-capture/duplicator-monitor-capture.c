@@ -5,8 +5,13 @@
 #include <util/threading.h>
 
 #include "cursor-capture.h"
+#ifdef OBS_LEGACY
 #include "../../libobs/util/platform.h"
 #include "../../libobs-winrt/winrt-capture.h"
+#else
+#include <util/platform.h>
+#include <winrt-capture.h>
+#endif
 
 #define do_log(level, format, ...)                                \
 	blog(level, "[duplicator-monitor-capture: '%s'] " format, \
@@ -27,6 +32,7 @@
 #define TEXT_METHOD_AUTO     obs_module_text("WindowCapture.Method.Auto")
 #define TEXT_METHOD_DXGI     obs_module_text("Method.DXGI")
 #define TEXT_METHOD_WGC      obs_module_text("Method.WindowsGraphicsCapture")
+#define TEXT_FORCE_SDR       obs_module_text("ForceSdr")
 
 /* clang-format on */
 
@@ -35,7 +41,7 @@
 typedef BOOL (*PFN_winrt_capture_supported)();
 typedef BOOL (*PFN_winrt_capture_cursor_toggle_supported)();
 typedef struct winrt_capture *(*PFN_winrt_capture_init_monitor)(
-	BOOL cursor, HMONITOR monitor);
+	BOOL cursor, HMONITOR monitor, BOOL force_sdr);
 typedef void (*PFN_winrt_capture_free)(struct winrt_capture *capture);
 
 typedef BOOL (*PFN_winrt_capture_active)(const struct winrt_capture *capture);
@@ -69,11 +75,14 @@ struct duplicator_capture {
 	obs_source_t *source;
 	pthread_mutex_t update_mutex;
 	char monitor_id[128];
+	char id[128];
+	char alt_id[128];
 	char monitor_name[64];
 	enum display_capture_method method;
 	bool reset_wgc;
 	HMONITOR handle;
 	bool capture_cursor;
+	bool force_sdr;
 	bool showing;
 	LONG logged_width;
 	LONG logged_height;
@@ -90,11 +99,15 @@ struct duplicator_capture {
 	void *winrt_module;
 	struct winrt_exports exports;
 	struct winrt_capture *capture_winrt;
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	bool wgc_init;
 };
 
 struct duplicator_monitor_info {
 	char device_id[128];
-	char name[64];
+	char id[128];
+	char alt_id[128];
+	char name[128];
 	RECT rect;
 	HMONITOR handle;
 };
@@ -176,7 +189,12 @@ static void GetMonitorName(HMONITOR handle, char *name, size_t count)
 	mi.cbSize = sizeof(mi);
 	if (GetMonitorInfoW(handle, (LPMONITORINFO)&mi) &&
 	    GetMonitorTarget(mi.szDevice, &target)) {
-		snprintf(name, count, "%ls", target.monitorFriendlyDeviceName);
+		char *friendly_name;
+		os_wcs_to_utf8_ptr(target.monitorFriendlyDeviceName, 0,
+				   &friendly_name);
+
+		strcpy_s(name, count, friendly_name);
+		bfree(friendly_name);
 	} else {
 		strcpy_s(name, count, "[OBS: Unknown]");
 	}
@@ -202,10 +220,15 @@ static BOOL CALLBACK enum_monitor(HMONITOR handle, HDC hdc, LPRECT rect,
 			match = strcmp(monitor->device_id, device.DeviceID) ==
 				0;
 			if (match) {
-				monitor->rect = *rect;
-				monitor->handle = handle;
+				strcpy_s(monitor->id, _countof(monitor->id),
+					 device.DeviceID);
+				strcpy_s(monitor->alt_id,
+					 _countof(monitor->alt_id),
+					 mi.szDevice);
 				GetMonitorName(handle, monitor->name,
 					       _countof(monitor->name));
+				monitor->rect = *rect;
+				monitor->handle = handle;
 			}
 		}
 	}
@@ -228,10 +251,12 @@ static BOOL CALLBACK enum_monitor_fallback(HMONITOR handle, HDC hdc,
 	if (GetMonitorInfoA(handle, (LPMONITORINFO)&mi)) {
 		match = strcmp(monitor->device_id, mi.szDevice) == 0;
 		if (match) {
-			monitor->rect = *rect;
-			monitor->handle = handle;
+			strcpy_s(monitor->alt_id, _countof(monitor->alt_id),
+				 mi.szDevice);
 			GetMonitorName(handle, monitor->name,
 				       _countof(monitor->name));
+			monitor->rect = *rect;
+			monitor->handle = handle;
 		}
 	}
 
@@ -244,9 +269,14 @@ static void log_settings(struct duplicator_capture *capture,
 	info("update settings:\n"
 	     "\tdisplay: %s (%ldx%ld)\n"
 	     "\tcursor: %s\n"
-	     "\tmethod: %s",
+	     "\tmethod: %s\n"
+	     "\tid: %s\n"
+	     "\talt_id: %s\n"
+	     "\tsetting_id: %s\n"
+	     "\tforce SDR: %s",
 	     monitor, width, height, capture->capture_cursor ? "true" : "false",
-	     get_method_name(capture->method));
+	     get_method_name(capture->method), capture->id, capture->alt_id,
+	     capture->monitor_id, capture->force_sdr ? "true" : "false");
 }
 
 static enum display_capture_method
@@ -296,25 +326,29 @@ static struct duplicator_monitor_info find_monitor(const char *monitor_id)
 	return monitor;
 }
 
+//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
 static inline void update_settings(struct duplicator_capture *capture,
-				   obs_data_t *settings)
+				   obs_data_t *settings, bool wgc_init)
 {
 	pthread_mutex_lock(&capture->update_mutex);
 
 	struct duplicator_monitor_info monitor =
 		find_monitor(obs_data_get_string(settings, "monitor_id"));
-
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
 	capture->method =
 		choose_method((int)obs_data_get_int(settings, "method"),
-			      wgc_supported, monitor.handle);
+			      wgc_supported && wgc_init, monitor.handle);
 
 	strcpy_s(capture->monitor_id, _countof(capture->monitor_id),
 		 monitor.device_id);
+	strcpy_s(capture->id, _countof(capture->id), monitor.id);
+	strcpy_s(capture->alt_id, _countof(capture->alt_id), monitor.alt_id);
 	strcpy_s(capture->monitor_name, _countof(capture->monitor_name),
 		 monitor.name);
 	capture->handle = monitor.handle;
 
 	capture->capture_cursor = obs_data_get_bool(settings, "capture_cursor");
+	capture->force_sdr = obs_data_get_bool(settings, "force_sdr");
 
 	capture->logged_width = monitor.rect.right - monitor.rect.left;
 	capture->logged_height = monitor.rect.bottom - monitor.rect.top;
@@ -388,12 +422,14 @@ static void duplicator_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "monitor_id", "DUMMY");
 	obs_data_set_default_int(settings, "monitor_wgc", 0);
 	obs_data_set_default_bool(settings, "capture_cursor", true);
+	obs_data_set_default_bool(settings, "force_sdr", false);
 }
 
 static void duplicator_capture_update(void *data, obs_data_t *settings)
 {
 	struct duplicator_capture *mc = data;
-	update_settings(mc, settings);
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	update_settings(mc, settings, mc->wgc_init);
 	log_settings(mc, mc->monitor_name, mc->logged_width, mc->logged_height);
 
 	mc->reset_wgc = true;
@@ -435,6 +471,8 @@ static void *duplicator_capture_create(obs_data_t *settings,
 				       obs_source_t *source)
 {
 	struct duplicator_capture *capture;
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	bool wgc_init = false;
 
 	capture = bzalloc(sizeof(struct duplicator_capture));
 	capture->source = source;
@@ -445,12 +483,16 @@ static void *duplicator_capture_create(obs_data_t *settings,
 		static const char *const module = "libobs-winrt";
 		capture->winrt_module = os_dlopen(module);
 		if (capture->winrt_module) {
-			load_winrt_imports(&capture->exports,
+			//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+			wgc_init = load_winrt_imports(&capture->exports,
 					   capture->winrt_module, module);
 		}
 	}
 
-	update_settings(capture, settings);
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	capture->wgc_init = wgc_init;
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	update_settings(capture, settings, wgc_init);
 	log_settings(capture, capture->monitor_name, capture->logged_width,
 		     capture->logged_height);
 
@@ -548,7 +590,8 @@ static void duplicator_capture_tick(void *data, float seconds)
 					capture->capture_winrt =
 						capture->exports.winrt_capture_init_monitor(
 							capture->capture_cursor,
-							capture->handle);
+							capture->handle,
+							capture->force_sdr);
 					if (!capture->capture_winrt) {
 						update_monitor_handle(capture);
 
@@ -556,7 +599,8 @@ static void duplicator_capture_tick(void *data, float seconds)
 							capture->capture_winrt =
 								capture->exports.winrt_capture_init_monitor(
 									capture->capture_cursor,
-									capture->handle);
+									capture->handle,
+									capture->force_sdr);
 						}
 					}
 				}
@@ -706,18 +750,32 @@ static void duplicator_capture_render(void *data, gs_effect_t *unused)
 		const char *tech_name = "Draw";
 		float multiplier = 1.f;
 		const enum gs_color_space current_space = gs_get_color_space();
-		if (gs_texture_get_color_format(texture) == GS_RGBA16F) {
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawMultiplyTonemap";
-				multiplier =
-					80.f / obs_get_video_sdr_white_level();
-				break;
-			case GS_CS_709_EXTENDED:
+		if (gs_duplicator_get_color_space(capture->duplicator) ==
+		    GS_CS_709_SCRGB) {
+			if (capture->force_sdr) {
 				tech_name = "DrawMultiply";
-				multiplier =
-					80.f / obs_get_video_sdr_white_level();
+				const float target_nits =
+					(current_space == GS_CS_709_SCRGB)
+						? obs_get_video_sdr_white_level()
+						: 80.f;
+				multiplier = target_nits /
+					     gs_duplicator_get_sdr_white_level(
+						     capture->duplicator);
+			} else {
+				switch (current_space) {
+				case GS_CS_SRGB:
+				case GS_CS_SRGB_16F:
+					tech_name = "DrawMultiplyTonemap";
+					multiplier =
+						80.f /
+						obs_get_video_sdr_white_level();
+					break;
+				case GS_CS_709_EXTENDED:
+					tech_name = "DrawMultiply";
+					multiplier =
+						80.f /
+						obs_get_video_sdr_white_level();
+				}
 			}
 		} else if (current_space == GS_CS_709_SCRGB) {
 			tech_name = "DrawMultiply";
@@ -809,8 +867,9 @@ static void update_settings_visibility(obs_properties_t *props,
 	const bool dxgi_options = method == METHOD_DXGI;
 	const bool wgc_options = method == METHOD_WGC;
 
+	//PRISM/Xiewei/20240702/#5745/fix a crash caused by executing a null pointer function
 	const bool wgc_cursor_toggle =
-		wgc_options &&
+		wgc_options && capture->capture_winrt &&
 		capture->exports.winrt_capture_cursor_toggle_supported();
 
 	obs_property_t *p = obs_properties_get(props, "cursor");
@@ -829,7 +888,8 @@ static bool display_capture_method_changed(obs_properties_t *props,
 	if (!capture)
 		return false;
 
-	update_settings(capture, settings);
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	update_settings(capture, settings, capture->wgc_init);
 
 	update_settings_visibility(props, capture);
 
@@ -850,7 +910,8 @@ static obs_properties_t *duplicator_capture_properties(void *data)
 	obs_property_list_add_int(p, TEXT_METHOD_AUTO, METHOD_AUTO);
 	obs_property_list_add_int(p, TEXT_METHOD_DXGI, METHOD_DXGI);
 	obs_property_list_add_int(p, TEXT_METHOD_WGC, METHOD_WGC);
-	obs_property_list_item_disable(p, 2, !wgc_supported);
+	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
+	obs_property_list_item_disable(p, 2, !wgc_supported || (capture && !capture->wgc_init));
 	obs_property_set_modified_callback(p, display_capture_method_changed);
 
 	obs_property_t *monitors = obs_properties_add_list(
@@ -858,6 +919,7 @@ static obs_properties_t *duplicator_capture_properties(void *data)
 		OBS_COMBO_FORMAT_STRING);
 
 	obs_properties_add_bool(props, "capture_cursor", TEXT_CAPTURE_CURSOR);
+	obs_properties_add_bool(props, "force_sdr", TEXT_FORCE_SDR);
 
 	EnumDisplayMonitors(NULL, NULL, enum_monitor_props, (LPARAM)monitors);
 
@@ -877,17 +939,9 @@ duplicator_capture_get_color_space(void *data, size_t count,
 				capture->exports.winrt_capture_get_color_space(
 					capture->capture_winrt);
 		}
-	} else {
-		if (capture->duplicator) {
-			gs_texture_t *const texture =
-				gs_duplicator_get_texture(capture->duplicator);
-			if (texture) {
-				capture_space = (gs_texture_get_color_format(
-							 texture) == GS_RGBA16F)
-							? GS_CS_709_EXTENDED
-							: GS_CS_SRGB;
-			}
-		}
+	} else if (capture->duplicator && !capture->force_sdr) {
+		capture_space =
+			gs_duplicator_get_color_space(capture->duplicator);
 	}
 
 	enum gs_color_space space = capture_space;

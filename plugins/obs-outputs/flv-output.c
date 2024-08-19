@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -93,7 +93,7 @@ static int write_packet(struct flv_output *stream,
 
 	stream->last_packet_ts = get_ms_time(packet, packet->dts);
 
-	//PRISM/WuLongyue/20230726/None/support HEVC
+	//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
 	flv_packet_mux(packet, is_header ? 0 : stream->start_dts_offset, &data,
 		       &size, is_header, false);
 	fwrite(data, 1, size, stream->file);
@@ -107,7 +107,8 @@ static void write_meta_data(struct flv_output *stream)
 	uint8_t *meta_data;
 	size_t meta_data_size;
 
-	flv_meta_data(stream->output, &meta_data, &meta_data_size, true);
+	//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
+	flv_meta_data(stream->output, &meta_data, &meta_data_size, true, false);
 	fwrite(meta_data, 1, meta_data_size, stream->file);
 	bfree(meta_data);
 }
@@ -132,8 +133,9 @@ static void write_video_header(struct flv_output *stream)
 	uint8_t *header;
 	size_t size;
 
-	struct encoder_packet packet = {
-		.type = OBS_ENCODER_VIDEO, .timebase_den = 1, .keyframe = true};
+	struct encoder_packet packet = {.type = OBS_ENCODER_VIDEO,
+					.timebase_den = 1,
+					.keyframe = true};
 
 	if (!obs_encoder_get_extra_data(vencoder, &header, &size))
 		return;

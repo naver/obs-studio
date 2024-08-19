@@ -10,6 +10,9 @@
 #include <memory>
 #include <locale>
 
+//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt.
+#include <pls/pls-obs-api.h>
+
 using namespace std;
 using namespace Gdiplus;
 
@@ -70,6 +73,8 @@ using namespace Gdiplus;
 #define S_EXTENTS_CY                    "extents_cy"
 #define S_TRANSFORM                     "transform"
 #define S_ANTIALIASING                  "antialiasing"
+//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
+#define S_CUSTOM_FONT "custom_font"
 
 #define S_ALIGN_LEFT                    "left"
 #define S_ALIGN_CENTER                  "center"
@@ -83,9 +88,6 @@ using namespace Gdiplus;
 #define S_TRANSFORM_UPPERCASE           1
 #define S_TRANSFORM_LOWERCASE           2
 #define S_TRANSFORM_STARTCASE           3
-
-#define S_ANTIALIASING_NONE             0
-#define S_ANTIALIASING_STANDARD         1
 
 #define T_(v)                           obs_module_text(v)
 #define T_FONT                          T_("Font")
@@ -223,6 +225,8 @@ struct TextSource {
 
 	HFONTObj hfont;
 	unique_ptr<Font> font;
+	//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
+	std::unique_ptr<FontFamily> fontFamily;
 
 	bool read_from_file = false;
 	string file;
@@ -265,6 +269,10 @@ struct TextSource {
 	bool chatlog_mode = false;
 	int chatlog_lines = 6;
 
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
+	bool custom_font = false;
+	Gdiplus::InstalledFontCollection installed_fonts;
+
 	/* --------------------------- */
 
 	inline TextSource(obs_source_t *source_, obs_data_t *settings)
@@ -301,6 +309,12 @@ struct TextSource {
 	inline void Update(obs_data_t *settings);
 	inline void Tick(float seconds);
 	inline void Render();
+
+	//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt.
+	bool FindFontInPrivateCollection(LOGFONT lf);
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
+	bool FindFontInInstalledCollection(LOGFONT lf);
+	bool UpdateFontStyle(LOGFONT lf, const FontCollection *fontCollection);
 };
 
 static time_t get_modified_timestamp(const char *filename)
@@ -325,6 +339,40 @@ void TextSource::UpdateFont()
 	lf.lfQuality = ANTIALIASED_QUALITY;
 	lf.lfCharSet = DEFAULT_CHARSET;
 
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts start
+	if (custom_font && !face.empty()) {
+		wcscpy(lf.lfFaceName, face.c_str());
+		pls_enter_font_collection();
+		auto result = FindFontInPrivateCollection(lf);
+		pls_leave_font_collection();
+		if (!result) {
+			result = FindFontInInstalledCollection(lf);
+		}
+
+		if (result) {
+			blog(LOG_INFO, "%p-%p: '%s' Load custom font: '%ls'.",
+			     (void *)source, (void *)this,
+			     obs_source_get_name(source), lf.lfFaceName);
+			return;
+		}
+
+		if (!pls_design_mode()) {
+			blog(LOG_INFO,
+			     "%p-%p: '%s' Failed to load custom font: '%ls'.",
+			     (void *)source, (void *)this,
+			     obs_source_get_name(source), lf.lfFaceName);
+		} else {
+			wchar_t tip[256];
+			swprintf_s(
+				tip,
+				L"[Design-mode] Failed to load font: '%s', please ensure that you installed it into system.",
+				lf.lfFaceName);
+			MessageBox(nullptr, tip, L"Text font error",
+				   MB_ICONWARNING);
+		}
+	}
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts end
+
 	if (!face.empty()) {
 		wcscpy(lf.lfFaceName, face.c_str());
 		hfont = CreateFontIndirect(&lf);
@@ -335,8 +383,22 @@ void TextSource::UpdateFont()
 		hfont = CreateFontIndirect(&lf);
 	}
 
-	if (hfont)
+	if (hfont) {
 		font.reset(new Font(hdc, hfont));
+		//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. start
+		if (font->GetLastStatus() != Ok) {
+			pls_enter_font_collection();
+			auto result = FindFontInPrivateCollection(lf);
+			pls_leave_font_collection();
+			blog(LOG_INFO,
+			     "Failed to load font: '%ls' by GDI+, find it in private collection. result: %d",
+			     lf.lfFaceName, result);
+		} else {
+			fontFamily.reset(new FontFamily);
+			font->GetFamily(fontFamily.get());
+		}
+		//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. end
+	}
 }
 
 void TextSource::GetStringFormat(StringFormat &format)
@@ -589,13 +651,21 @@ void TextSource::RenderText()
 		if (use_outline) {
 			box.Offset(outline_size / 2, outline_size / 2);
 
-			FontFamily family;
+			//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
+			//FontFamily family;
 			GraphicsPath path;
 
-			font->GetFamily(&family);
+			//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
+			//font->GetFamily(&family);
+			if (!fontFamily) {
+				blog(LOG_INFO,
+				     "Failed to use_outline: Invalid fontFamily!");
+				return;
+			}
 			stat = path.AddString(text.c_str(), (int)text.size(),
-					      &family, font->GetStyle(),
-					      font->GetSize(), box, &format);
+					      fontFamily.get(),
+					      font->GetStyle(), font->GetSize(),
+					      box, &format);
 			warn_stat("path.AddString");
 
 			RenderOutlineText(graphics_bitmap, path, brush);
@@ -744,6 +814,14 @@ inline void TextSource::Update(obs_data_t *s)
 	uint32_t new_bk_color = obs_data_get_uint32(s, S_BKCOLOR);
 	uint32_t new_bk_opacity = obs_data_get_uint32(s, S_BKOPACITY);
 
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
+	if (pls_design_mode()) {
+		obs_data_set_bool(s, S_CUSTOM_FONT, true);
+		custom_font = true;
+	} else {
+		custom_font = obs_data_get_bool(s, S_CUSTOM_FONT);
+	}
+
 	/* ----------------------------- */
 
 	wstring new_face = to_wide(font_face);
@@ -833,6 +911,19 @@ inline void TextSource::Update(obs_data_t *s)
 	RenderText();
 	update_time_elapsed = 0.0f;
 
+	//PRISM/Xiewei/20240325/#4640/add log
+	if (!obs_obj_is_private(source)) {
+		const char *json = obs_data_get_json_pretty(s);
+		if (json && *json) {
+			blog(LOG_INFO,
+			     "['%s'] (%p) plugin: %p update settings: \n"
+			     "%s",
+			     obs_source_get_name(source), (void *)source,
+			     (void *)this, json);
+		}
+	}
+	//PRISM/Xiewei/20240325/#4640/add log
+
 	/* ----------------------------- */
 
 	obs_data_release(font_obj);
@@ -886,6 +977,56 @@ inline void TextSource::Render()
 
 	gs_enable_framebuffer_srgb(previous);
 }
+
+//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. start
+bool TextSource::FindFontInPrivateCollection(LOGFONT lf)
+{
+	auto privateFontCollection = static_cast<PrivateFontCollection *>(
+		pls_get_private_font_collection());
+	if (!privateFontCollection)
+		return false;
+
+	return UpdateFontStyle(lf, privateFontCollection);
+}
+
+bool TextSource::FindFontInInstalledCollection(LOGFONT lf)
+{
+	return UpdateFontStyle(lf, &installed_fonts);
+}
+
+bool TextSource::UpdateFontStyle(LOGFONT lf,
+				 const FontCollection *fontCollection)
+{
+	if (!fontCollection)
+		return false;
+
+	fontFamily.reset(new FontFamily(lf.lfFaceName, fontCollection));
+	if (auto status = fontFamily->GetLastStatus(); status != Gdiplus::Ok)
+		return false;
+
+	int fontstyle = Gdiplus::FontStyleRegular;
+	if (bold && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold))
+		fontstyle = Gdiplus::FontStyleBold;
+	if (lf.lfItalic &&
+	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
+		fontstyle = Gdiplus::FontStyleItalic;
+	if (bold && lf.lfItalic &&
+	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold) &&
+	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
+		fontstyle = Gdiplus::FontStyleBoldItalic;
+	if (lf.lfUnderline &&
+	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleUnderline))
+		fontstyle |= Gdiplus::FontStyleUnderline;
+	if (lf.lfStrikeOut &&
+	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleStrikeout))
+		fontstyle |= Gdiplus::FontStyleStrikeout;
+	font.reset(new Font(fontFamily.get(), static_cast<REAL>(lf.lfHeight),
+			    fontstyle, Gdiplus::UnitPixel));
+	if (font->GetLastStatus() != Gdiplus::Ok)
+		return false;
+	return true;
+}
+//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. end
 
 /* ------------------------------------------------------------------------- */
 
@@ -1089,6 +1230,12 @@ static void defaults(obs_data_t *settings, int ver)
 	obs_data_set_default_int(settings, S_EXTENTS_CY, 100);
 	obs_data_set_default_int(settings, S_TRANSFORM, S_TRANSFORM_NONE);
 	obs_data_set_default_bool(settings, S_ANTIALIASING, true);
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
+	if (pls_design_mode()) {
+		obs_data_set_default_bool(settings, S_CUSTOM_FONT, true);
+	}else{
+		obs_data_set_default_bool(settings, S_CUSTOM_FONT, false);
+	}
 
 	obs_data_release(font_obj);
 };
@@ -1116,7 +1263,9 @@ bool obs_module_load(void)
 	si.get_properties = get_properties;
 	si.icon_type = OBS_ICON_TYPE_TEXT;
 
-	si.get_name = [](void *) { return obs_module_text("TextGDIPlus"); };
+	si.get_name = [](void *) {
+		return obs_module_text("TextGDIPlus");
+	};
 	si.create = [](obs_data_t *settings, obs_source_t *source) {
 		return (void *)new TextSource(source, settings);
 	};
@@ -1129,7 +1278,9 @@ bool obs_module_load(void)
 	si.get_height = [](void *data) {
 		return reinterpret_cast<TextSource *>(data)->cy;
 	};
-	si.get_defaults = [](obs_data_t *settings) { defaults(settings, 1); };
+	si.get_defaults = [](obs_data_t *settings) {
+		defaults(settings, 1);
+	};
 	si.update = [](void *data, obs_data_t *settings) {
 		reinterpret_cast<TextSource *>(data)->Update(settings);
 	};

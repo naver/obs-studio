@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,9 @@
 #include <util/platform.h>
 #include <obs-module.h>
 #include <opts-parser.h>
+
+//PRISM/cao.kewei/20240514/#5378/force keyframe
+#include <pls/pls-encoder.h>
 
 #ifndef _STDINT_H_INCLUDED
 #define _STDINT_H_INCLUDED
@@ -61,6 +64,9 @@ struct obs_x264 {
 	size_t sei_size;
 
 	os_performance_token_t *performance_token;
+
+	uint32_t roi_increment;
+	float *quant_offsets;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -79,6 +85,7 @@ static void clear_data(struct obs_x264 *obsx264)
 		x264_encoder_close(obsx264->context);
 		bfree(obsx264->sei);
 		bfree(obsx264->extra_data);
+		bfree(obsx264->quant_offsets);
 
 		obsx264->context = NULL;
 		obsx264->sei = NULL;
@@ -103,8 +110,7 @@ static void obs_x264_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "bitrate", 2500);
 	obs_data_set_default_bool(settings, "use_bufsize", false);
 	obs_data_set_default_int(settings, "buffer_size", 2500);
-	//PRISM/WuLongyue/20230707/#1232/Change default "keyint_sec" to 1
-	obs_data_set_default_int(settings, "keyint_sec", 1);
+	obs_data_set_default_int(settings, "keyint_sec", 0);
 	obs_data_set_default_int(settings, "crf", 23);
 #ifdef ENABLE_VFR
 	obs_data_set_default_bool(settings, "vfr", false);
@@ -238,22 +244,6 @@ static obs_properties_t *obs_x264_props(void *unused)
 	return props;
 }
 
-static bool getparam(const char *param, char **name, const char **value)
-{
-	const char *assign;
-
-	if (!param || !*param || (*param == '='))
-		return false;
-
-	assign = strchr(param, '=');
-	if (!assign || !*assign || !*(assign + 1))
-		return false;
-
-	*name = bstrdup_n(param, assign - param);
-	*value = assign + 1;
-	return true;
-}
-
 static const char *validate(struct obs_x264 *obsx264, const char *val,
 			    const char *name, const char *const *list)
 {
@@ -359,13 +349,20 @@ static bool reset_x264_params(struct obs_x264 *obsx264, const char *preset,
 
 static void log_x264(void *param, int level, const char *format, va_list args)
 {
-	struct obs_x264 *obsx264 = param;
-	char str[1024];
+	static const int level_map[] = {
+		LOG_ERROR,
+		LOG_WARNING,
+		LOG_INFO,
+		LOG_DEBUG,
+	};
 
-	vsnprintf(str, sizeof(str), format, args);
-	info("%s", str);
+	UNUSED_PARAMETER(param);
+	if (level < X264_LOG_ERROR)
+		level = X264_LOG_ERROR;
+	else if (level > X264_LOG_DEBUG)
+		level = X264_LOG_DEBUG;
 
-	UNUSED_PARAMETER(level);
+	blogva(level_map[level], format, args);
 }
 
 static inline int get_x264_cs_val(const char *const name,
@@ -496,6 +493,9 @@ static void update_params(struct obs_x264 *obsx264, obs_data_t *settings,
 		colorprim = bt709;
 		transfer = "iec61966-2-1";
 		colmatrix = bt709;
+		break;
+	default:
+		break;
 	}
 
 	obsx264->params.vui.i_sar_height = 1;
@@ -692,15 +692,17 @@ static void *obs_x264_create(obs_data_t *settings, obs_encoder_t *encoder)
 	switch (voi->format) {
 	case VIDEO_FORMAT_I010:
 	case VIDEO_FORMAT_P010:
-		obs_encoder_set_last_error(encoder,
-					   obs_module_text("10bitUnsupported"));
-		warn_enc(encoder,
-			 "OBS does not support using x264 with 10-bit formats");
+	case VIDEO_FORMAT_P216:
+	case VIDEO_FORMAT_P416:
+		obs_encoder_set_last_error(
+			encoder, obs_module_text("HighPrecisionUnsupported"));
+		warn_enc(
+			encoder,
+			"OBS does not support using x264 with high-precision formats");
 		return NULL;
 	default:
-		switch (voi->colorspace) {
-		case VIDEO_CS_2100_PQ:
-		case VIDEO_CS_2100_HLG:
+		if (voi->colorspace == VIDEO_CS_2100_PQ ||
+		    voi->colorspace == VIDEO_CS_2100_HLG) {
 			obs_encoder_set_last_error(
 				encoder, obs_module_text("HdrUnsupported"));
 			warn_enc(
@@ -708,6 +710,7 @@ static void *obs_x264_create(obs_data_t *settings, obs_encoder_t *encoder)
 				"OBS does not support using x264 with Rec. 2100");
 			return NULL;
 		}
+		break;
 	}
 
 	struct obs_x264 *obsx264 = bzalloc(sizeof(struct obs_x264));
@@ -779,6 +782,66 @@ static inline void init_pic_data(struct obs_x264 *obsx264, x264_picture_t *pic,
 	}
 }
 
+/* H.264 always uses 16x16 macroblocks */
+static const uint32_t MB_SIZE = 16;
+
+struct roi_params {
+	uint32_t mb_width;
+	uint32_t mb_height;
+	float *map;
+};
+
+static void roi_cb(void *param, struct obs_encoder_roi *roi)
+{
+	const struct roi_params *rp = param;
+
+	const uint32_t roi_left = roi->left / MB_SIZE;
+	const uint32_t roi_top = roi->top / MB_SIZE;
+	const uint32_t roi_right = (roi->right - 1) / MB_SIZE;
+	const uint32_t roi_bottom = (roi->bottom - 1) / MB_SIZE;
+	/* QP range is 0..51 */
+	const float qp_offset = -51.0f * roi->priority;
+
+	for (uint32_t mb_y = 0; mb_y < rp->mb_height; mb_y++) {
+		if (mb_y < roi_top || mb_y > roi_bottom)
+			continue;
+
+		for (uint32_t mb_x = 0; mb_x < rp->mb_width; mb_x++) {
+			if (mb_x < roi_left || mb_x > roi_right)
+				continue;
+
+			rp->map[mb_y * rp->mb_width + mb_x] = qp_offset;
+		}
+	}
+}
+
+static void add_roi(struct obs_x264 *obsx264, x264_picture_t *pic)
+{
+	const uint32_t increment =
+		obs_encoder_get_roi_increment(obsx264->encoder);
+
+	if (obsx264->quant_offsets && obsx264->roi_increment == increment) {
+		pic->prop.quant_offsets = obsx264->quant_offsets;
+		return;
+	}
+
+	const uint32_t width = obs_encoder_get_width(obsx264->encoder);
+	const uint32_t height = obs_encoder_get_height(obsx264->encoder);
+	const uint32_t mb_width = (width + MB_SIZE - 1) / MB_SIZE;
+	const uint32_t mb_height = (height + MB_SIZE - 1) / MB_SIZE;
+	const size_t map_size = sizeof(float) * mb_width * mb_height;
+
+	float *map = bzalloc(map_size);
+
+	struct roi_params par = {mb_width, mb_height, map};
+
+	obs_encoder_enum_roi(obsx264->encoder, roi_cb, &par);
+
+	pic->prop.quant_offsets = map;
+	obsx264->quant_offsets = map;
+	obsx264->roi_increment = increment;
+}
+
 static bool obs_x264_encode(void *data, struct encoder_frame *frame,
 			    struct encoder_packet *packet,
 			    bool *received_packet)
@@ -795,6 +858,15 @@ static bool obs_x264_encode(void *data, struct encoder_frame *frame,
 	if (frame)
 		init_pic_data(obsx264, &pic, frame);
 
+	//PRISM/cao.kewei/20240514/#5378/force keyframe
+	if (obs_encoder_request_keyframe(obsx264->encoder)) {
+		info("[x264] Request key frame");
+		pic.i_type = X264_TYPE_KEYFRAME;
+	}
+	
+	if (obs_encoder_has_roi(obsx264->encoder))
+		add_roi(obsx264, &pic);
+
 	ret = x264_encoder_encode(obsx264->context, &nals, &nal_count,
 				  (frame ? &pic : NULL), &pic_out);
 	if (ret < 0) {
@@ -804,6 +876,16 @@ static bool obs_x264_encode(void *data, struct encoder_frame *frame,
 
 	*received_packet = (nal_count != 0);
 	parse_packet(obsx264, packet, nals, nal_count, &pic_out);
+	
+	//PRISM/cao.kewei/20240514/#5378/force keyframe
+	if (obs_encoder_request_keyframe(obsx264->encoder)) {
+		bool is_keyframe = IS_X264_TYPE_I(pic_out.i_type);
+		info("[x264] is keyframe: %s", is_keyframe ? "true" : "false");
+		
+		if (is_keyframe) {
+			obs_encoder_set_request_keyframe(obsx264->encoder, false);
+		}
+	}
 
 	return true;
 }
@@ -867,5 +949,5 @@ struct obs_encoder_info obs_x264_encoder = {
 	.get_extra_data = obs_x264_extra_data,
 	.get_sei_data = obs_x264_sei,
 	.get_video_info = obs_x264_video_info,
-	.caps = OBS_ENCODER_CAP_DYN_BITRATE,
+	.caps = OBS_ENCODER_CAP_DYN_BITRATE | OBS_ENCODER_CAP_ROI,
 };

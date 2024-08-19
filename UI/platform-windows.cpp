@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -465,33 +465,32 @@ void TaskbarOverlaySetStatus(TaskbarOverlayStatus status)
 		return;
 	}
 
-	if (status != TaskbarOverlayStatusInactive) {
-		QIcon qicon;
-		switch (status) {
-		case TaskbarOverlayStatusActive:
-			qicon = QIcon::fromTheme(
-				"obs-active", QIcon(":/res/images/active.png"));
-			break;
-		case TaskbarOverlayStatusPaused:
-			qicon = QIcon::fromTheme(
-				"obs-paused", QIcon(":/res/images/paused.png"));
-			break;
-		}
-
-		HICON hicon = nullptr;
-		if (!qicon.isNull()) {
-			Q_GUI_EXPORT HICON qt_pixmapToWinHICON(
-				const QPixmap &p);
-			hicon = qt_pixmapToWinHICON(
-				qicon.pixmap(GetSystemMetrics(SM_CXSMICON)));
-			if (!hicon)
-				return;
-		}
-
-		taskbarIcon->SetOverlayIcon(hwnd, hicon, nullptr);
-		DestroyIcon(hicon);
-	} else {
+	QIcon qicon;
+	switch (status) {
+	case TaskbarOverlayStatusActive:
+		qicon = QIcon::fromTheme("obs-active",
+					 QIcon(":/res/images/active.png"));
+		break;
+	case TaskbarOverlayStatusPaused:
+		qicon = QIcon::fromTheme("obs-paused",
+					 QIcon(":/res/images/paused.png"));
+		break;
+	case TaskbarOverlayStatusInactive:
 		taskbarIcon->SetOverlayIcon(hwnd, nullptr, nullptr);
+		taskbarIcon->Release();
+		return;
 	}
+
+	HICON hicon = nullptr;
+	if (!qicon.isNull()) {
+		Q_GUI_EXPORT HICON qt_pixmapToWinHICON(const QPixmap &p);
+		hicon = qt_pixmapToWinHICON(
+			qicon.pixmap(GetSystemMetrics(SM_CXSMICON)));
+		if (!hicon)
+			return;
+	}
+
+	taskbarIcon->SetOverlayIcon(hwnd, hicon, nullptr);
+	DestroyIcon(hicon);
 	taskbarIcon->Release();
 }

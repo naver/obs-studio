@@ -4,6 +4,8 @@
 #include <shlobj_core.h>
 #include <strsafe.h>
 #include <inttypes.h>
+//PRISM/Xiewei/20240719/PRISM_PC-692/log the host process name
+#include "../../../libobs/pls/pls-vcam-host-name.hpp"
 
 using namespace DShow;
 
@@ -14,17 +16,10 @@ extern volatile long locks;
 
 /* ========================================================================= */
 
-VCamFilter::VCamFilter()
-	: OutputFilter(VideoFormat::NV12, DEFAULT_CX, DEFAULT_CY,
-		       DEFAULT_INTERVAL)
+VCamFilter::VCamFilter() : OutputFilter()
 {
 	thread_start = CreateEvent(nullptr, true, false, nullptr);
 	thread_stop = CreateEvent(nullptr, true, false, nullptr);
-
-	AddVideoFormat(VideoFormat::I420, DEFAULT_CX, DEFAULT_CY,
-		       DEFAULT_INTERVAL);
-	AddVideoFormat(VideoFormat::YUY2, DEFAULT_CX, DEFAULT_CY,
-		       DEFAULT_INTERVAL);
 
 	format = VideoFormat::NV12;
 
@@ -153,6 +148,17 @@ STDMETHODIMP VCamFilter::Pause()
 
 STDMETHODIMP VCamFilter::Run(REFERENCE_TIME tStart)
 {
+	//PRISM/Xiewei/20240719/PRISM_PC-692/log the host process name start
+	if (!g_host_name_logged) {
+		wchar_t file[MAX_PATH];
+		if (!GetModuleFileNameW(nullptr, file, MAX_PATH)) {
+			file[0] = 0;
+		}
+
+		g_host_name_logged = vcam::LogHostProcessName(file);
+	}
+	//PRISM/Xiewei/20240719/PRISM_PC-692/log the host process name end
+
 	os_atomic_set_bool(&active, true);
 	return OutputFilter::Run(tStart);
 }
@@ -213,8 +219,22 @@ void VCamFilter::Thread()
 	UpdatePlaceholder();
 
 	while (!stopped()) {
-		if (os_atomic_load_bool(&active))
+		//PRISM/WuLongyue/20231129/#3306/Check video queue state
+		if (os_atomic_load_bool(&active)) {
 			Frame(filter_time);
+		} else {
+			if (nullptr != vq) {
+				enum queue_state state = video_queue_state(vq);
+				if (state != prev_state) {
+					if (state ==
+					    SHARED_QUEUE_STATE_STOPPING) {
+						video_queue_close(vq);
+						vq = nullptr;
+					}
+					prev_state = state;
+				}
+			}
+		}
 		sleepto_100ns(cur_time += obs_interval);
 		filter_time += obs_interval;
 	}

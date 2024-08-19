@@ -226,7 +226,7 @@ static void create_bitmap_sizes(struct font_path_info *info, FT_Face face)
 	da_reserve(sizes, face->num_fixed_sizes);
 
 	for (int i = 0; i < face->num_fixed_sizes; i++) {
-		int val = face->available_sizes[i].size >> 6;
+		FT_Pos val = face->available_sizes[i].size >> 6;
 		da_push_back(sizes, &val);
 	}
 
@@ -381,6 +381,12 @@ const char *get_font_path(const char *family, uint16_t size, const char *style,
 	for (size_t i = 0; i < font_list.num; i++) {
 		struct font_path_info *info = font_list.array + i;
 
+        //PRISM/cao.kewei/20231127/#3025/check font info
+        if (info == NULL || info->face_and_style == NULL) {
+            continue;
+        }
+        //PRISM/cao.kewei/20231127/#3025/check font info
+        
 		double rating = (double)get_rating(info, &face_and_style);
 		if (rating < info->face_len)
 			continue;

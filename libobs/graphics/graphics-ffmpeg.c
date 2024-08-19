@@ -37,35 +37,23 @@ static bool ffmpeg_image_open_decoder_context(struct ffmpeg_image *info)
 	}
 
 	AVStream *const stream = fmt_ctx->streams[ret];
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 	AVCodecParameters *const codecpar = stream->codecpar;
 	const AVCodec *const decoder = avcodec_find_decoder(
 		codecpar->codec_id); // fix discarded-qualifiers
-#else
-	AVCodecContext *const decoder_ctx = stream->codec;
-	AVCodec *const decoder = avcodec_find_decoder(decoder_ctx->codec_id);
-#endif
+
 	if (!decoder) {
 		blog(LOG_WARNING, "Failed to find decoder for file '%s'",
 		     info->file);
 		return false;
 	}
 
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 	AVCodecContext *const decoder_ctx = avcodec_alloc_context3(decoder);
 	avcodec_parameters_to_context(decoder_ctx, codecpar);
-#endif
 
 	info->decoder_ctx = decoder_ctx;
-#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 	info->cx = codecpar->width;
 	info->cy = codecpar->height;
 	info->format = codecpar->format;
-#else
-	info->cx = decoder_ctx->width;
-	info->cy = decoder_ctx->height;
-	info->format = decoder_ctx->pix_fmt;
-#endif
 
 	ret = avcodec_open2(decoder_ctx, decoder, NULL);
 	if (ret < 0) {
@@ -570,35 +558,57 @@ static void *ffmpeg_image_decode(struct ffmpeg_image *info,
 		return NULL;
 	}
 
-	ret = av_read_frame(info->fmt_ctx, &packet);
-	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to read image frame from '%s': %s",
-		     info->file, av_err2str(ret));
-		goto fail;
-	}
-
-	while (!got_frame) {
-#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(57, 40, 101)
-		ret = avcodec_send_packet(info->decoder_ctx, &packet);
-		if (ret == 0)
-			ret = avcodec_receive_frame(info->decoder_ctx, frame);
-
-		got_frame = (ret == 0);
-
-		if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
-			ret = 0;
-#else
-		ret = avcodec_decode_video2(info->decoder_ctx, frame,
-					    &got_frame, &packet);
-#endif
+	bool eof = false;
+	while (!got_frame && !eof) {
+		ret = av_read_frame(info->fmt_ctx, &packet);
 		if (ret < 0) {
-			blog(LOG_WARNING, "Failed to decode frame for '%s': %s",
-			     info->file, av_err2str(ret));
+			if (ret == AVERROR_EOF) {
+				eof = true;
+			}
+			else {
+				blog(LOG_WARNING,
+					"Failed to read image frame : %d, '%s'",
+					ret, av_err2str(ret));
+				goto fail;
+			}
+		}
+
+		AVStream* stream = info->fmt_ctx->streams[packet.stream_index];
+		if (stream && stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
+			av_packet_unref(&packet);
+			continue;
+		}
+
+		ret = avcodec_send_packet(info->decoder_ctx, &packet);
+		if (ret < 0) {
+			blog(LOG_WARNING, "Failed to send packet : %d, '%s'", ret, av_err2str(ret));
 			goto fail;
+		}
+
+		av_packet_unref(&packet);
+
+		ret = avcodec_receive_frame(info->decoder_ctx, frame);
+		if (ret < 0) {
+			if (ret != AVERROR(EAGAIN)) {
+				blog(LOG_WARNING,
+					"Failed to decode frame : %d, '%s'",
+					ret, av_err2str(ret));
+				goto fail;
+			}
+			else if(ret == AVERROR_EOF || eof) {
+				blog(LOG_WARNING,
+					"Can not decode one frame before EOF.");
+				goto fail;
+			}
+			continue;
+		}
+		else {
+			got_frame = 1;
 		}
 	}
 
-	data = ffmpeg_image_reformat_frame(info, frame, alpha_mode);
+	if(got_frame)
+		data = ffmpeg_image_reformat_frame(info, frame, alpha_mode);
 
 fail:
 	av_packet_unref(&packet);
@@ -606,18 +616,13 @@ fail:
 	return data;
 }
 
-void gs_init_image_deps(void)
-{
-#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
-	av_register_all();
-#endif
-}
+void gs_init_image_deps(void) {}
 
 void gs_free_image_deps(void) {}
 
 static inline enum gs_color_format convert_format(enum AVPixelFormat format)
 {
-	switch ((int)format) {
+	switch (format) {
 	case AV_PIX_FMT_RGBA:
 		return GS_RGBA;
 	case AV_PIX_FMT_BGRA:
@@ -626,9 +631,9 @@ static inline enum gs_color_format convert_format(enum AVPixelFormat format)
 		return GS_BGRX;
 	case AV_PIX_FMT_RGBA64BE:
 		return GS_RGBA16;
+	default:
+		return GS_BGRX;
 	}
-
-	return GS_BGRX;
 }
 
 //PRISM/ZengQin/20230620/1363/scale large image
@@ -680,7 +685,7 @@ uint8_t *gs_image_scale(uint8_t *data, enum AVPixelFormat format,
 			break;
 		}
 
-		uint8_t *src_data[AV_NUM_DATA_POINTERS] = {data};
+		const uint8_t *src_data[AV_NUM_DATA_POINTERS] = {data};
 		int src_linesize[AV_NUM_DATA_POINTERS] = {(*cx_out) * 4};
 
 		uint8_t *dest_data[AV_NUM_DATA_POINTERS] = {dest_buffer};

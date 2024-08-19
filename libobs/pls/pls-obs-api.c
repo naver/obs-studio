@@ -11,6 +11,12 @@
 
 gs_effect_t *pls_effect = NULL;
 volatile bool g_app_exiting = false;
+volatile bool g_obs_shutdowning = false;
+
+static int g_prism_version_major = 0;
+static int g_prism_version_minor = 0;
+static int g_prism_version_patch = 0;
+static int g_prism_version_build = 0;
 
 static bool pls_source_alive(const obs_source_t *source)
 {
@@ -151,7 +157,8 @@ void pls_audio_output_get_info(uint32_t *samples_per_sec, int *speakers)
 }
 
 void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
-		      obs_load_pld_cb pldCb, void *private_data)
+		      obs_load_pld_cb pldCb, void *private_data,
+		      void *pld_private_data)
 {
 	struct obs_core_data *data = &obs->data;
 	DARRAY(obs_source_t *) sources;
@@ -173,7 +180,7 @@ void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
 
 		obs_data_release(source_data);
 		if (pldCb)
-			pldCb(private_data, source, i, count * 2);
+			pldCb(NULL, source);
 	}
 
 	/* tell sources that we want to load */
@@ -187,8 +194,7 @@ void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
 			if (cb)
 				cb(private_data, source);
 			if (pldCb)
-				pldCb(private_data, source, count + i,
-				      count * 2);
+				pldCb(pld_private_data, source);
 		}
 		obs_data_release(source_data);
 	}
@@ -203,6 +209,7 @@ void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
 
 char *pls_get_module_file_name_ptr(const char *module_name)
 {
+	UNUSED_PARAMETER(module_name);
 #if defined(_WIN32)
 	char *ptr;
 	wchar_t *path_utf16;
@@ -258,6 +265,8 @@ bool pls_load_plugin(const char *bin_path, const char *data_path)
 void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture,
 			     bool save)
 {
+	UNUSED_PARAMETER(save);
+
 	if (!scene)
 		return;
 
@@ -307,8 +316,8 @@ gs_texture_t *pls_scene_get_canvas(obs_scene_t *scene)
 	if (!scene->canvas_texture) {
 		struct obs_video_info ovi;
 		obs_get_video_info(&ovi);
-		auto width = ovi.base_width;
-		auto height = ovi.base_height;
+		uint32_t width = ovi.base_width;
+		uint32_t height = ovi.base_height;
 		scene->canvas_texture = gs_texture_create(
 			width, height, GS_BGRA, 1, NULL, GS_DYNAMIC);
 	}
@@ -328,13 +337,13 @@ void pls_scene_canvas_render(void *data)
 	gs_enable_blending(true);
 #if __APPLE__
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-    const bool previous = gs_set_linear_srgb(true);
+	const bool previous = gs_set_linear_srgb(true);
 #else
-    gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
 #endif
-    
-    gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-    const char *tech_name = "Draw";
+
+	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+	const char *tech_name = "Draw";
 	gs_technique_t *tech = gs_effect_get_technique(effect, tech_name);
 	gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
 
@@ -348,9 +357,9 @@ void pls_scene_canvas_render(void *data)
 	gs_technique_end(tech);
 
 	gs_blend_state_pop();
-    
+
 #if __APPLE__
-    gs_set_linear_srgb(previous);
+	gs_set_linear_srgb(previous);
 #endif
 }
 
@@ -408,6 +417,26 @@ void pls_source_properties_view_ok_button_enable(obs_source_t *source,
 			      "update_properties_ok_button_enable", &data);
 }
 
+#if defined(_WIN32)
+#include <psapi.h>
+static void log_module_address(obs_module_t *mod)
+{
+	if (mod && mod->module) {
+		MODULEINFO modInfo;
+		ZeroMemory(&modInfo, sizeof(MODULEINFO));
+		BOOL result = GetModuleInformation(GetCurrentProcess(),
+						   (HMODULE)mod->module,
+						   &modInfo,
+						   sizeof(MODULEINFO));
+		if (result) {
+			blog(LOG_INFO, "third_plugins: %s: %p-%p", mod->file,
+			     modInfo.lpBaseOfDll,
+			     (BYTE *)modInfo.lpBaseOfDll + modInfo.SizeOfImage);
+		}
+	}
+}
+#endif
+
 void pls_log_loaded_modules(log_callback callback)
 {
 	for (obs_module_t *mod = obs->first_module; !!mod; mod = mod->next) {
@@ -415,6 +444,9 @@ void pls_log_loaded_modules(log_callback callback)
 			bool internal_module = !!os_dlsym(
 				mod->module, "obs_is_internal_module");
 			callback(mod->file, internal_module);
+#if defined(_WIN32)
+			log_module_address(mod);
+#endif
 		}
 	}
 }
@@ -426,32 +458,32 @@ uint64_t pls_texture_get_max_size()
 
 gs_effect_t *pls_get_prism_effect()
 {
-    if (pls_effect)
-        return pls_effect;
-    
-    char *filename = obs_find_data_file("pls.effect");
-    pls_effect = gs_effect_create_from_file(filename, NULL);
-    bfree(filename);
-    return pls_effect;
+	if (pls_effect)
+		return pls_effect;
+
+	char *filename = obs_find_data_file("pls.effect");
+	pls_effect = gs_effect_create_from_file(filename, NULL);
+	bfree(filename);
+	return pls_effect;
 }
 
 //PRISM/WuLongyue/20230727/None/codec analog
 EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode,
 				    bool hw)
 {
-    if (!codec || !encodeDecode) {
-	return;
-    }
+	if (!codec || !encodeDecode) {
+		return;
+	}
 
-    struct calldata data;
-    uint8_t stack[512];
+	struct calldata data;
+	uint8_t stack[512];
 
-    calldata_init_fixed(&data, stack, sizeof(stack));
-    calldata_set_string(&data, "codec", codec);
-    calldata_set_string(&data, "encodeDecode", encodeDecode);
-    calldata_set_bool(&data, "hw", hw);
+	calldata_init_fixed(&data, stack, sizeof(stack));
+	calldata_set_string(&data, "codec", codec);
+	calldata_set_string(&data, "encodeDecode", encodeDecode);
+	calldata_set_bool(&data, "hw", hw);
 
-    signal_handler_signal(obs->signals, "analog_codec_notify", &data);
+	signal_handler_signal(obs->signals, "analog_codec_notify", &data);
 }
 
 //PRISM/Zhongling/20231027/#2902/exit crashed
@@ -462,4 +494,46 @@ EXPORT void pls_set_obs_exiting(bool exiting)
 EXPORT bool pls_get_obs_exiting()
 {
 	return os_atomic_load_bool(&g_app_exiting);
+}
+
+//PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
+EXPORT void pls_set_obs_shutdowning(bool shutdowning) {
+	os_atomic_set_bool(&g_obs_shutdowning, shutdowning);
+}
+
+EXPORT bool pls_get_obs_shutdowning() {
+	return os_atomic_load_bool(&g_obs_shutdowning);
+}
+
+//PRISM/Chengbing/20231108/#/prism version
+EXPORT void pls_update_prism_version(int major, int minor, int patch, int build)
+{
+	g_prism_version_major = major;
+	g_prism_version_minor = minor;
+	g_prism_version_patch = patch;
+	g_prism_version_build = build;
+}
+
+//PRISM/Chengbing/20231108/#/prism version
+EXPORT int pls_prism_version_major()
+{
+	return g_prism_version_major;
+}
+
+//PRISM/Chengbing/20231108/#/prism version
+EXPORT int pls_prism_version_minor()
+{
+	return g_prism_version_minor;
+}
+
+//PRISM/Chengbing/20231108/#/prism version
+EXPORT int pls_prism_version_patch()
+{
+	return g_prism_version_patch;
+}
+
+//PRISM/Chengbing/20231108/#/prism version
+EXPORT int pls_prism_version_build()
+{
+	return g_prism_version_build;
 }

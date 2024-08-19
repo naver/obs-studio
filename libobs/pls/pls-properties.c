@@ -211,10 +211,11 @@ static inline struct obs_property *new_pls_prop(struct obs_properties *props,
 	p->parent = props;
 	p->enabled = true;
 	p->visible = true;
-	p->type = type;
+	p->type = (enum obs_property_type)type;
 	p->name = bstrdup(name);
 	p->desc = bstrdup(desc);
-	propertes_add(props, p);
+
+	HASH_ADD_STR(props->properties, name, p);
 
 	return p;
 }
@@ -227,7 +228,7 @@ static void pls_property_destroy(struct obs_property *property)
 	struct mobile_state_data *data_mobile_state;
 	struct text_content_data *data_text_content;
 
-	switch (property->type) {
+	switch ((enum pls_property_type)property->type) {
 	case PLS_PROPERTY_BOOL_GROUP:
 		pls_property_bool_group_clear(property);
 		break;
@@ -286,7 +287,7 @@ static void pls_property_destroy(struct obs_property *property)
 obs_properties_t *pls_properties_create(void)
 {
 	struct obs_properties *props = obs_properties_create();
-	obs_properties_set_param(props, props, pls_properties_destroy);
+	obs_properties_set_param(props, props, (void (*)(void *))pls_properties_destroy);
 
 	return props;
 }
@@ -294,13 +295,11 @@ obs_properties_t *pls_properties_create(void)
 void pls_properties_destroy(obs_properties_t *props)
 {
 	if (props) {
-		struct obs_property *p = props->first_property;
+		struct obs_property *p, *tmp;
 
-		while (p) {
-			struct obs_property *next = p->next;
+		HASH_ITER (hh, props->properties, p, tmp) {
 			pls_property_destroy(p);
-			p = next;
-		}
+		}		
 	}
 }
 
@@ -338,6 +337,7 @@ bool pls_property_tips_whole_row(obs_property_t *p)
 obs_property_t *pls_properties_add_line(obs_properties_t *props,
 					const char *name, const char *desc)
 {
+    UNUSED_PARAMETER(desc);
 	return pls_properties_add_line_ex(props, name, true);
 }
 
@@ -700,7 +700,7 @@ bool pls_property_int_group_item_params(obs_property_t *p, char **name,
 					char **desc, int *min, int *max,
 					int *step, size_t idx)
 {
-	return pls_property_custom_group_item_params(p, idx, name, desc, NULL,
+	return pls_property_custom_group_item_params(p, idx, (const char**)name, (const char**)desc, NULL,
 						     NULL, NULL) &&
 	       pls_property_custom_group_item_int_params(p, idx, min, max, step,
 							 NULL, NULL);
@@ -1389,13 +1389,13 @@ int pls_property_tm_text_min(obs_property_t *p, enum pls_property_type type)
 
 int pls_property_tm_text_max(obs_property_t *p, enum pls_property_type type)
 {
-	struct tm_text_data *data = get_type_data(p, type);
+	struct tm_text_data *data = get_type_data(p, (enum obs_property_type)type);
 	return data ? data->max : 0;
 }
 
 int pls_property_tm_text_step(obs_property_t *p, enum pls_property_type type)
 {
-	struct tm_text_data *data = get_type_data(p, type);
+	struct tm_text_data *data = get_type_data(p, (enum obs_property_type)type);
 	return data ? data->step : 0;
 }
 #pragma endregion
@@ -1408,6 +1408,61 @@ obs_property_t *pls_properties_add_region_select(obs_properties_t *props,
 		return NULL;
 
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_REGION_SELECT);
+}
+
+obs_property_t *pls_properties_add_display(obs_properties_t *props,
+					   const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_DISPLAY);
+}
+
+obs_property_t *pls_properties_add_options(obs_properties_t *props,
+					   const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_OPTIONS);
+}
+
+obs_property_t *pls_properties_add_motion(obs_properties_t *props,
+					  const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_MOTION);
+}
+
+obs_property_t *pls_properties_add_font(obs_properties_t *props,
+					const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_FONT);
+}
+
+obs_property_t *pls_properties_add_text_color(obs_properties_t *props,
+					      const char *name,
+					      const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_TEXT_COLOR);
+}
+
+obs_property_t *pls_properties_add_bk_color(obs_properties_t *props,
+					    const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_BK_COLOR);
 }
 
 #pragma region image_group
@@ -2050,4 +2105,13 @@ const char *pls_property_get_text_content(obs_property_t *p)
 		get_pls_type_data(p, PLS_PROPERTY_TEXT_CONTENT);
 
 	return data ? data->content : NULL;
+}
+
+obs_property_t* pls_properties_add_chzzk_sponsor(obs_properties_t* props,
+	const char* name)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, NULL, PLS_PROPERTY_CHZZK_SPONSOR);
 }

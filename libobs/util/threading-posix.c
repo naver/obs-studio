@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -21,6 +21,9 @@
 #include <mach/semaphore.h>
 #include <mach/task.h>
 #include <mach/mach_init.h>
+//PRISM/cao.kewei/20240110/#3907/SCK Block
+#include <mach/mach_time.h>
+//PRISM/cao.kewei/20240110/#3907/SCK Block
 #else
 #define _GNU_SOURCE
 #include <semaphore.h>
@@ -212,6 +215,20 @@ int os_sem_wait(os_sem_t *sem)
 		return -1;
 	return (semaphore_wait(sem->sem) == KERN_SUCCESS) ? 0 : -1;
 }
+
+//PRISM/cao.kewei/20240110/#3907/SCK Block
+int os_sem_timedwait(os_sem_t *sem, unsigned int seconds) {
+	if (!sem) {
+		return -1;
+	}
+	
+	mach_timespec_t timeout;
+	timeout.tv_sec = seconds;  // Timeout in seconds
+	timeout.tv_nsec = 0;
+	
+	return semaphore_timedwait(sem->sem, timeout);
+}
+//PRISM/cao.kewei/20240110/#3907/SCK Block
 
 #else
 

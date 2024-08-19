@@ -1,118 +1,81 @@
-project(frontend-tools)
+cmake_minimum_required(VERSION 3.22...3.25)
+
+legacy_check()
+
+find_package(Qt6 REQUIRED Widgets)
+
+if(OS_LINUX
+   OR OS_FREEBSD
+   OR OS_OPENBSD)
+  find_package(Qt6 REQUIRED Gui)
+  find_package(X11 REQUIRED)
+endif()
 
 add_library(frontend-tools MODULE)
 add_library(OBS::frontend-tools ALIAS frontend-tools)
 
-find_qt(COMPONENTS Widgets COMPONENTS_LINUX Gui)
-
-set_target_properties(
-  frontend-tools
-  PROPERTIES AUTOMOC ON
-             AUTOUIC ON
-             AUTORCC ON
-             AUTOUIC_SEARCH_PATHS "forms")
-
-target_sources(
-  frontend-tools PRIVATE forms/auto-scene-switcher.ui forms/captions.ui
-                         forms/output-timer.ui forms/scripts.ui)
-
 target_sources(
   frontend-tools
-  PRIVATE frontend-tools.c
-          auto-scene-switcher.hpp
+  PRIVATE # cmake-format: sortable
+          $<$<PLATFORM_ID:Darwin>:auto-scene-switcher-osx.mm>
+          $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD>:auto-scene-switcher-nix.cpp>
+          $<$<PLATFORM_ID:Windows>:auto-scene-switcher-win.cpp>
+          $<$<PLATFORM_ID:Windows>:captions-handler.cpp>
+          $<$<PLATFORM_ID:Windows>:captions-handler.hpp>
+          $<$<PLATFORM_ID:Windows>:captions-mssapi-stream.cpp>
+          $<$<PLATFORM_ID:Windows>:captions-mssapi-stream.hpp>
+          $<$<PLATFORM_ID:Windows>:captions-mssapi.cpp>
+          $<$<PLATFORM_ID:Windows>:captions-mssapi.hpp>
+          $<$<PLATFORM_ID:Windows>:captions.cpp>
+          $<$<PLATFORM_ID:Windows>:captions.hpp>
           auto-scene-switcher.cpp
-          output-timer.hpp
-          tool-helpers.hpp
+          auto-scene-switcher.hpp
+          frontend-tools.c
           output-timer.cpp
-          ${CMAKE_SOURCE_DIR}/UI/double-slider.cpp
-          ${CMAKE_SOURCE_DIR}/UI/double-slider.hpp
-          ${CMAKE_SOURCE_DIR}/UI/horizontal-scroll-area.cpp
-          ${CMAKE_SOURCE_DIR}/UI/horizontal-scroll-area.hpp
-          ${CMAKE_SOURCE_DIR}/UI/properties-view.cpp
-          ${CMAKE_SOURCE_DIR}/UI/properties-view.hpp
-          ${CMAKE_SOURCE_DIR}/UI/properties-view.moc.hpp
-          ${CMAKE_SOURCE_DIR}/UI/qt-wrappers.cpp
-          ${CMAKE_SOURCE_DIR}/UI/qt-wrappers.hpp
-          ${CMAKE_SOURCE_DIR}/UI/spinbox-ignorewheel.cpp
-          ${CMAKE_SOURCE_DIR}/UI/spinbox-ignorewheel.hpp
-          ${CMAKE_SOURCE_DIR}/UI/slider-ignorewheel.cpp
-          ${CMAKE_SOURCE_DIR}/UI/slider-ignorewheel.hpp
-          ${CMAKE_SOURCE_DIR}/UI/vertical-scroll-area.hpp
-          ${CMAKE_SOURCE_DIR}/UI/vertical-scroll-area.cpp
-          ${CMAKE_SOURCE_DIR}/UI/plain-text-edit.cpp
-          ${CMAKE_SOURCE_DIR}/UI/plain-text-edit.hpp)
+          output-timer.hpp
+          tool-helpers.hpp)
 
-target_compile_features(frontend-tools PRIVATE cxx_std_17)
+target_sources(frontend-tools PRIVATE forms/auto-scene-switcher.ui forms/captions.ui forms/output-timer.ui
+                                      forms/scripts.ui)
 
-target_link_libraries(frontend-tools PRIVATE OBS::frontend-api OBS::libobs
-                                             Qt::Widgets)
+target_compile_options(frontend-tools PRIVATE $<$<PLATFORM_ID:Darwin>:-Wno-quoted-include-in-framework-header>
+                                              $<$<PLATFORM_ID:Darwin>:-Wno-comma>)
 
-if(OS_POSIX AND NOT OS_MACOS)
-  target_link_libraries(frontend-tools PRIVATE Qt::GuiPrivate)
-endif()
+target_link_libraries(
+  frontend-tools
+  PRIVATE OBS::frontend-api
+          OBS::libobs
+          OBS::ui-support
+          Qt::Widgets
+          "$<$<PLATFORM_ID:Darwin>:$<LINK_LIBRARY:FRAMEWORK,Cocoa>>"
+          $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD>:X11::X11>
+          $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD>:Qt::GuiPrivate>)
+
+add_subdirectory("${CMAKE_SOURCE_DIR}/deps/obs-scripting" "${CMAKE_BINARY_DIR}/deps/obs-scripting")
 
 if(ENABLE_SCRIPTING AND TARGET OBS::scripting)
-  target_compile_definitions(frontend-tools PRIVATE ENABLE_SCRIPTING)
-
   target_sources(frontend-tools PRIVATE scripts.cpp scripts.hpp)
-
   target_link_libraries(frontend-tools PRIVATE OBS::scripting)
-
-  if(TARGET obslua)
-    target_compile_definitions(frontend-tools PRIVATE LUAJIT_FOUND)
-  endif()
-
-  if(TARGET obspython)
-    target_compile_definitions(frontend-tools PRIVATE Python_FOUND)
-  endif()
+  target_enable_feature(frontend-tools "Scripting Support (Frontend)" ENABLE_SCRIPTING)
 endif()
-
-set_target_properties(frontend-tools PROPERTIES FOLDER "frontend" PREFIX "")
 
 if(OS_WINDOWS)
-  set(MODULE_DESCRIPTION "OBS Frontend Tools")
-  configure_file(${CMAKE_SOURCE_DIR}/cmake/bundle/windows/obs-module.rc.in
-                 frontend-tools.rc)
+  configure_file(cmake/windows/obs-module.rc.in frontend-tools.rc)
+  target_sources(frontend-tools PRIVATE frontend-tools.rc)
 
-  target_sources(
-    frontend-tools
-    PRIVATE auto-scene-switcher-win.cpp
-            frontend-tools.rc
-            captions.cpp
-            captions.hpp
-            captions-handler.cpp
-            captions-handler.hpp
-            captions-mssapi.cpp
-            captions-mssapi.hpp
-            captions-mssapi-stream.cpp
-            captions-mssapi-stream.hpp)
-
-elseif(OS_MACOS)
-  find_library(COCOA Cocoa)
-  mark_as_advanced(COCOA)
-  target_link_libraries(frontend-tools PRIVATE ${COCOA})
-
-  target_sources(frontend-tools PRIVATE auto-scene-switcher-osx.mm)
-  set_source_files_properties(auto-scene-switcher-osx.mm
-                              PROPERTIES COMPILE_FLAGS -fobjc-arc)
-
-elseif(OS_POSIX)
-  find_package(X11 REQUIRED)
-
-  target_link_libraries(frontend-tools PRIVATE X11::X11)
-
-  target_sources(frontend-tools PRIVATE auto-scene-switcher-nix.cpp)
+  # cmake-format: off
+  set_property(TARGET frontend-tools APPEND PROPERTY AUTORCC_OPTIONS --format-version 1)
+  # cmake-format: on
 endif()
 
-get_target_property(_SOURCES frontend-tools SOURCES)
-set(_UI ${_SOURCES})
-list(FILTER _UI INCLUDE REGEX ".*\\.ui?")
-
-source_group(
-  TREE "${CMAKE_CURRENT_SOURCE_DIR}/forms"
-  PREFIX "UI Files"
-  FILES ${_UI})
-unset(_SOURCES)
-unset(_UI)
-
-setup_plugin_target(frontend-tools)
+# cmake-format: off
+set_target_properties_obs(
+  frontend-tools
+  PROPERTIES FOLDER frontend
+             PREFIX ""
+             AUTOMOC ON
+             AUTOUIC ON
+             AUTORCC ON
+             AUTOUIC_SEARCH_PATHS forms
+             XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
+# cmake-format: on

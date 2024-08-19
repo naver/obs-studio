@@ -22,14 +22,16 @@
 #import "Defines.h"
 
 //! PlugInMain is the entrypoint for the plugin
+#if defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && __MAC_OS_X_VERSION_MIN_REQUIRED < __MAC_12_3
 extern "C" {
-void *PlugInMain(CFAllocatorRef, CFUUIDRef requestedTypeUUID)
-{
-	DLogFunc(@"version=%@", PLUGIN_VERSION);
-	if (!CFEqual(requestedTypeUUID, kCMIOHardwarePlugInTypeID)) {
-		return 0;
-	}
+    __exported void *PlugInMain(CFAllocatorRef, CFUUIDRef requestedTypeUUID)
+    {
+        DLogFunc(@"version=%@", PLUGIN_VERSION);
+        if (!CFEqual(requestedTypeUUID, kCMIOHardwarePlugInTypeID)) {
+            return 0;
+        }
 
-	return OBSDALPlugInRef();
+        return OBSDALPlugInRef();
+    }
 }
-}
+#endif

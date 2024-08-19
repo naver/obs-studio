@@ -176,7 +176,7 @@ plugin modules.
                       | MODULE_FILE_NOT_FOUND   - The module was not found
                       | MODULE_MISSING_EXPORTS  - Required exports are missing
                       | MODULE_INCOMPATIBLE_VER - Incompatible version
-                      | MODULE_HARDCODED_SKIP   - Skipped by harcoded rules
+                      | MODULE_HARDCODED_SKIP   - Skipped by hardcoded rules
                                                   (e.g. obsolete obs-browser macOS plugin)
 
 ---------------------
@@ -268,6 +268,15 @@ plugin modules.
            char **failed_modules;
            size_t count;
    };
+
+---------------------
+
+.. function:: void *obs_add_safe_module(const char *name)
+
+   Adds a *name* to the list of modules allowed to load in Safe Mode.
+   If the list is empty, all modules are allowed.
+
+   :param  name: The name of the module (filename sans extension).
 
 ---------------------
 

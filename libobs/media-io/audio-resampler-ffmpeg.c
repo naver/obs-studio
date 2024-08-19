@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -216,6 +216,7 @@ bool audio_resampler_resample(audio_resampler_t *rs, uint8_t *output[],
 		ret = av_samples_alloc(rs->output_buffer, NULL, rs->output_ch,
 				 estimated, rs->output_format, 0);
 		if (ret < 0) {
+			rs->output_size = 0;
 			blog(LOG_ERROR, "av_samples_alloc failed: %d", ret);
 			return false;
 		}

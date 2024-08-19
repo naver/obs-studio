@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -60,6 +60,8 @@ enum obs_data_number_type {
 
 /* ------------------------------------------------------------------------- */
 /* Main usage functions */
+//PRISM/Liuying/20231222/#3695/get json by sort key
+EXPORT const char *pls_data_get_json(obs_data_t *data);
 
 EXPORT obs_data_t *obs_data_create();
 EXPORT obs_data_t *obs_data_create_from_json(const char *json_string);
@@ -70,11 +72,15 @@ EXPORT void obs_data_addref(obs_data_t *data);
 EXPORT void obs_data_release(obs_data_t *data);
 
 EXPORT const char *obs_data_get_json(obs_data_t *data);
+EXPORT const char *obs_data_get_json_pretty(obs_data_t *data);
 EXPORT const char *obs_data_get_last_json(obs_data_t *data);
 EXPORT bool obs_data_save_json(obs_data_t *data, const char *file);
 EXPORT bool obs_data_save_json_safe(obs_data_t *data, const char *file,
 				    const char *temp_ext,
 				    const char *backup_ext);
+EXPORT bool obs_data_save_json_pretty_safe(obs_data_t *data, const char *file,
+					   const char *temp_ext,
+					   const char *backup_ext);
 
 EXPORT void obs_data_apply(obs_data_t *target, obs_data_t *apply_data);
 
@@ -128,6 +134,8 @@ EXPORT void obs_data_set_autoselect_bool(obs_data_t *data, const char *name,
 					 bool val);
 EXPORT void obs_data_set_autoselect_obj(obs_data_t *data, const char *name,
 					obs_data_t *obj);
+EXPORT void obs_data_set_autoselect_array(obs_data_t *data, const char *name,
+					  obs_data_array_t *arr);
 
 /*
  * Get functions

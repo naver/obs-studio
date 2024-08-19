@@ -94,7 +94,7 @@ static void d3d9_free()
 
 static DXGI_FORMAT d3d9_to_dxgi_format(D3DFORMAT format)
 {
-	switch ((unsigned long)format) {
+	switch (format) {
 	case D3DFMT_A2B10G10R10:
 		return DXGI_FORMAT_R10G10B10A2_UNORM;
 	case D3DFMT_A8R8G8B8:
@@ -123,13 +123,15 @@ static inline bool shex_init_d3d11()
 	HMODULE dxgi;
 	HRESULT hr;
 
-	d3d11 = load_system_library("d3d11.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	d3d11 = load_system_library(L"d3d11.dll");
 	if (!d3d11) {
 		hlog("d3d9_init: Failed to load D3D11");
 		return false;
 	}
 
-	dxgi = load_system_library("dxgi.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	dxgi = load_system_library(L"dxgi.dll");
 	if (!dxgi) {
 		hlog("d3d9_init: Failed to load DXGI");
 		return false;
@@ -453,7 +455,8 @@ static void d3d9_init(IDirect3DDevice9 *device)
 	HWND window = nullptr;
 	HRESULT hr;
 
-	data.d3d9 = get_system_module("d3d9.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	data.d3d9 = get_system_module(L"d3d9.dll");
 	data.device = device;
 
 	hr = device->QueryInterface(__uuidof(IDirect3DDevice9Ex),
@@ -824,7 +827,8 @@ static bool manually_get_d3d9_addrs(HMODULE d3d9_module, void **present_addr,
 
 bool hook_d3d9(void)
 {
-	HMODULE d3d9_module = get_system_module("d3d9.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	HMODULE d3d9_module = get_system_module(L"d3d9.dll");
 	uint32_t d3d9_size;
 	void *present_addr = nullptr;
 	void *present_ex_addr = nullptr;

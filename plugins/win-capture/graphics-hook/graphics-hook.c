@@ -2,8 +2,13 @@
 #include <psapi.h>
 #include <inttypes.h>
 #include "graphics-hook.h"
+#ifdef OBS_LEGACY
 #include "../graphics-hook-ver.h"
 #include "../../libobs/util/windows/obfuscate.h"
+#else
+#include <graphics-hook-ver.h>
+#include <util/windows/obfuscate.h>
+#endif
 
 #define DEBUG_OUTPUT
 
@@ -40,7 +45,8 @@ static HINSTANCE dll_inst = NULL;
 static volatile bool stop_loop = false;
 static HANDLE dup_hook_mutex = NULL;
 static HANDLE capture_thread = NULL;
-char system_path[MAX_PATH] = {0};
+//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+wchar_t system_path[MAX_PATH] = {0};
 char process_name[MAX_PATH] = {0};
 wchar_t keepalive_name[64] = {0};
 HWND dummy_window = NULL;
@@ -143,7 +149,8 @@ static inline bool init_mutexes(void)
 
 static inline bool init_system_path(void)
 {
-	UINT ret = GetSystemDirectoryA(system_path, MAX_PATH);
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	UINT ret = GetSystemDirectoryW(system_path, MAX_PATH);
 	if (!ret) {
 		hlog("Failed to get windows system path: %lu", GetLastError());
 		return false;
@@ -243,8 +250,6 @@ static inline bool init_hook(HANDLE thread_handle)
 
 	_snwprintf(keepalive_name, sizeof(keepalive_name) / sizeof(wchar_t),
 		   L"%s%lu", WINDOW_HOOK_KEEPALIVE, GetCurrentProcessId());
-
-	init_pipe();
 
 	init_dummy_window_thread();
 	log_current_process();

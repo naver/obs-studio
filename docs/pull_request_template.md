@@ -5,7 +5,9 @@ Issue Link
 If has PRISM PR together, paste link here Link
 
 # Related Module
-Please include relevant module and context. 
+- [ ] Windows platform affected
+- [ ] MAC platform affected
+- Please include relevant module and context.
 
 # Reproduce Step
 Add reproduce step if QA not provide

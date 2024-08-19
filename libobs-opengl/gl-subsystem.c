@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
     Copyright (C) 2014 by Zachary Lund <admin@computerquip.com>
 
     This program is free software: you can redistribute it and/or modify
@@ -18,9 +18,9 @@
 
 #include <graphics/matrix3.h>
 #include "gl-subsystem.h"
-#ifdef __APPLE__
-#include <execinfo.h>
-#endif
+
+//PRISM/zhongling/20231122/#/add log
+#include <pls/pls-base.h>
 
 /* Goofy Windows.h macros need to be removed */
 #ifdef near
@@ -1400,20 +1400,11 @@ void device_set_viewport(gs_device_t *device, int x, int y, int width,
 	glViewport(x, gl_y, width, height);
     if (!gl_success("glViewport")) {
 #ifdef __APPLE__
-        void* callstack[128] = {NULL};
-        int i, frames = backtrace(callstack, sizeof(callstack)/sizeof(callstack[0]));
-        char** strs = backtrace_symbols(callstack, frames);
-        char stackinfos[2048] = {0};
-        unsigned long len = 0;
-        
-        for (i = 0; i < frames && i < 10; ++i) {
-            if (strs[i] && len + 1 < sizeof(stackinfos)) {
-                strncpy(stackinfos + len, strs[i], sizeof(stackinfos) - len - 1);
-            }
-            len = strlen(stackinfos);
-        }
-        free(strs);
+		//PRISM/zhongling/20231122/#/add log start
+		char stackinfos[2048] = {0};
+		pls_get_func_stacks(stackinfos, sizeof(stackinfos), 10);
         blog(LOG_ERROR, "device_set_viewport (GL) failed x:%d, y:%d, w:%d, h:%d, gl_y:%d\nstack info: %s", x, y, width, height, gl_y, stackinfos);
+		//PRISM/zhongling/20231122/#/add log end
 #else
         blog(LOG_ERROR, "device_set_viewport (GL) failed");
 #endif
@@ -1547,7 +1538,7 @@ void gs_swapchain_destroy(gs_swapchain_t *swapchain)
 
 //PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
 #ifdef __APPLE__
-bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain)
+bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain, bool force)
 {
 	if (!swapchain)
 		return true;
@@ -1555,8 +1546,8 @@ bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain)
 	if (swapchain->device->cur_swap == swapchain)
 		device_load_swapchain(swapchain->device, NULL);
 
-	if (swapchain->is_updating) {
-		blog(LOG_INFO, "%p is_updating is true", swapchain);
+	if (swapchain->is_updating && !force) {
+		blog(LOG_INFO, "%p is_updating is true, force: %d", swapchain, force);
 		return false;
 	}
 	
@@ -1569,6 +1560,18 @@ bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain)
 }
 #endif
 //PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
+
+bool device_nv12_available(gs_device_t *device)
+{
+	UNUSED_PARAMETER(device);
+	return true; // always a split R8,R8G8 texture.
+}
+
+bool device_p010_available(gs_device_t *device)
+{
+	UNUSED_PARAMETER(device);
+	return true; // always a split R16,R16G16 texture.
+}
 
 uint32_t gs_voltexture_get_width(const gs_texture_t *voltex)
 {

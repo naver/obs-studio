@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,7 +16,7 @@
 
 #include "obsconfig.h"
 
-#if !defined(__APPLE__) && OBS_QT_VERSION == 6
+#if !defined(__APPLE__)
 #define _GNU_SOURCE
 #include <link.h>
 #include <stdlib.h>
@@ -35,6 +35,7 @@
 #include <glob.h>
 #include <time.h>
 #include <signal.h>
+#include <uuid/uuid.h>
 
 #if !defined(__APPLE__)
 #include <sys/times.h>
@@ -82,14 +83,21 @@ void *os_dlopen(const char *path)
 		dstr_cat(&dylib_name, ".so");
 
 #ifdef __APPLE__
-	void *res = dlopen(dylib_name.array, RTLD_LAZY | RTLD_FIRST);
+	int dlopen_flags = RTLD_LAZY | RTLD_FIRST;
+	if (dstr_find(&dylib_name, "Python")) {
+		dlopen_flags = dlopen_flags | RTLD_GLOBAL;
+	} else {
+		dlopen_flags = dlopen_flags | RTLD_LOCAL;
+	}
+	void *res = dlopen(dylib_name.array, dlopen_flags);
 #else
 	void *res = dlopen(dylib_name.array, RTLD_LAZY);
 #endif
 	if (!res)
 		blog(LOG_ERROR, "os_dlopen(%s->%s): %s\n", path,
 		     dylib_name.array, dlerror());
-
+    
+    blog(LOG_DEBUG, "successed to load mac dynamic library %s", dylib_name.array);
 	dstr_free(&dylib_name);
 	return res;
 }
@@ -105,7 +113,7 @@ void os_dlclose(void *module)
 		dlclose(module);
 }
 
-#if !defined(__APPLE__) && OBS_QT_VERSION == 6
+#if !defined(__APPLE__)
 int module_has_qt5_check(const char *path)
 {
 	void *mod = os_dlopen(path);
@@ -146,7 +154,7 @@ void get_plugin_info(const char *path, bool *is_obs_plugin, bool *can_load)
 {
 	*is_obs_plugin = true;
 	*can_load = true;
-#if !defined(__APPLE__) && OBS_QT_VERSION == 6
+#if !defined(__APPLE__)
 	*can_load = !has_qt5_dependency(path);
 #endif
 	UNUSED_PARAMETER(path);
@@ -564,6 +572,7 @@ void os_closedir(os_dir_t *dir)
 	}
 }
 
+#ifndef __APPLE__
 int64_t os_get_free_space(const char *path)
 {
 	struct statvfs info;
@@ -574,6 +583,7 @@ int64_t os_get_free_space(const char *path)
 
 	return ret;
 }
+#endif
 
 struct posix_glob_info {
 	struct os_glob_info base;
@@ -1129,6 +1139,7 @@ uint64_t os_get_sys_total_size(void)
 }
 #endif
 
+#ifndef __APPLE__
 uint64_t os_get_free_disk_space(const char *dir)
 {
 	struct statvfs info;
@@ -1136,4 +1147,15 @@ uint64_t os_get_free_disk_space(const char *dir)
 		return 0;
 
 	return (uint64_t)info.f_frsize * (uint64_t)info.f_bavail;
+}
+#endif
+
+char *os_generate_uuid(void)
+{
+	uuid_t uuid;
+	// 36 char UUID + NULL
+	char *out = bmalloc(37);
+	uuid_generate(uuid);
+	uuid_unparse_lower(uuid, out);
+	return out;
 }

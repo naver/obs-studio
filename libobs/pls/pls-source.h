@@ -40,6 +40,9 @@ extern "C" {
 #define TEXT_PRISM_LENS_AUDIO_1 "PRISM Lens audio 1"
 #define TEXT_PRISM_LENS_AUDIO_2 "PRISM Lens audio 2"
 #define TEXT_PRISM_LENS_AUDIO_3 "PRISM Lens audio 3"
+#define METHOD_REFRESH_BROWSER "RefreshBrowser"
+#define METHOD_SHOW_INTERACTION "ShowInteract"
+#define METHOD_HIDE_INTERACTION "HideInterct"
 //PRISM/Zhongling/20230809/#/lens and mobile plugin
 
 enum pls_icon_type {
@@ -62,7 +65,10 @@ enum pls_icon_type {
 	PLS_ICON_TYPE_DECKLINK_INPUT,
 
 	//PRISM/Liuying/20230808/new ux : add prism lens source
-	PLS_ICON_TYPE_PRISM_LENS
+	PLS_ICON_TYPE_PRISM_LENS,
+	PLS_ICON_TYPE_SPOUT2,
+	PLS_ICON_TYPE_CHAT_TEMPLATE,
+	PLS_ICON_TYPE_CHZZK_SPONSOR
 };
 
 struct pls_source_info {
@@ -106,12 +112,12 @@ EXPORT bool pls_source_update_extern_params_json(obs_source_t *source,
 EXPORT bool pls_source_dispatch_cef_js(const obs_source_t *source,
 				       const char *event_name,
 				       const char *json_data);
+EXPORT void pls_source_invoke_method(obs_source_t *source, const char *method);
 
 EXPORT void pls_init_alive_module();
 EXPORT void pls_add_alive(void *s);
 EXPORT void pls_remove_alive(void *s);
 EXPORT bool pls_is_alive(void *s);
-EXPORT void pls_destroy_all_sources();
 
 #ifdef __cplusplus
 }

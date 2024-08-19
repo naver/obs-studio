@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -525,6 +525,7 @@ struct gs_init_data {
 
 EXPORT const char *gs_get_device_name(void);
 EXPORT int gs_get_device_type(void);
+EXPORT uint32_t gs_get_adapter_count(void);
 EXPORT void gs_enum_adapters(bool (*callback)(void *param, const char *name,
 					      uint32_t id),
 			     void *param);
@@ -590,6 +591,7 @@ EXPORT gs_texture_t *gs_texture_create_from_file(const char *file);
 EXPORT uint8_t *gs_create_texture_file_data(const char *file,
 					    enum gs_color_format *format,
 					    uint32_t *cx, uint32_t *cy);
+
 EXPORT uint8_t *gs_create_texture_file_data2(
 	const char *file, enum gs_image_alpha_mode alpha_mode,
 	enum gs_color_format *format, uint32_t *cx, uint32_t *cy);
@@ -857,6 +859,12 @@ EXPORT bool gs_timer_range_get_data(gs_timer_range_t *range, bool *disjoint,
 
 EXPORT bool gs_nv12_available(void);
 EXPORT bool gs_p010_available(void);
+EXPORT bool gs_texture_create_nv12(gs_texture_t **tex_y, gs_texture_t **tex_uv,
+				   uint32_t width, uint32_t height,
+				   uint32_t flags);
+EXPORT bool gs_texture_create_p010(gs_texture_t **tex_y, gs_texture_t **tex_uv,
+				   uint32_t width, uint32_t height,
+				   uint32_t flags);
 
 EXPORT bool gs_is_monitor_hdr(void *monitor);
 
@@ -895,7 +903,7 @@ EXPORT bool gs_texture_rebind_iosurface(gs_texture_t *texture, void *iosurf);
 EXPORT gs_texture_t *gs_texture_open_shared(uint32_t handle);
 EXPORT bool gs_shared_texture_available(void);
 //PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
-EXPORT bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain);
+EXPORT bool gs_swapchain_destroy_if_need(gs_swapchain_t *swapchain, bool force);
 //PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
 #elif _WIN32
 
@@ -921,8 +929,11 @@ EXPORT void gs_duplicator_destroy(gs_duplicator_t *duplicator);
 
 EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *duplicator);
 EXPORT gs_texture_t *gs_duplicator_get_texture(gs_duplicator_t *duplicator);
+EXPORT enum gs_color_space
+gs_duplicator_get_color_space(gs_duplicator_t *duplicator);
+EXPORT float gs_duplicator_get_sdr_white_level(gs_duplicator_t *duplicator);
 
-EXPORT uint32_t gs_get_adapter_count(void);
+EXPORT bool gs_can_adapter_fast_clear(void);
 
 /** creates a windows GDI-lockable texture */
 EXPORT gs_texture_t *gs_texture_create_gdi(uint32_t width, uint32_t height);
@@ -953,13 +964,6 @@ EXPORT int gs_texture_acquire_sync(gs_texture_t *tex, uint64_t key,
  * return 0 on success, -1 on error
  */
 EXPORT int gs_texture_release_sync(gs_texture_t *tex, uint64_t key);
-
-EXPORT bool gs_texture_create_nv12(gs_texture_t **tex_y, gs_texture_t **tex_uv,
-				   uint32_t width, uint32_t height,
-				   uint32_t flags);
-EXPORT bool gs_texture_create_p010(gs_texture_t **tex_y, gs_texture_t **tex_uv,
-				   uint32_t width, uint32_t height,
-				   uint32_t flags);
 
 EXPORT gs_stagesurf_t *gs_stagesurface_create_nv12(uint32_t width,
 						   uint32_t height);

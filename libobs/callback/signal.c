@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 Hugh Bailey <obs.jim@gmail.com>
+ * Copyright (c) 2023 Lain Bailey <lain@obsproject.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -19,6 +19,9 @@
 
 #include "decl.h"
 #include "signal.h"
+
+//PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
+extern bool pls_get_obs_shutdowning(void);
 
 struct signal_callback {
 	signal_callback_t callback;
@@ -217,6 +220,9 @@ static void signal_handler_connect_internal(signal_handler_t *handler,
 		return;
 	}
 
+	//PRISM/wangshaohui/20240530/none/for debug
+	blog(LOG_INFO, "connect signal to callback [%s] %p", signal, callback);
+
 	/* -------------- */
 
 	pthread_mutex_lock(&sig->mutex);
@@ -307,11 +313,31 @@ void signal_handler_signal(signal_handler_t *handler, const char *signal,
 	if (!sig)
 		return;
 
+	//PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
+	if (pls_get_obs_shutdowning()) {
+		pthread_mutex_lock(&sig->mutex);
+		for (size_t i = 0; i < sig->callbacks.num; i++) {
+			struct signal_callback *cb = sig->callbacks.array + i;
+			blog(LOG_INFO,
+			     "signal handler send signal to invalid signal_callback [%p] , signal_callback callback [%p]",
+			     cb, cb->callback);
+		}
+		blog(LOG_INFO, "signal handler send invalid signal [%s] , signal count is %d", signal, (int)sig->callbacks.num);
+		pthread_mutex_unlock(&sig->mutex);
+		return;
+	}
+
 	pthread_mutex_lock(&sig->mutex);
 	sig->signalling = true;
 
 	for (size_t i = 0; i < sig->callbacks.num; i++) {
+		//PRISM/wangshaohui/20240530/none/for debug
+		volatile struct signal_callback *cb_debug = sig->callbacks.array + i;
+		volatile signal_callback_t callback_debug = cb_debug->callback;
+		UNUSED_PARAMETER(callback_debug);
+		
 		struct signal_callback *cb = sig->callbacks.array + i;
+		
 		if (!cb->remove) {
 			current_signal_cb = cb;
 			cb->callback(cb->data, params);

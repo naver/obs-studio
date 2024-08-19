@@ -39,6 +39,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "v4l2-helpers.h"
 #include "v4l2-decoder.h"
 
+#define FALLBACK_FRAMERATE 30
+
 #if HAVE_UDEV
 #include "v4l2-udev.h"
 #endif
@@ -73,8 +75,8 @@ struct v4l2_data {
 	int pixfmt;
 	int standard;
 	int dv_timing;
-	int resolution;
-	int framerate;
+	int64_t resolution;
+	int64_t framerate;
 	int color_range;
 
 	/* internal data */
@@ -123,6 +125,7 @@ static void v4l2_prep_obs_frame(struct v4l2_data *data,
 
 	const enum video_format format = v4l2_to_obs_video_format(data->pixfmt);
 
+	frame->flags = OBS_SOURCE_FRAME_LINEAR_ALPHA;
 	frame->width = data->width;
 	frame->height = data->height;
 	frame->format = format;
@@ -419,7 +422,7 @@ static void v4l2_device_list(obs_property_t *prop, obs_data_t *settings)
 		int ret = snprintf(unique_device_name,
 				   sizeof(unique_device_name), "%s (%s)",
 				   video_cap.card, video_cap.bus_info);
-		if (ret >= sizeof(unique_device_name))
+		if (ret >= (int)sizeof(unique_device_name))
 			blog(LOG_DEBUG,
 			     "linux-v4l2: A format truncation may have occurred."
 			     " This can be ignored since it is quite improbable.");
@@ -589,7 +592,8 @@ static void v4l2_resolution_list(int dev, uint_fast32_t pixelformat,
 		blog(LOG_INFO, "Stepwise and Continuous framesizes "
 			       "are currently hardcoded");
 
-		for (const int *packed = v4l2_framesizes; *packed; ++packed) {
+		for (const int64_t *packed = v4l2_framesizes; *packed;
+		     ++packed) {
 			int width;
 			int height;
 			v4l2_unpack_tuple(&width, &height, *packed);
@@ -641,7 +645,8 @@ static void v4l2_framerate_list(int dev, uint_fast32_t pixelformat,
 		blog(LOG_INFO, "Stepwise and Continuous framerates "
 			       "are currently hardcoded");
 
-		for (const int *packed = v4l2_framerates; *packed; ++packed) {
+		for (const int64_t *packed = v4l2_framerates; *packed;
+		     ++packed) {
 			int num;
 			int denom;
 			v4l2_unpack_tuple(&num, &denom, *packed);
@@ -1028,6 +1033,11 @@ static void v4l2_init(struct v4l2_data *data)
 	if (v4l2_set_framerate(data->dev, &data->framerate) < 0) {
 		blog(LOG_ERROR, "Unable to set framerate");
 		goto fail;
+	}
+	if (data->framerate == 0) {
+		blog(LOG_ERROR, "Framerate is not set, falling back to %i",
+		     FALLBACK_FRAMERATE);
+		data->framerate = v4l2_pack_tuple(1, FALLBACK_FRAMERATE);
 	}
 	v4l2_unpack_tuple(&fps_num, &fps_denom, data->framerate);
 	blog(LOG_INFO, "Framerate: %.2f fps", (float)fps_denom / fps_num);

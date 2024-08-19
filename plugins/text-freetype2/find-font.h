@@ -7,6 +7,7 @@
 
 #include <util/dstr.h>
 #include <util/darray.h>
+#include <util/c99defs.h>
 
 struct font_path_info {
 	char *face_and_style;
@@ -40,3 +41,8 @@ extern void free_os_font_list(void);
 extern const char *get_font_path(const char *family, uint16_t size,
 				 const char *style, uint32_t flags,
 				 FT_Long *idx);
+
+//PRISM/cao.kewei/20240524/custom font path
+#if __APPLE__
+extern void load_custom_font(const char *path);
+#endif

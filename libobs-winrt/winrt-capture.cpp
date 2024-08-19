@@ -21,8 +21,8 @@ try {
 		IsApiContractPresent(L"Windows.Foundation.UniversalApiContract",
 				     8);
 } catch (const winrt::hresult_error &err) {
-	blog(LOG_ERROR, "winrt_capture_supported (0x%08X): %ls",
-	     err.code().value, err.message().c_str());
+	blog(LOG_ERROR, "winrt_capture_supported (0x%08X): %s",
+	     err.code().value, winrt::to_string(err.message()).c_str());
 	return false;
 } catch (...) {
 	blog(LOG_ERROR, "winrt_capture_supported (0x%08X)",
@@ -37,8 +37,8 @@ try {
 			L"Windows.Graphics.Capture.GraphicsCaptureSession",
 			L"IsCursorCaptureEnabled");
 } catch (const winrt::hresult_error &err) {
-	blog(LOG_ERROR, "winrt_capture_cursor_toggle_supported (0x%08X): %ls",
-	     err.code().value, err.message().c_str());
+	blog(LOG_ERROR, "winrt_capture_cursor_toggle_supported (0x%08X): %s",
+	     err.code().value, winrt::to_string(err.message()).c_str());
 	return false;
 } catch (...) {
 	blog(LOG_ERROR, "winrt_capture_cursor_toggle_supported (0x%08X)",
@@ -132,6 +132,10 @@ struct winrt_capture {
 	HMONITOR monitor;
 	DXGI_FORMAT format;
 
+	//PRISM/WangShaohui/20240201/#4181/Use wgc for region capture
+	BOOL is_desktop = FALSE;
+	RECT texture_region = RECT{0, 0, 0, 0};
+
 	bool capture_cursor;
 	BOOL cursor_visible;
 
@@ -191,10 +195,23 @@ struct winrt_capture {
 
 		if (desc.Format ==
 		    get_pixel_format(window, monitor, force_sdr)) {
-			if (!client_area ||
+			//PRISM/WangShaohui/20240201/#4181/Use wgc for region capture
+			if (is_desktop || !client_area ||
 			    get_client_box(window, desc.Width, desc.Height,
 					   &client_box)) {
-				if (client_area) {
+
+				//PRISM/WangShaohui/20240201/#4181/Use wgc for region capture
+				if (is_desktop) {
+					client_box.left = texture_region.left;
+					client_box.top = texture_region.top;
+					client_box.right = texture_region.right;
+					client_box.bottom =
+						texture_region.bottom;
+					client_box.front = 0;
+					client_box.back = 1;
+				}
+
+				if (is_desktop || client_area) {
 					texture_width = client_box.right -
 							client_box.left;
 					texture_height = client_box.bottom -
@@ -226,7 +243,8 @@ struct winrt_capture {
 						color_format, 1, NULL, 0);
 				}
 
-				if (client_area) {
+				//PRISM/WangShaohui/20240201/#4181/Use wgc for region capture
+				if (is_desktop || client_area) {
 					context->CopySubresourceRegion(
 						(ID3D11Texture2D *)
 							gs_texture_get_obj(
@@ -245,7 +263,11 @@ struct winrt_capture {
 				texture_written = true;
 			}
 
-			if (frame_content_size.Width != last_size.Width ||
+			//PRISM/Xiewei/20240315/#4642/check frame ContentSize to avoid crash
+			bool valid_size = (frame_content_size.Width > 0 &&
+					   frame_content_size.Height > 0);
+
+			if (valid_size && frame_content_size.Width != last_size.Width ||
 			    frame_content_size.Height != last_size.Height) {
 				format = desc.Format;
 				frame_pool.Recreate(
@@ -281,21 +303,25 @@ static void winrt_capture_device_loss_release(void *data)
 	capture->frame_arrived.revoke();
 
 	try {
-		capture->frame_pool.Close();
+		//PRISM/Xiewei/20230222/#4480/check pointer to avoid crash when two continuous DEVICE_REMOVED happend
+		if (capture->frame_pool)
+			capture->frame_pool.Close();
 	} catch (winrt::hresult_error &err) {
 		blog(LOG_ERROR,
-		     "Direct3D11CaptureFramePool::Close (0x%08X): %ls",
-		     err.code().value, err.message().c_str());
+		     "Direct3D11CaptureFramePool::Close (0x%08X): %s",
+		     err.code().value, winrt::to_string(err.message()).c_str());
 	} catch (...) {
 		blog(LOG_ERROR, "Direct3D11CaptureFramePool::Close (0x%08X)",
 		     winrt::to_hresult().value);
 	}
 
 	try {
-		capture->session.Close();
+		//PRISM/Xiewei/20230222/#4480/check pointer to avoid crash when two continuous DEVICE_REMOVED happend
+		if (capture->session)
+			capture->session.Close();
 	} catch (winrt::hresult_error &err) {
-		blog(LOG_ERROR, "GraphicsCaptureSession::Close (0x%08X): %ls",
-		     err.code().value, err.message().c_str());
+		blog(LOG_ERROR, "GraphicsCaptureSession::Close (0x%08X): %s",
+		     err.code().value, winrt::to_string(err.message()).c_str());
 	} catch (...) {
 		blog(LOG_ERROR, "GraphicsCaptureSession::Close (0x%08X)",
 		     winrt::to_hresult().value);
@@ -310,13 +336,18 @@ static void winrt_capture_device_loss_release(void *data)
 
 static bool winrt_capture_border_toggle_supported()
 try {
-	return winrt::Windows::Foundation::Metadata::ApiInformation::
+	//PRISM/Xiewei/20240419/None/Add log for winrt begain
+	auto result = winrt::Windows::Foundation::Metadata::ApiInformation::
 		IsPropertyPresent(
 			L"Windows.Graphics.Capture.GraphicsCaptureSession",
 			L"IsBorderRequired");
+	blog(LOG_INFO, "winrt_capture_border_toggle_supported: %s",
+	     result ? "true" : "false");
+	return result;
+	//PRISM/Xiewei/20240419/None/Add log for winrt end
 } catch (const winrt::hresult_error &err) {
-	blog(LOG_ERROR, "winrt_capture_border_toggle_supported (0x%08X): %ls",
-	     err.code().value, err.message().c_str());
+	blog(LOG_ERROR, "winrt_capture_border_toggle_supported (0x%08X): %s",
+	     err.code().value, winrt::to_string(err.message()).c_str());
 	return false;
 } catch (...) {
 	blog(LOG_ERROR, "winrt_capture_border_toggle_supported (0x%08X)",
@@ -340,14 +371,15 @@ winrt_capture_create_item(IGraphicsCaptureItemInterop *const interop_factory,
 			if (FAILED(hr))
 				blog(LOG_ERROR, "CreateForWindow (0x%08X)", hr);
 		} catch (winrt::hresult_error &err) {
-			blog(LOG_ERROR, "CreateForWindow (0x%08X): %ls",
-			     err.code().value, err.message().c_str());
+			blog(LOG_ERROR, "CreateForWindow (0x%08X): %s",
+			     err.code().value,
+			     winrt::to_string(err.message()).c_str());
 		} catch (...) {
 			blog(LOG_ERROR, "CreateForWindow (0x%08X)",
 			     winrt::to_hresult().value);
 		}
 	} else {
-		assert(monitor);
+		//assert(monitor);
 
 		try {
 			const HRESULT hr = interop_factory->CreateForMonitor(
@@ -360,8 +392,9 @@ winrt_capture_create_item(IGraphicsCaptureItemInterop *const interop_factory,
 				blog(LOG_ERROR, "CreateForMonitor (0x%08X)",
 				     hr);
 		} catch (winrt::hresult_error &err) {
-			blog(LOG_ERROR, "CreateForMonitor (0x%08X): %ls",
-			     err.code().value, err.message().c_str());
+			blog(LOG_ERROR, "CreateForMonitor (0x%08X): %s",
+			     err.code().value,
+			     winrt::to_string(err.message()).c_str());
 		} catch (...) {
 			blog(LOG_ERROR, "CreateForMonitor (0x%08X)",
 			     winrt::to_hresult().value);
@@ -437,8 +470,8 @@ static void winrt_capture_device_loss_rebuild(void *device_void, void *data)
 		session.StartCapture();
 		capture->active = TRUE;
 	} catch (winrt::hresult_error &err) {
-		blog(LOG_ERROR, "StartCapture (0x%08X): %ls", err.code().value,
-		     err.message().c_str());
+		blog(LOG_ERROR, "StartCapture (0x%08X): %s", err.code().value,
+		     winrt::to_string(err.message()).c_str());
 	} catch (...) {
 		blog(LOG_ERROR, "StartCapture (0x%08X)",
 		     winrt::to_hresult().value);
@@ -540,8 +573,8 @@ try {
 	return capture;
 
 } catch (const winrt::hresult_error &err) {
-	blog(LOG_ERROR, "winrt_capture_init (0x%08X): %ls", err.code().value,
-	     err.message().c_str());
+	blog(LOG_ERROR, "winrt_capture_init (0x%08X): %s", err.code().value,
+	     winrt::to_string(err.message()).c_str());
 	return nullptr;
 } catch (...) {
 	blog(LOG_ERROR, "winrt_capture_init (0x%08X)",
@@ -558,9 +591,28 @@ winrt_capture_init_window(BOOL cursor, HWND window, BOOL client_area,
 }
 
 extern "C" EXPORT struct winrt_capture *
-winrt_capture_init_monitor(BOOL cursor, HMONITOR monitor)
+winrt_capture_init_monitor(BOOL cursor, HMONITOR monitor, BOOL force_sdr)
 {
-	return winrt_capture_init_internal(cursor, NULL, false, false, monitor);
+	return winrt_capture_init_internal(cursor, NULL, false, force_sdr,
+					   monitor);
+}
+
+//PRISM/WangShaohui/20240201/#4181/Use wgc for region capture
+extern "C" EXPORT struct winrt_capture *
+winrt_capture_init_desktop(BOOL cursor, HMONITOR monitor, BOOL force_sdr,
+			   RECT tex_region)
+{
+	assert(tex_region.left >= 0 && tex_region.top >= 0);
+	assert(tex_region.right > tex_region.left);
+	assert(tex_region.bottom > tex_region.top);
+
+	auto cap = winrt_capture_init_internal(cursor, NULL, FALSE, force_sdr,
+					       monitor);
+	if (cap) {
+		cap->is_desktop = TRUE;
+		cap->texture_region = tex_region;
+	}
+	return cap;
 }
 
 extern "C" EXPORT void winrt_capture_free(struct winrt_capture *capture)
@@ -592,8 +644,9 @@ extern "C" EXPORT void winrt_capture_free(struct winrt_capture *capture)
 				capture->frame_pool.Close();
 		} catch (winrt::hresult_error &err) {
 			blog(LOG_ERROR,
-			     "Direct3D11CaptureFramePool::Close (0x%08X): %ls",
-			     err.code().value, err.message().c_str());
+			     "Direct3D11CaptureFramePool::Close (0x%08X): %s",
+			     err.code().value,
+			     winrt::to_string(err.message()).c_str());
 		} catch (...) {
 			blog(LOG_ERROR,
 			     "Direct3D11CaptureFramePool::Close (0x%08X)",
@@ -605,8 +658,9 @@ extern "C" EXPORT void winrt_capture_free(struct winrt_capture *capture)
 				capture->session.Close();
 		} catch (winrt::hresult_error &err) {
 			blog(LOG_ERROR,
-			     "GraphicsCaptureSession::Close (0x%08X): %ls",
-			     err.code().value, err.message().c_str());
+			     "GraphicsCaptureSession::Close (0x%08X): %s",
+			     err.code().value,
+			     winrt::to_string(err.message()).c_str());
 		} catch (...) {
 			blog(LOG_ERROR,
 			     "GraphicsCaptureSession::Close (0x%08X)",
@@ -639,8 +693,8 @@ extern "C" EXPORT BOOL winrt_capture_show_cursor(struct winrt_capture *capture,
 		success = TRUE;
 	} catch (winrt::hresult_error &err) {
 		blog(LOG_ERROR,
-		     "GraphicsCaptureSession::IsCursorCaptureEnabled (0x%08X): %ls",
-		     err.code().value, err.message().c_str());
+		     "GraphicsCaptureSession::IsCursorCaptureEnabled (0x%08X): %s",
+		     err.code().value, winrt::to_string(err.message()).c_str());
 	} catch (...) {
 		blog(LOG_ERROR,
 		     "GraphicsCaptureSession::IsCursorCaptureEnabled (0x%08X)",
@@ -744,5 +798,36 @@ extern "C" EXPORT void winrt_capture_thread_stop()
 	while (capture) {
 		winrt_capture_device_loss_release(capture);
 		capture = capture->next;
+	}
+}
+
+//PRISM/Xiewei/20240416/#5080/reset border required property when display changed
+extern "C" EXPORT void winrt_capture_on_display_changed()
+{
+	if (!winrt_capture_border_toggle_supported())
+		return;
+
+	struct winrt_capture *capture = capture_list;
+	try {
+		while (capture) {
+			winrt::Windows::Graphics::Capture::
+				GraphicsCaptureAccess::RequestAccessAsync(
+					winrt::Windows::Graphics::Capture::
+						GraphicsCaptureAccessKind::
+							Borderless)
+					.get();
+			if (capture->session) {
+				capture->session.IsBorderRequired(true);
+				capture->session.IsBorderRequired(false);
+			}
+			capture = capture->next;
+		}
+
+	} catch (const winrt::hresult_error &err) {
+		blog(LOG_ERROR, "winrt_capture_display_changed (0x%08X): %s",
+		     err.code().value, winrt::to_string(err.message()).c_str());
+	} catch (...) {
+		blog(LOG_ERROR, "winrt_capture_display_changed (0x%08X)",
+		     winrt::to_hresult().value);
 	}
 }

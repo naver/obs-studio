@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013-2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -721,6 +721,24 @@ static inline void handle_stop(obs_source_t *transition)
 void obs_transition_force_stop(obs_source_t *transition)
 {
 	handle_stop(transition);
+}
+
+//PRISM/Zhongling/20231213/#3345/transition interrupt
+bool obs_transition_interrupt(obs_source_t *transition)
+{
+	if (!transition)
+		return false;
+	
+	if (transition_active(transition)) {
+		lock_transition(transition);
+		obs_transition_stop(transition);
+		unlock_transition(transition);
+		obs_transition_force_stop(transition);
+		transition->transition_start_time = 0;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 void obs_transition_video_render(obs_source_t *transition,

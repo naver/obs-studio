@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -16,6 +16,12 @@
 ******************************************************************************/
 
 #include "rtmp-stream.h"
+#include "rtmp-av1.h"
+#include "rtmp-hevc.h"
+
+#include <obs-avc.h>
+#include <obs-hevc.h>
+
 #ifdef _WIN32
 #include <util/windows/win-version.h>
 #endif
@@ -66,7 +72,7 @@ static inline void free_packets(struct rtmp_stream *stream)
 
 	while (stream->packets.size) {
 		struct encoder_packet packet;
-		circlebuf_pop_front(&stream->packets, &packet, sizeof(packet));
+		deque_pop_front(&stream->packets, &packet, sizeof(packet));
 		obs_encoder_packet_release(&packet);
 	}
 	pthread_mutex_unlock(&stream->packets_mutex);
@@ -92,11 +98,6 @@ static inline bool disconnected(struct rtmp_stream *stream)
 	return os_atomic_load_bool(&stream->disconnected);
 }
 
-static inline bool silently_reconnecting(struct rtmp_stream *stream)
-{
-	return os_atomic_load_bool(&stream->silent_reconnect);
-}
-
 static void rtmp_stream_destroy(void *data)
 {
 	struct rtmp_stream *stream = data;
@@ -105,8 +106,11 @@ static void rtmp_stream_destroy(void *data)
 		pthread_join(stream->send_thread, NULL);
 
 	} else if (connecting(stream) || active(stream)) {
-		if (stream->connecting)
-			pthread_join(stream->connect_thread, NULL);
+        if (stream->connecting) {
+            //PRISM/WuLongyue/20240116/#4031/May not detach thread
+            os_atomic_set_bool(&stream->joining, true);
+            pthread_join(stream->connect_thread, NULL);
+        }
 
 		stream->stop_ts = 0;
 		os_event_signal(stream->stop_event);
@@ -129,11 +133,11 @@ static void rtmp_stream_destroy(void *data)
 	os_event_destroy(stream->stop_event);
 	os_sem_destroy(stream->send_sem);
 	pthread_mutex_destroy(&stream->packets_mutex);
-	circlebuf_free(&stream->packets);
+	deque_free(&stream->packets);
 #ifdef TEST_FRAMEDROPS
-	circlebuf_free(&stream->droptest_info);
+	deque_free(&stream->droptest_info);
 #endif
-	circlebuf_free(&stream->dbr_frames);
+	deque_free(&stream->dbr_frames);
 	pthread_mutex_destroy(&stream->dbr_mutex);
 
 	os_event_destroy(stream->buffer_space_available_event);
@@ -152,9 +156,6 @@ static void *rtmp_stream_create(obs_data_t *settings, obs_output_t *output)
 	struct rtmp_stream *stream = bzalloc(sizeof(struct rtmp_stream));
 	stream->output = output;
 	pthread_mutex_init_value(&stream->packets_mutex);
-
-	//PRISM/WuLongyue/20230726/None/support HEVC
-	stream->is_hevc = false;
 
 	RTMP_LogSetCallback(log_rtmp);
 	RTMP_LogSetLevel(RTMP_LOGWARNING);
@@ -207,11 +208,24 @@ static void rtmp_stream_stop(void *data, uint64_t ts)
 {
 	struct rtmp_stream *stream = data;
 
-	if (stopping(stream) && ts != 0)
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Enter] ts=%llu", stream, __FUNCTION__, ts);
+
+	if (stopping(stream) && ts != 0) {
+		//PRISM/WuLongyue/20240116/#3984/add logs
+		blog(LOG_INFO, "%p-%s: [Exit] line=%d", stream, __FUNCTION__, __LINE__);
 		return;
+	}
 
 	if (connecting(stream))
-		pthread_join(stream->connect_thread, NULL);
+    {
+        //PRISM/WuLongyue/20240116/#4031/May not detach thread
+        os_atomic_set_bool(&stream->joining, true);
+        pthread_join(stream->connect_thread, NULL);
+    }
+
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Step] line=%d", stream, __FUNCTION__, __LINE__);
 
 	stream->stop_ts = ts / 1000ULL;
 
@@ -227,13 +241,9 @@ static void rtmp_stream_stop(void *data, uint64_t ts)
 	} else {
 		obs_output_signal_stop(stream->output, OBS_OUTPUT_SUCCESS);
 	}
-}
 
-static inline void set_rtmp_str(AVal *val, const char *str)
-{
-	bool valid = (str && *str);
-	val->av_val = valid ? (char *)str : NULL;
-	val->av_len = valid ? (int)strlen(str) : 0;
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", stream, __FUNCTION__);
 }
 
 static inline void set_rtmp_dstr(AVal *val, struct dstr *str)
@@ -250,35 +260,14 @@ static inline bool get_next_packet(struct rtmp_stream *stream,
 
 	pthread_mutex_lock(&stream->packets_mutex);
 	if (stream->packets.size) {
-		circlebuf_pop_front(&stream->packets, packet,
-				    sizeof(struct encoder_packet));
+		deque_pop_front(&stream->packets, packet,
+				sizeof(struct encoder_packet));
 		new_packet = true;
 	}
 	pthread_mutex_unlock(&stream->packets_mutex);
 
 	return new_packet;
 }
-
-static inline void peek_next_packet(struct rtmp_stream *stream,
-				    struct encoder_packet *packet)
-{
-	pthread_mutex_lock(&stream->packets_mutex);
-	circlebuf_peek_front(&stream->packets, packet,
-			     sizeof(struct encoder_packet));
-	pthread_mutex_unlock(&stream->packets_mutex);
-}
-
-static void reinsert_packet_at_front(struct rtmp_stream *stream,
-				     struct encoder_packet *packet)
-{
-	pthread_mutex_lock(&stream->packets_mutex);
-	circlebuf_push_front(&stream->packets, packet,
-			     sizeof(struct encoder_packet));
-	pthread_mutex_unlock(&stream->packets_mutex);
-	os_sem_post(stream->send_sem);
-}
-
-#define RTMP_PACKET_TYPE_RECONNECT 0x20
 
 static bool process_recv_data(struct rtmp_stream *stream, size_t size)
 {
@@ -298,9 +287,7 @@ static bool process_recv_data(struct rtmp_stream *stream, size_t size)
 	}
 
 	if (packet.m_body) {
-		if (packet.m_packetType == RTMP_PACKET_TYPE_RECONNECT) {
-			os_atomic_set_bool(&stream->silent_reconnect, true);
-		}
+		/* do processing here */
 		RTMPPacket_Free(&packet);
 	}
 	return true;
@@ -358,12 +345,11 @@ static void droptest_cap_data_rate(struct rtmp_stream *stream, size_t size)
 	info.ts = ts;
 	info.size = size;
 
-	circlebuf_push_back(&stream->droptest_info, &info, sizeof(info));
+	deque_push_back(&stream->droptest_info, &info, sizeof(info));
 	stream->droptest_size += size;
 
 	if (stream->droptest_info.size) {
-		circlebuf_peek_front(&stream->droptest_info, &info,
-				     sizeof(info));
+		deque_peek_front(&stream->droptest_info, &info, sizeof(info));
 
 		if (stream->droptest_size > stream->droptest_max) {
 			uint64_t elapsed = ts - info.ts;
@@ -374,8 +360,8 @@ static void droptest_cap_data_rate(struct rtmp_stream *stream, size_t size)
 			}
 
 			while (stream->droptest_size > stream->droptest_max) {
-				circlebuf_pop_front(&stream->droptest_info,
-						    &info, sizeof(info));
+				deque_pop_front(&stream->droptest_info, &info,
+						sizeof(info));
 				stream->droptest_size -= info.size;
 			}
 		}
@@ -418,17 +404,10 @@ retry_send:
 	return len;
 }
 
-static int send_packet(struct rtmp_stream *stream,
-		       struct encoder_packet *packet, bool is_header,
-		       size_t idx)
+static int handle_socket_read(struct rtmp_stream *stream)
 {
-	uint8_t *data;
-	size_t size;
-	int recv_size = 0;
 	int ret = 0;
-
-	assert(idx < RTMP_MAX_STREAMS);
-
+	int recv_size = 0;
 	if (!stream->new_socket_loop) {
 #ifdef _WIN32
 		ret = ioctlsocket(stream->rtmp.m_sb.sb_socket, FIONREAD,
@@ -442,15 +421,29 @@ static int send_packet(struct rtmp_stream *stream,
 				return -1;
 		}
 	}
+	return 0;
+}
+
+static int send_packet(struct rtmp_stream *stream,
+		       struct encoder_packet *packet, bool is_header,
+		       size_t idx)
+{
+	uint8_t *data;
+	size_t size;
+	int ret = 0;
+
+	assert(idx < RTMP_MAX_STREAMS);
+	if (handle_socket_read(stream))
+		return -1;
 
 	if (idx > 0) {
 		flv_additional_packet_mux(
 			packet, is_header ? 0 : stream->start_dts_offset, &data,
 			&size, is_header, idx);
 	} else {
-		//PRISM/WuLongyue/20230726/None/support HEVC
+		//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
 		flv_packet_mux(packet, is_header ? 0 : stream->start_dts_offset,
-			       &data, &size, is_header, stream->is_hevc);
+			       &data, &size, is_header, stream->is_naver_hevc);
 	}
 
 #ifdef TEST_FRAMEDROPS
@@ -469,7 +462,44 @@ static int send_packet(struct rtmp_stream *stream,
 	return ret;
 }
 
+static int send_packet_ex(struct rtmp_stream *stream,
+			  struct encoder_packet *packet, bool is_header,
+			  bool is_footer)
+{
+	uint8_t *data;
+	size_t size = 0;
+	int ret = 0;
+
+	if (handle_socket_read(stream))
+		return -1;
+
+	if (is_header) {
+		flv_packet_start(packet, stream->video_codec, &data, &size);
+	} else if (is_footer) {
+		flv_packet_end(packet, stream->video_codec, &data, &size);
+	} else {
+		flv_packet_frames(packet, stream->video_codec,
+				  stream->start_dts_offset, &data, &size);
+	}
+
+#ifdef TEST_FRAMEDROPS
+	droptest_cap_data_rate(stream, size);
+#endif
+
+	ret = RTMP_Write(&stream->rtmp, (char *)data, (int)size, 0);
+	bfree(data);
+
+	if (is_header || is_footer) // manually created packets
+		bfree(packet->data);
+	else
+		obs_encoder_packet_release(packet);
+
+	stream->total_bytes_sent += size;
+	return ret;
+}
+
 static inline bool send_headers(struct rtmp_stream *stream);
+static inline bool send_footers(struct rtmp_stream *stream);
 
 static inline bool can_shutdown_stream(struct rtmp_stream *stream,
 				       struct encoder_packet *packet)
@@ -510,6 +540,12 @@ static void set_output_error(struct rtmp_stream *stream)
 	case WSAEADDRNOTAVAIL:
 		msg = obs_module_text("AddressNotAvailable");
 		break;
+	case WSAEINVAL:
+		msg = obs_module_text("InvalidParameter");
+		break;
+	case WSAEHOSTUNREACH:
+		msg = obs_module_text("NoRoute");
+		break;
 	}
 #else
 	switch (stream->rtmp.last_error_code) {
@@ -533,6 +569,12 @@ static void set_output_error(struct rtmp_stream *stream)
 		break;
 	case EADDRNOTAVAIL:
 		msg = obs_module_text("AddressNotAvailable");
+		break;
+	case EINVAL:
+		msg = obs_module_text("InvalidParameter");
+		break;
+	case EHOSTUNREACH:
+		msg = obs_module_text("NoRoute");
 		break;
 	}
 #endif
@@ -562,8 +604,8 @@ static void dbr_add_frame(struct rtmp_stream *stream, struct dbr_frame *back)
 	struct dbr_frame front;
 	uint64_t dur;
 
-	circlebuf_push_back(&stream->dbr_frames, back, sizeof(*back));
-	circlebuf_peek_front(&stream->dbr_frames, &front, sizeof(front));
+	deque_push_back(&stream->dbr_frames, back, sizeof(*back));
+	deque_peek_front(&stream->dbr_frames, &front, sizeof(front));
 
 	stream->dbr_data_size += back->size;
 
@@ -571,7 +613,7 @@ static void dbr_add_frame(struct rtmp_stream *stream, struct dbr_frame *back)
 
 	if (dur >= MAX_ESTIMATE_DURATION_MS) {
 		stream->dbr_data_size -= front.size;
-		circlebuf_pop_front(&stream->dbr_frames, NULL, sizeof(front));
+		deque_pop_front(&stream->dbr_frames, NULL, sizeof(front));
 	}
 
 	stream->dbr_est_bitrate =
@@ -589,7 +631,6 @@ static void dbr_add_frame(struct rtmp_stream *stream, struct dbr_frame *back)
 }
 
 static void dbr_set_bitrate(struct rtmp_stream *stream);
-static bool rtmp_stream_start(void *data);
 
 #ifdef _WIN32
 #define socklen_t int
@@ -606,31 +647,19 @@ static void log_sndbuf_size(struct rtmp_stream *stream)
 	}
 }
 
+//PRISM/Xiewei/20240513/None/add logs for trace sending fisrt video packet
+static THREAD_LOCAL bool first_packet = true;
+
 static void *send_thread(void *data)
 {
 	struct rtmp_stream *stream = data;
 
 	os_set_thread_name("rtmp-stream: send_thread");
 
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Enter]", stream, __FUNCTION__);
+
 #if defined(_WIN32)
-	// Despite MSDN claiming otherwise, send buffer auto tuning on
-	// Windows 7 doesn't seem to work very well.
-	if (get_win_ver_int() == 0x601) {
-		DWORD cur_sendbuf_size;
-		DWORD desired_sendbuf_size = 524288;
-		socklen_t int_size = sizeof(int);
-
-		if (!getsockopt(stream->rtmp.m_sb.sb_socket, SOL_SOCKET,
-				SO_SNDBUF, (char *)&cur_sendbuf_size,
-				&int_size) &&
-		    cur_sendbuf_size < desired_sendbuf_size) {
-
-			setsockopt(stream->rtmp.m_sb.sb_socket, SOL_SOCKET,
-				   SO_SNDBUF, (char *)&desired_sendbuf_size,
-				   sizeof(desired_sendbuf_size));
-		}
-	}
-
 	log_sndbuf_size(stream);
 #endif
 
@@ -659,22 +688,32 @@ static void *send_thread(void *data)
 			}
 		}
 
-		/* silent reconnect signal received from server, reconnect on
-		 * next keyframe */
-		if (silently_reconnecting(stream) &&
-		    packet.type == OBS_ENCODER_VIDEO && packet.keyframe) {
-			reinsert_packet_at_front(stream, &packet);
-			break;
-		}
-
 		if (stream->dbr_enabled) {
 			dbr_frame.send_beg = os_gettime_ns();
 			dbr_frame.size = packet.size;
 		}
 
-		if (send_packet(stream, &packet, false, packet.track_idx) < 0) {
+		//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
+		int sent;
+		bool packet_video = packet.type == OBS_ENCODER_VIDEO;
+		if (packet_video && stream->video_codec != CODEC_H264 &&
+		    !stream->is_naver_hevc) {
+			sent = send_packet_ex(stream, &packet, false, false);
+		} else {
+			sent = send_packet(stream, &packet, false,
+					   packet.track_idx);
+		}
+
+		if (sent < 0) {
 			os_atomic_set_bool(&stream->disconnected, true);
 			break;
+		}
+
+		//PRISM/Xiewei/20240513/None/add logs for trace sending fisrt video packet
+		if (packet_video && first_packet) {
+			blog(LOG_INFO, "%p-%s: rtmp sent first video packet.",
+			     stream, __FUNCTION__);
+			first_packet = false;
 		}
 
 		if (stream->dbr_enabled) {
@@ -692,10 +731,10 @@ static void *send_thread(void *data)
 		info("Disconnected from %s", stream->path.array);
 	} else if (encode_error) {
 		info("Encoder error, disconnecting");
-	} else if (silently_reconnecting(stream)) {
-		info("Silent reconnect signal received from server");
+		send_footers(stream); // Y2023 spec
 	} else {
 		info("User stopped the stream");
+		send_footers(stream); // Y2023 spec
 	}
 
 #if defined(_WIN32)
@@ -703,6 +742,8 @@ static void *send_thread(void *data)
 #endif
 
 	if (stream->new_socket_loop) {
+		//PRISM/Xiewei/20240520/#5328/add log to trace socket thread
+		blog(LOG_INFO, "%p-%s: [Step] line=%d", stream, __FUNCTION__, __LINE__);
 		os_event_signal(stream->send_thread_signaled_exit);
 		os_event_signal(stream->buffer_has_data_event);
 		pthread_join(stream->socket_thread, NULL);
@@ -710,15 +751,10 @@ static void *send_thread(void *data)
 		stream->rtmp.m_bCustomSend = false;
 	}
 
-	set_output_error(stream);
+	//PRISM/Xiewei/20240520/#5328/add log to trace socket thread
+	blog(LOG_INFO, "%p-%s: [Step] line=%d", stream, __FUNCTION__, __LINE__);
 
-	if (silently_reconnecting(stream)) {
-		/* manually close the socket to prevent librtmp from sending
-		 * unpublish / deletestream messages when we call RTMP_Close,
-		 * since we want to re-use this stream when we reconnect */
-		RTMPSockBuf_Close(&stream->rtmp.m_sb);
-		stream->rtmp.m_sb.sb_socket = -1;
-	}
+	set_output_error(stream);
 
 	RTMP_Close(&stream->rtmp);
 
@@ -732,34 +768,20 @@ static void *send_thread(void *data)
 
 	if (!stopping(stream)) {
 		pthread_detach(stream->send_thread);
-		if (!silently_reconnecting(stream))
-			obs_output_signal_stop(stream->output,
-					       OBS_OUTPUT_DISCONNECTED);
+		obs_output_signal_stop(stream->output, OBS_OUTPUT_DISCONNECTED);
 	} else if (encode_error) {
 		obs_output_signal_stop(stream->output, OBS_OUTPUT_ENCODE_ERROR);
 	} else {
 		obs_output_end_data_capture(stream->output);
 	}
 
-	if (!silently_reconnecting(stream)) {
-		free_packets(stream);
-		os_event_reset(stream->stop_event);
-		os_atomic_set_bool(&stream->active, false);
-	}
-
+	free_packets(stream);
+	os_event_reset(stream->stop_event);
+	os_atomic_set_bool(&stream->active, false);
 	stream->sent_headers = false;
 
-	/* reset bitrate on stop */
-	if (stream->dbr_enabled) {
-		if (stream->dbr_cur_bitrate != stream->dbr_orig_bitrate) {
-			stream->dbr_cur_bitrate = stream->dbr_orig_bitrate;
-			dbr_set_bitrate(stream);
-		}
-	}
-
-	if (silently_reconnecting(stream)) {
-		rtmp_stream_start(stream);
-	}
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", stream, __FUNCTION__);
 
 	return NULL;
 }
@@ -784,7 +806,8 @@ static bool send_meta_data(struct rtmp_stream *stream)
 	size_t meta_data_size;
 	bool success = true;
 
-	flv_meta_data(stream->output, &meta_data, &meta_data_size, false);
+	//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
+	flv_meta_data(stream->output, &meta_data, &meta_data_size, false, stream->is_naver_hevc);
 	success = RTMP_Write(&stream->rtmp, (char *)meta_data,
 			     (int)meta_data_size, 0) >= 0;
 	bfree(meta_data);
@@ -820,18 +843,123 @@ static bool send_video_header(struct rtmp_stream *stream)
 	uint8_t *header;
 	size_t size;
 
-	struct encoder_packet packet = {
-		.type = OBS_ENCODER_VIDEO, .timebase_den = 1, .keyframe = true};
+	struct encoder_packet packet = {.type = OBS_ENCODER_VIDEO,
+					.timebase_den = 1,
+					.keyframe = true};
 
 	if (!obs_encoder_get_extra_data(vencoder, &header, &size))
 		return false;
-	//PRISM/WuLongyue/20230726/None/support HEVC
-	if (stream->is_hevc) {
-		packet.size = obs_parse_hevc_header(&packet.data, header, size);
-	} else {
+
+	switch (stream->video_codec) {
+	case CODEC_H264:
 		packet.size = obs_parse_avc_header(&packet.data, header, size);
+		return send_packet(stream, &packet, true, 0) >= 0;
+#ifdef ENABLE_HEVC
+	case CODEC_HEVC:
+		packet.size = obs_parse_hevc_header(&packet.data, header, size);
+		//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
+		if (stream->is_naver_hevc)
+			return send_packet(stream, &packet, true, 0) >= 0;
+		else
+			return send_packet_ex(stream, &packet, true, 0) >= 0;
+#endif
+	case CODEC_AV1:
+		packet.size = obs_parse_av1_header(&packet.data, header, size);
+		return send_packet_ex(stream, &packet, true, 0) >= 0;
 	}
-	return send_packet(stream, &packet, true, 0) >= 0;
+
+	return false;
+}
+
+static bool send_video_metadata(struct rtmp_stream *stream)
+{
+	if (handle_socket_read(stream))
+		return -1;
+
+	// Y2023 spec
+	if (stream->video_codec != CODEC_H264) {
+		uint8_t *data;
+		size_t size;
+
+		video_t *video = obs_get_video();
+		const struct video_output_info *info =
+			video_output_get_info(video);
+		enum video_format format = info->format;
+		enum video_colorspace colorspace = info->colorspace;
+
+		int bits_per_raw_sample;
+		switch (format) {
+		case VIDEO_FORMAT_I010:
+		case VIDEO_FORMAT_P010:
+		case VIDEO_FORMAT_I210:
+			bits_per_raw_sample = 10;
+			break;
+		case VIDEO_FORMAT_I412:
+		case VIDEO_FORMAT_YA2L:
+			bits_per_raw_sample = 12;
+			break;
+		default:
+			bits_per_raw_sample = 8;
+		}
+
+		int pri = 0, trc = 0, spc = 0;
+		switch (colorspace) {
+		case VIDEO_CS_601:
+			pri = OBSCOL_PRI_SMPTE170M;
+			trc = OBSCOL_PRI_SMPTE170M;
+			spc = OBSCOL_PRI_SMPTE170M;
+			break;
+		case VIDEO_CS_DEFAULT:
+		case VIDEO_CS_709:
+			pri = OBSCOL_PRI_BT709;
+			trc = OBSCOL_PRI_BT709;
+			spc = OBSCOL_PRI_BT709;
+			break;
+		case VIDEO_CS_SRGB:
+			pri = OBSCOL_PRI_BT709;
+			trc = OBSCOL_TRC_IEC61966_2_1;
+			spc = OBSCOL_PRI_BT709;
+			break;
+		case VIDEO_CS_2100_PQ:
+			pri = OBSCOL_PRI_BT2020;
+			trc = OBSCOL_TRC_SMPTE2084;
+			spc = OBSCOL_SPC_BT2020_NCL;
+			break;
+		case VIDEO_CS_2100_HLG:
+			pri = OBSCOL_PRI_BT2020;
+			trc = OBSCOL_TRC_ARIB_STD_B67;
+			spc = OBSCOL_SPC_BT2020_NCL;
+		}
+
+		int max_luminance = 0;
+		if (trc == OBSCOL_TRC_ARIB_STD_B67)
+			max_luminance = 1000;
+		else if (trc == OBSCOL_TRC_SMPTE2084)
+			max_luminance =
+				(int)obs_get_video_hdr_nominal_peak_level();
+
+		flv_packet_metadata(stream->video_codec, &data, &size,
+				    bits_per_raw_sample, pri, trc, spc, 0,
+				    max_luminance);
+
+		int ret = RTMP_Write(&stream->rtmp, (char *)data, (int)size, 0);
+		bfree(data);
+
+		stream->total_bytes_sent += size;
+		return ret >= 0;
+	}
+	// legacy
+	return true;
+}
+
+static bool send_video_footer(struct rtmp_stream *stream)
+{
+	struct encoder_packet packet = {.type = OBS_ENCODER_VIDEO,
+					.timebase_den = 1,
+					.keyframe = false};
+	packet.size = 0;
+
+	return send_packet_ex(stream, &packet, 0, true) >= 0;
 }
 
 static inline bool send_headers(struct rtmp_stream *stream)
@@ -842,6 +970,15 @@ static inline bool send_headers(struct rtmp_stream *stream)
 
 	if (!send_audio_header(stream, i++, &next))
 		return false;
+
+	// send metadata only if HDR
+	video_t *video = obs_get_video();
+	const struct video_output_info *info = video_output_get_info(video);
+	enum video_colorspace colorspace = info->colorspace;
+	if (colorspace == VIDEO_CS_2100_PQ || colorspace == VIDEO_CS_2100_HLG)
+		if (!send_video_metadata(stream)) // Y2023 spec
+			return false;
+
 	if (!send_video_header(stream))
 		return false;
 
@@ -851,6 +988,15 @@ static inline bool send_headers(struct rtmp_stream *stream)
 	}
 
 	return true;
+}
+
+static inline bool send_footers(struct rtmp_stream *stream)
+{
+	if (stream->video_codec == CODEC_H264)
+		return false;
+
+	// Y2023 spec
+	return send_video_footer(stream);
 }
 
 static inline bool reset_semaphore(struct rtmp_stream *stream)
@@ -864,8 +1010,7 @@ static int init_send(struct rtmp_stream *stream)
 	int ret;
 	obs_output_t *context = stream->output;
 
-	if (!silently_reconnecting(stream))
-		reset_semaphore(stream);
+	reset_semaphore(stream);
 
 	ret = pthread_create(&stream->send_thread, NULL, send_thread, stream);
 	if (ret != 0) {
@@ -940,13 +1085,12 @@ static int init_send(struct rtmp_stream *stream)
 		stream->write_buf_size = ideal_buffer_size;
 		stream->write_buf = bmalloc(ideal_buffer_size);
 
-#ifdef _WIN32
-		ret = pthread_create(&stream->socket_thread, NULL,
-				     socket_thread_windows, stream);
-#else
+#ifndef _WIN32
 		warn("New socket loop not supported on this platform");
 		return OBS_OUTPUT_ERROR;
-#endif
+#else
+		ret = pthread_create(&stream->socket_thread, NULL,
+				     socket_thread_windows, stream);
 
 		if (ret != 0) {
 			RTMP_Close(&stream->rtmp);
@@ -958,6 +1102,7 @@ static int init_send(struct rtmp_stream *stream)
 		stream->rtmp.m_bCustomSend = true;
 		stream->rtmp.m_customSendFunc = socket_queue_data;
 		stream->rtmp.m_customSendParam = stream;
+#endif
 	}
 
 	os_atomic_set_bool(&stream->active, true);
@@ -980,8 +1125,7 @@ static int init_send(struct rtmp_stream *stream)
 		return OBS_OUTPUT_DISCONNECTED;
 	}
 
-	if (!silently_reconnecting(stream))
-		obs_output_begin_data_capture(stream->output, 0);
+	obs_output_begin_data_capture(stream->output, 0);
 
 	return OBS_OUTPUT_SUCCESS;
 }
@@ -1016,38 +1160,52 @@ static void win32_log_interface_type(struct rtmp_stream *stream)
 		return;
 
 	if (!GetBestRoute(dest_addr, source_addr, &route)) {
-		MIB_IFROW row;
+		MIB_IF_ROW2 row;
 		memset(&row, 0, sizeof(row));
-		row.dwIndex = route.dwForwardIfIndex;
+		row.InterfaceIndex = route.dwForwardIfIndex;
 
-		if (!GetIfEntry(&row)) {
-			uint32_t speed = row.dwSpeed / 1000000;
+		if (!GetIfEntry2(&row)) {
+			uint32_t rxSpeed = row.ReceiveLinkSpeed / 1000000;
+			uint32_t txSpeed = row.TransmitLinkSpeed / 1000000;
 			char *type;
 			struct dstr other = {0};
 
-			if (row.dwType == IF_TYPE_ETHERNET_CSMACD) {
+			switch (row.PhysicalMediumType) {
+			case NdisPhysicalMedium802_3:
 				type = "ethernet";
-			} else if (row.dwType == IF_TYPE_IEEE80211) {
+				break;
+			case NdisPhysicalMediumWirelessLan:
+			case NdisPhysicalMediumNative802_11:
 				type = "802.11";
-			} else {
-				dstr_printf(&other, "type %lu", row.dwType);
+				break;
+			default:
+				dstr_printf(&other, "type %d",
+					    (int)row.PhysicalMediumType);
 				type = other.array;
+				break;
 			}
 
-			info("Interface: %s (%s, %lu mbps)", row.bDescr, type,
-			     speed);
+			char *desc;
+			os_wcs_to_utf8_ptr(row.Description, 0, &desc);
+
+			info("Interface: %s (%s, %lu↓/%lu↑ mbps)", desc, type,
+			     rxSpeed, txSpeed);
+
+			bfree(desc);
+
+			if (row.InErrors || row.OutErrors) {
+				warn("Interface has non-zero error counters (%" PRIu64
+				     "/%" PRIu64 " errors, %" PRIu64 "/%" PRIu64
+				     " discards)",
+				     row.InErrors, row.OutErrors,
+				     row.InDiscards, row.OutDiscards);
+			}
 
 			dstr_free(&other);
 		}
 	}
 }
 #endif
-
-static void add_connect_data(char **penc, char *pend)
-{
-	const AVal val = AVC("supportsGoAway");
-	*penc = AMF_EncodeNamedBoolean(*penc, pend, &val, true);
-}
 
 static int try_connect(struct rtmp_stream *stream)
 {
@@ -1074,7 +1232,6 @@ static int try_connect(struct rtmp_stream *stream)
 	set_rtmp_dstr(&stream->rtmp.Link.pubPasswd, &stream->password);
 	set_rtmp_dstr(&stream->rtmp.Link.flashVer, &stream->encoder_name);
 	stream->rtmp.Link.swfUrl = stream->rtmp.Link.tcUrl;
-	stream->rtmp.Link.customConnectEncode = add_connect_data;
 
 	if (dstr_is_empty(&stream->bind_ip) ||
 	    dstr_cmp(&stream->bind_ip, "default") == 0) {
@@ -1090,6 +1247,10 @@ static int try_connect(struct rtmp_stream *stream)
 			info("Binding to IPv%d", ipv6 ? 6 : 4);
 		}
 	}
+
+	// Only use the IPv4 / IPv6 hint if a binding address isn't specified.
+	if (stream->rtmp.m_bindIP.addrLen == 0)
+		stream->rtmp.m_bindIP.addrLen = stream->addrlen_hint;
 
 	RTMP_AddStream(&stream->rtmp, stream->key.array);
 
@@ -1109,7 +1270,11 @@ static int try_connect(struct rtmp_stream *stream)
 	if (!RTMP_ConnectStream(&stream->rtmp, 0))
 		return OBS_OUTPUT_INVALID_STREAM;
 
-	info("Connection to %s successful", stream->path.array);
+	char ip_address[INET6_ADDRSTRLEN] = {0};
+	netif_addr_to_str(&stream->rtmp.m_sb.sb_addr, ip_address,
+			  INET6_ADDRSTRLEN);
+	info("Connection to %s (%s) successful", stream->path.array,
+	     ip_address);
 
 	return init_send(stream);
 }
@@ -1119,6 +1284,7 @@ static bool init_connect(struct rtmp_stream *stream)
 	obs_service_t *service;
 	obs_data_t *settings;
 	const char *bind_ip;
+	const char *ip_family;
 	int64_t drop_p;
 	int64_t drop_b;
 	uint32_t caps;
@@ -1141,10 +1307,18 @@ static bool init_connect(struct rtmp_stream *stream)
 	stream->got_first_video = false;
 
 	settings = obs_output_get_settings(stream->output);
-	dstr_copy(&stream->path, obs_service_get_url(service));
-	dstr_copy(&stream->key, obs_service_get_key(service));
-	dstr_copy(&stream->username, obs_service_get_username(service));
-	dstr_copy(&stream->password, obs_service_get_password(service));
+	dstr_copy(&stream->path,
+		  obs_service_get_connect_info(
+			  service, OBS_SERVICE_CONNECT_INFO_SERVER_URL));
+	dstr_copy(&stream->key,
+		  obs_service_get_connect_info(
+			  service, OBS_SERVICE_CONNECT_INFO_STREAM_KEY));
+	dstr_copy(&stream->username,
+		  obs_service_get_connect_info(
+			  service, OBS_SERVICE_CONNECT_INFO_USERNAME));
+	dstr_copy(&stream->password,
+		  obs_service_get_connect_info(
+			  service, OBS_SERVICE_CONNECT_INFO_PASSWORD));
 	dstr_depad(&stream->path);
 	dstr_depad(&stream->key);
 	drop_b = (int64_t)obs_data_get_int(settings, OPT_DROP_THRESHOLD);
@@ -1157,7 +1331,10 @@ static bool init_connect(struct rtmp_stream *stream)
 	obs_data_t *vsettings = obs_encoder_get_settings(venc);
 	obs_data_t *asettings = obs_encoder_get_settings(aenc);
 
-	circlebuf_free(&stream->dbr_frames);
+	const char *codec = obs_encoder_get_codec(venc);
+	stream->video_codec = to_video_type(codec);
+
+	deque_free(&stream->dbr_frames);
 	stream->audio_bitrate = (long)obs_data_get_int(asettings, "bitrate");
 	stream->dbr_data_size = 0;
 	stream->dbr_orig_bitrate = (long)obs_data_get_int(vsettings, "bitrate");
@@ -1170,6 +1347,8 @@ static bool init_connect(struct rtmp_stream *stream)
 	caps = obs_encoder_get_caps(venc);
 	if ((caps & OBS_ENCODER_CAP_DYN_BITRATE) == 0) {
 		stream->dbr_enabled = false;
+		info("Dynamic bitrate disabled. "
+		     "The encoder does not support on-the-fly bitrate reconfiguration.");
 	}
 
 	if (obs_output_get_delay(stream->output) != 0) {
@@ -1192,6 +1371,19 @@ static bool init_connect(struct rtmp_stream *stream)
 	bind_ip = obs_data_get_string(settings, OPT_BIND_IP);
 	dstr_copy(&stream->bind_ip, bind_ip);
 
+	// Check that we have an IP Family set and that the setting length
+	// is 4 characters long so we don't capture ie. IPv4+IPv6
+	ip_family = obs_data_get_string(settings, OPT_IP_FAMILY);
+	if (ip_family != NULL && strlen(ip_family) == 4) {
+		socklen_t len = 0;
+		if (strncmp(ip_family, "IPv6", 4) == 0)
+			len = sizeof(struct sockaddr_in6);
+		else if (strncmp(ip_family, "IPv4", 4) == 0)
+			len = sizeof(struct sockaddr_in);
+		stream->addrlen_hint = len;
+	}
+
+#ifdef _WIN32
 	stream->new_socket_loop =
 		obs_data_get_bool(settings, OPT_NEWSOCKETLOOP_ENABLED);
 	stream->low_latency_mode =
@@ -1203,8 +1395,17 @@ static bool init_connect(struct rtmp_stream *stream)
 		warn("Disabling network optimizations, not compatible with RTMPS");
 		stream->new_socket_loop = false;
 	}
+#else
+	stream->new_socket_loop = false;
+	stream->low_latency_mode = false;
+#endif
 
 	obs_data_release(settings);
+
+	//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
+	stream->is_naver_hevc = obs_output_get_naver_shopping(stream->output) &&
+				CODEC_HEVC == stream->video_codec;
+
 	return true;
 }
 
@@ -1215,17 +1416,43 @@ static void *connect_thread(void *data)
 
 	os_set_thread_name("rtmp-stream: connect_thread");
 
-	if (!silently_reconnecting(stream)) {
-		if (!init_connect(stream)) {
+	//PRISM/wangshaohui/20231212/None/add logs
+	info("output=%p rtmp=%p %s enter", stream->output, stream, __FUNCTION__);
+
+	if (!init_connect(stream)) {
+		//PRISM/wangshaohui/20231212/None/add logs
+		warn("output=%p rtmp=%p %s leave with init_connect failed",
+		     stream->output, stream, __FUNCTION__);
+
+		obs_output_signal_stop(stream->output, OBS_OUTPUT_BAD_PATH);
+
+		//PRISM/WuLongyue/20231212/#2212
+		obs_video_dec_active();
+
+		return NULL;
+	}
+
+	// HDR streaming disabled for AV1
+	if (stream->video_codec != CODEC_H264 &&
+	    stream->video_codec != CODEC_HEVC) {
+		video_t *video = obs_get_video();
+		const struct video_output_info *info =
+			video_output_get_info(video);
+
+		if (info->colorspace == VIDEO_CS_2100_HLG ||
+		    info->colorspace == VIDEO_CS_2100_PQ) {
+			//PRISM/wangshaohui/20231212/None/add logs
+			warn("output=%p rtmp=%p %s leave with unsupported HDR for non-H264",
+			     stream->output, stream, __FUNCTION__);
+
 			obs_output_signal_stop(stream->output,
-					       OBS_OUTPUT_BAD_PATH);
-			os_atomic_set_bool(&stream->silent_reconnect, false);
+					       OBS_OUTPUT_HDR_DISABLED);
+
+			//PRISM/WuLongyue/20231212/#2212
+			obs_video_dec_active();
+
 			return NULL;
 		}
-	} else {
-		struct encoder_packet packet;
-		peek_next_packet(stream, &packet);
-		stream->start_dts_offset = get_ms_time(&packet, packet.dts);
 	}
 
 	ret = try_connect(stream);
@@ -1235,11 +1462,25 @@ static void *connect_thread(void *data)
 		info("Connection to %s failed: %d", stream->path.array, ret);
 	}
 
-	if (!stopping(stream))
-		pthread_detach(stream->connect_thread);
+    //PRISM/WuLongyue/20240116/#4031/May not detach thread
+    if (!stopping(stream) && !os_atomic_load_bool(&stream->joining)) {
+        pthread_detach(stream->connect_thread);
+        info("%p:%s line=%d, pthread_detach", stream, __FUNCTION__, __LINE__);
+    } else {
+        info("%p:%s line=%d, not pthread_detach", stream, __FUNCTION__, __LINE__);
+    }
 
-	os_atomic_set_bool(&stream->silent_reconnect, false);
+	//PRISM/wangshaohui/20231212/None/add logs
+	info("output=%p rtmp=%p %s leave, try_connect successed: %d",
+	     stream->output, stream, __FUNCTION__, ret == OBS_OUTPUT_SUCCESS);
+
 	os_atomic_set_bool(&stream->connecting, false);
+    //PRISM/WuLongyue/20240116/#4031/May not detach thread
+    os_atomic_set_bool(&stream->joining, false);
+
+	//PRISM/WuLongyue/20231212/#2212
+	obs_video_dec_active();
+
 	return NULL;
 }
 
@@ -1247,28 +1488,45 @@ static bool rtmp_stream_start(void *data)
 {
 	struct rtmp_stream *stream = data;
 
-	if (!silently_reconnecting(stream)) {
-		if (!obs_output_can_begin_data_capture(stream->output, 0))
-			return false;
-		if (!obs_output_initialize_encoders(stream->output, 0))
-			return false;
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Enter]", stream, __FUNCTION__);
+
+	if (!obs_output_can_begin_data_capture(stream->output, 0)) {
+		//PRISM/WuLongyue/20240116/#3984/add logs
+		blog(LOG_INFO, "%p-%s: [Exit] line=%d", stream, __FUNCTION__,
+		     __LINE__);
+		return false;
+	}
+	if (!obs_output_initialize_encoders(stream->output, 0)) {
+		//PRISM/WuLongyue/20240116/#3984/add logs
+		blog(LOG_INFO, "%p-%s: [Exit] line=%d", stream, __FUNCTION__,
+		     __LINE__);
+		return false;
 	}
 
-	//PRISM/WuLongyue/20230726/None/support HEVC
-	obs_encoder_t *vencoder = obs_output_get_video_encoder(stream->output);
-	const char *codec_id = obs_encoder_get_codec(vencoder);
-	stream->is_hevc = (codec_id && (0 == strcmp(codec_id, "hevc")));
-
 	os_atomic_set_bool(&stream->connecting, true);
-	return pthread_create(&stream->connect_thread, NULL, connect_thread,
+    //PRISM/WuLongyue/20240116/#4031/May not detach thread
+    os_atomic_set_bool(&stream->joining, false);
+
+	bool bRet = pthread_create(&stream->connect_thread, NULL, connect_thread,
 			      stream) == 0;
+
+	//PRISM/WuLongyue/20231212/#2212
+	if (bRet) {
+		obs_video_inc_active();
+	}
+
+	//PRISM/WuLongyue/20240116/#3984/add logs
+	blog(LOG_INFO, "%p-%s: [Exit] bRet=%d", stream, __FUNCTION__, bRet);
+
+	return bRet;
 }
 
 static inline bool add_packet(struct rtmp_stream *stream,
 			      struct encoder_packet *packet)
 {
-	circlebuf_push_back(&stream->packets, packet,
-			    sizeof(struct encoder_packet));
+	deque_push_back(&stream->packets, packet,
+			sizeof(struct encoder_packet));
 	return true;
 }
 
@@ -1282,7 +1540,7 @@ static void drop_frames(struct rtmp_stream *stream, const char *name,
 {
 	UNUSED_PARAMETER(pframes);
 
-	struct circlebuf new_buf = {0};
+	struct deque new_buf = {0};
 	int num_frames_dropped = 0;
 
 #ifdef _DEBUG
@@ -1291,16 +1549,16 @@ static void drop_frames(struct rtmp_stream *stream, const char *name,
 	UNUSED_PARAMETER(name);
 #endif
 
-	circlebuf_reserve(&new_buf, sizeof(struct encoder_packet) * 8);
+	deque_reserve(&new_buf, sizeof(struct encoder_packet) * 8);
 
 	while (stream->packets.size) {
 		struct encoder_packet packet;
-		circlebuf_pop_front(&stream->packets, &packet, sizeof(packet));
+		deque_pop_front(&stream->packets, &packet, sizeof(packet));
 
 		/* do not drop audio data or video keyframes */
 		if (packet.type == OBS_ENCODER_AUDIO ||
 		    packet.drop_priority >= highest_priority) {
-			circlebuf_push_back(&new_buf, &packet, sizeof(packet));
+			deque_push_back(&new_buf, &packet, sizeof(packet));
 
 		} else {
 			num_frames_dropped++;
@@ -1308,7 +1566,7 @@ static void drop_frames(struct rtmp_stream *stream, const char *name,
 		}
 	}
 
-	circlebuf_free(&stream->packets);
+	deque_free(&stream->packets);
 	stream->packets = new_buf;
 
 	if (stream->min_priority < highest_priority)
@@ -1330,7 +1588,7 @@ static bool find_first_video_packet(struct rtmp_stream *stream,
 
 	for (size_t i = 0; i < count; i++) {
 		struct encoder_packet *cur =
-			circlebuf_data(&stream->packets, i * sizeof(*first));
+			deque_data(&stream->packets, i * sizeof(*first));
 		if (cur->type == OBS_ENCODER_VIDEO && !cur->keyframe) {
 			*first = *cur;
 			return true;
@@ -1349,8 +1607,8 @@ static bool dbr_bitrate_lowered(struct rtmp_stream *stream)
 	if (stream->dbr_est_bitrate &&
 	    stream->dbr_est_bitrate < stream->dbr_cur_bitrate) {
 		stream->dbr_data_size = 0;
-		circlebuf_pop_front(&stream->dbr_frames, NULL,
-				    stream->dbr_frames.size);
+		deque_pop_front(&stream->dbr_frames, NULL,
+				stream->dbr_frames.size);
 		est_bitrate = stream->dbr_est_bitrate / 100 * 100;
 		if (est_bitrate < 50) {
 			est_bitrate = 50;
@@ -1505,10 +1763,8 @@ static void check_to_drop_frames(struct rtmp_stream *stream, bool pframes)
 static bool add_video_packet(struct rtmp_stream *stream,
 			     struct encoder_packet *packet)
 {
-	if (!silently_reconnecting(stream)) {
-		check_to_drop_frames(stream, false);
-		check_to_drop_frames(stream, true);
-	}
+	check_to_drop_frames(stream, false);
+	check_to_drop_frames(stream, true);
 
 	/* if currently dropping frames, drop packets until it reaches the
 	 * desired priority */
@@ -1546,7 +1802,19 @@ static void rtmp_stream_data(void *data, struct encoder_packet *packet)
 			stream->got_first_video = true;
 		}
 
-		obs_parse_avc_packet(&new_packet, packet);
+		switch (stream->video_codec) {
+		case CODEC_H264:
+			obs_parse_avc_packet(&new_packet, packet);
+			break;
+#ifdef ENABLE_HEVC
+		case CODEC_HEVC:
+			obs_parse_hevc_packet(&new_packet, packet);
+			break;
+#endif
+		case CODEC_AV1:
+			obs_parse_av1_packet(&new_packet, packet);
+			break;
+		}
 	} else {
 		obs_encoder_packet_ref(&new_packet, packet);
 	}
@@ -1573,8 +1841,10 @@ static void rtmp_stream_defaults(obs_data_t *defaults)
 	obs_data_set_default_int(defaults, OPT_PFRAME_DROP_THRESHOLD, 900);
 	obs_data_set_default_int(defaults, OPT_MAX_SHUTDOWN_TIME_SEC, 30);
 	obs_data_set_default_string(defaults, OPT_BIND_IP, "default");
+#ifdef _WIN32
 	obs_data_set_default_bool(defaults, OPT_NEWSOCKETLOOP_ENABLED, false);
 	obs_data_set_default_bool(defaults, OPT_LOWLATENCY_ENABLED, false);
+#endif
 }
 
 static obs_properties_t *rtmp_stream_properties(void *unused)
@@ -1590,6 +1860,18 @@ static obs_properties_t *rtmp_stream_properties(void *unused)
 				   200, 10000, 100);
 	obs_property_int_set_suffix(p, " ms");
 
+	p = obs_properties_add_list(props, OPT_IP_FAMILY,
+				    obs_module_text("IPFamily"),
+				    OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_STRING);
+
+	obs_property_list_add_string(p, obs_module_text("IPFamily.Both"),
+				     "IPv4+IPv6");
+	obs_property_list_add_string(p, obs_module_text("IPFamily.V4Only"),
+				     "IPv4");
+	obs_property_list_add_string(p, obs_module_text("IPFamily.V6Only"),
+				     "IPv6");
+
 	p = obs_properties_add_list(props, OPT_BIND_IP,
 				    obs_module_text("RTMPStream.BindIP"),
 				    OBS_COMBO_TYPE_LIST,
@@ -1604,10 +1886,12 @@ static obs_properties_t *rtmp_stream_properties(void *unused)
 	}
 	netif_saddr_data_free(&addrs);
 
+#ifdef _WIN32
 	obs_properties_add_bool(props, OPT_NEWSOCKETLOOP_ENABLED,
 				obs_module_text("RTMPStream.NewSocketLoop"));
 	obs_properties_add_bool(props, OPT_LOWLATENCY_ENABLED,
 				obs_module_text("RTMPStream.LowLatencyMode"));
+#endif
 
 	return props;
 }
@@ -1645,7 +1929,16 @@ struct obs_output_info rtmp_output_info = {
 	.id = "rtmp_output",
 	.flags = OBS_OUTPUT_AV | OBS_OUTPUT_ENCODED | OBS_OUTPUT_SERVICE |
 		 OBS_OUTPUT_MULTI_TRACK,
-	.encoded_video_codecs = "h264",
+#ifdef NO_CRYPTO
+	.protocols = "RTMP",
+#else
+	.protocols = "RTMP;RTMPS",
+#endif
+#ifdef ENABLE_HEVC
+	.encoded_video_codecs = "h264;hevc;av1",
+#else
+	.encoded_video_codecs = "h264;av1",
+#endif
 	.encoded_audio_codecs = "aac",
 	.get_name = rtmp_stream_getname,
 	.create = rtmp_stream_create,

@@ -2,6 +2,10 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#ifdef __APPLE__
+#include <execinfo.h>
+#endif
 
 static int LOG_SUBPROCESS_EXCEPTION = -100;
 
@@ -85,4 +89,30 @@ void bexception(const char *process_name, const char *pid, const char *src)
 	const char *fields[][2] = {
 		{"process", process_name}, {"pid", pid}, {"src", src}};
 	blogex(false, LOG_SUBPROCESS_EXCEPTION, fields, 3, NULL);
+}
+
+void pls_get_func_stacks(char *info, size_t info_size, int max_layer)
+{
+	if (!info || info_size < 10)
+		return;
+	
+#ifdef __APPLE__
+	memset(info, 0, info_size);
+	void *callstack[128] = {NULL};
+	int frames = backtrace(callstack, sizeof(callstack) / sizeof(callstack[0]));
+	char **strs = backtrace_symbols(callstack, frames);
+	unsigned long len = 0;
+	
+	for (int i = 0; i < frames && i < max_layer; ++i) {
+		if (strs[i] && len + 2 < info_size) {
+			int src_len = strlen(strs[i]);
+			int dst_len = info_size - len - 2;
+			int copy_len = src_len < dst_len ? src_len : dst_len;
+			strncpy(info + len, strs[i], copy_len);
+			strncpy(info + len + copy_len, "\n", 1);
+		}
+		len = strlen(info);
+	}
+	free(strs);
+#endif
 }

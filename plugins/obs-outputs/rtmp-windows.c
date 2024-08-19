@@ -342,7 +342,11 @@ static inline void socket_thread_windows_internal(struct rtmp_stream *stream)
 void *socket_thread_windows(void *data)
 {
 	struct rtmp_stream *stream = data;
+	//PRISM/Xiewei/20240520/#5328/add log to trace socket thread
+	blog(LOG_INFO, "%p-%s: [Enter]", (void *)stream, __FUNCTION__);
 	socket_thread_windows_internal(stream);
+	//PRISM/Xiewei/20240520/#5328/add log to trace socket thread
+	blog(LOG_INFO, "%p-%s: [Exit]", (void *)stream, __FUNCTION__);
 	return NULL;
 }
 #endif

@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2022 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -70,7 +70,18 @@ static bool av1_update(struct av1_encoder *enc, obs_data_t *settings)
 	int bitrate = (int)obs_data_get_int(settings, "bitrate");
 	int cqp = (int)obs_data_get_int(settings, "cqp");
 	int keyint_sec = (int)obs_data_get_int(settings, "keyint_sec");
+	//PRISM/WuLongyue/20240124/#4154/Modify default value
+	if (0 == keyint_sec)
+	{
+		keyint_sec = 3;
+	}
 	int preset = (int)obs_data_get_int(settings, "preset");
+
+	// PRISM/chenguoxi/20240627/noissue/svt-av1 preset < 10 causes crash. Caution: when obs fixes this issue, open it!!!
+	if (enc->type == AV1_ENCODER_TYPE_SVT && preset < 10) {
+		preset = 10;
+	}
+
 	AVDictionary *svtav1_opts = NULL;
 
 	video_t *video = obs_encoder_video(enc->ffve.encoder);
@@ -209,20 +220,17 @@ static void *av1_create_internal(obs_data_t *settings, obs_encoder_t *encoder,
 {
 	video_t *video = obs_encoder_video(encoder);
 	const struct video_output_info *voi = video_output_get_info(video);
-	switch (voi->format) {
-	case VIDEO_FORMAT_I010:
-	case VIDEO_FORMAT_P010:
-		break;
-	default:
-		switch (voi->colorspace) {
-		case VIDEO_CS_2100_PQ:
-		case VIDEO_CS_2100_HLG: {
+
+	if (voi->format != VIDEO_FORMAT_P010 &&
+	    voi->format != VIDEO_FORMAT_I010) {
+		if (voi->colorspace == VIDEO_CS_2100_PQ ||
+		    voi->colorspace == VIDEO_CS_2100_HLG) {
+			//PRISM/WuLongyue/20231206/#3415/Change text
 			const char *const text =
-				obs_module_text("AV1.8bitUnsupportedHdr");
+				obs_module_text("AMF.16bitUnsupported");
 			obs_encoder_set_last_error(encoder, text);
 			blog(LOG_ERROR, "[AV1 encoder] %s", text);
 			return NULL;
-		}
 		}
 	}
 
@@ -266,8 +274,7 @@ static bool av1_encode(void *data, struct encoder_frame *frame,
 void av1_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, "bitrate", 2500);
-	//PRISM/WuLongyue/20230707/#1232/Change default "keyint_sec" to 1
-	obs_data_set_default_int(settings, "keyint_sec", 1);
+	obs_data_set_default_int(settings, "keyint_sec", 0);
 	obs_data_set_default_int(settings, "cqp", 50);
 	obs_data_set_default_string(settings, "rate_control", "CBR");
 	obs_data_set_default_int(settings, "preset", 8);
@@ -321,10 +328,12 @@ obs_properties_t *av1_properties(enum av1_encoder_type type)
 				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 
 	if (type == AV1_ENCODER_TYPE_SVT) {
-		obs_property_list_add_int(p, "Very likely too slow (6)", 6);
-		obs_property_list_add_int(p, "Probably too slow (7)", 7);
-		obs_property_list_add_int(p, "Seems okay (8)", 8);
-		obs_property_list_add_int(p, "Might be better (9)", 9);
+		// PRISM/chenguoxi/20240627/noissue/svt-av1 preset < 10 causes crash. Caution: when obs fixes this issue, open it!!!
+		// https://github.com/obsproject/obs-studio/issues/10926
+		// obs_property_list_add_int(p, "Very likely too slow (6)", 6);
+		// obs_property_list_add_int(p, "Probably too slow (7)", 7);
+		// obs_property_list_add_int(p, "Seems okay (8)", 8);
+		// obs_property_list_add_int(p, "Might be better (9)", 9);
 		obs_property_list_add_int(p, "A little bit faster? (10)", 10);
 		obs_property_list_add_int(p, "Hmm, not bad speed (11)", 11);
 		obs_property_list_add_int(

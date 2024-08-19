@@ -24,7 +24,7 @@ typedef void (*TPrsimDispatchJSEventToSource)(obs_source_t *source,
 #define OBS_FRONTEND_API __declspec(dllimport)
 #endif
 #else
-#define OBS_FRONTEND_API
+#define OBS_FRONTEND_API __attribute__((visibility("default")))
 #endif
 
 //PRISM/Zhangdewen/20230508/#754/modify api, fix mac nullptr error

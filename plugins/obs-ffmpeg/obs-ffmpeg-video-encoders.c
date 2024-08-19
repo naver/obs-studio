@@ -1,5 +1,8 @@
 #include "obs-ffmpeg-video-encoders.h"
 
+// PRISM/chenguoxi/20240514/#5378/force keyframe
+#include "pls/pls-encoder.h"
+
 #define do_log(level, format, ...)                               \
 	blog(level, "[%s encoder: '%s'] " format, enc->enc_name, \
 	     obs_encoder_get_name(enc->encoder), ##__VA_ARGS__)
@@ -26,7 +29,7 @@ bool ffmpeg_video_encoder_init_codec(struct ffmpeg_video_encoder *enc)
 					     enc->enc_name);
 				dstr_replace(&error_message, "%2",
 					     av_err2str(ret));
-				dstr_cat(&error_message, "\r\n\r\n");
+				dstr_cat(&error_message, "<br><br>");
 
 				obs_encoder_set_last_error(enc->encoder,
 							   error_message.array);
@@ -75,6 +78,7 @@ void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
 	enc->context->width = obs_encoder_get_width(enc->encoder);
 	enc->context->height = obs_encoder_get_height(enc->encoder);
 	enc->context->time_base = (AVRational){voi->fps_den, voi->fps_num};
+	enc->context->framerate = (AVRational){voi->fps_num, voi->fps_den};
 	enc->context->pix_fmt = pix_fmt;
 	enc->context->color_range = info->range == VIDEO_RANGE_FULL
 					    ? AVCOL_RANGE_JPEG
@@ -120,11 +124,32 @@ void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
 	enc->height = enc->context->height;
 
 	struct obs_options opts = obs_parse_options(ffmpeg_opts);
+
+	//PRISM/chenguoxi/20240628/#64/solve ffmpeg nvenc force i frame is invalid
+	if (enc != NULL) {
+		const char *source_id = obs_source_get_id((const obs_source_t*)enc->encoder);
+		if (source_id != NULL &&
+		    ((strcmp(source_id, "ffmpeg_nvenc") == 0) ||
+		     (strcmp(source_id, "ffmpeg_hevc_nvenc") == 0)))
+		{
+			av_opt_set(enc->context->priv_data, "forced-idr", "1", 0);
+		}
+	}
+
 	for (size_t i = 0; i < opts.count; i++) {
 		struct obs_option *opt = &opts.options[i];
 		av_opt_set(enc->context->priv_data, opt->name, opt->value, 0);
 	}
 	obs_free_options(opts);
+
+	//PRISM/chenguoxi/20240628/#64/solve ffmpeg nvenc force i frame is invalid
+	uint8_t *value = NULL;
+	if (av_opt_get(enc->context->priv_data, "forced-idr", 0, &value) == 0) {
+		info("forced-idr: %s\n", value);
+		av_free(value);
+	} else {
+		info("forced-idr: not set\n");
+	}
 }
 
 void ffmpeg_video_encoder_free(struct ffmpeg_video_encoder *enc)
@@ -219,6 +244,16 @@ static inline void copy_data(AVFrame *pic, const struct encoder_frame *frame,
 #define TIMEOUT_MAX_SEC 5
 #define TIMEOUT_MAX_NSEC (TIMEOUT_MAX_SEC * SEC_TO_NSEC)
 
+// PRISM/chenguoxi/20240514/#5378/force keyframe
+static bool is_force_keyframe(struct ffmpeg_video_encoder *enc)
+{
+	if (enc == NULL || enc->encoder == NULL) {
+		return false;
+	}
+
+	return obs_encoder_request_keyframe_and_clean(enc->encoder);
+}
+
 bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
 			 struct encoder_frame *frame,
 			 struct encoder_packet *packet, bool *received_packet)
@@ -237,6 +272,15 @@ bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
 	copy_data(enc->vframe, frame, enc->height, enc->context->pix_fmt);
 
 	enc->vframe->pts = frame->pts;
+
+	// PRISM/chenguoxi/20240514/#5378/force keyframe
+	if (is_force_keyframe(enc)) {
+		enc->vframe->pict_type = AV_PICTURE_TYPE_I;
+		blog(LOG_INFO, "ffmpeg_video_encode: force keyframe!");
+	} else {
+		enc->vframe->pict_type = AV_PICTURE_TYPE_NONE;
+	}
+
 	ret = avcodec_send_frame(enc->context, enc->vframe);
 	if (ret == 0)
 		ret = avcodec_receive_packet(enc->context, &av_pkt);

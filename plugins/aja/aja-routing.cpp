@@ -23,9 +23,9 @@ bool Routing::ParseRouteString(const std::string &route,
 	blog(LOG_DEBUG, "aja::Routing::ParseRouteString: Input string: %s",
 	     route.c_str());
 
-	std::string route_lower(route);
-	route_lower = aja::lower(route_lower);
-	const std::string &route_strip = aja::replace(route_lower, " ", "");
+	std::string route_strip(route);
+	aja::lower(route_strip);
+	aja::replace(route_strip, " ", "");
 
 	if (route_strip.empty()) {
 		blog(LOG_DEBUG,
@@ -152,7 +152,7 @@ void Routing::StartSourceAudio(const SourceProps &props, CNTV2Card *card)
 		audioSys, NTV2InputSourceToAudioSource(inputSrc),
 		NTV2InputSourceToEmbeddedAudioInput(inputSrc));
 
-	card->SetNumberAudioChannels(props.audioNumChannels, audioSys);
+	card->SetNumberAudioChannels(kDefaultAudioChannels, audioSys);
 	card->SetAudioRate(props.AudioRate(), audioSys);
 	card->SetAudioBufferSize(NTV2_AUDIO_BUFFER_BIG, audioSys);
 
@@ -188,7 +188,7 @@ void Routing::StartSourceAudio(const SourceProps &props, CNTV2Card *card)
 
 	for (int a = 0; a < NTV2DeviceGetNumAudioSystems(card->GetDeviceID());
 	     a++) {
-		card->SetAudioLoopBack(NTV2_AUDIO_LOOPBACK_OFF,
+		card->SetAudioLoopBack(NTV2_AUDIO_LOOPBACK_ON,
 				       NTV2AudioSystem(a));
 	}
 
@@ -211,11 +211,8 @@ bool Routing::ConfigureSourceRoute(const SourceProps &props, NTV2Mode mode,
 	if (!card)
 		return false;
 
-	bool found_preset = false;
 	auto deviceID = props.deviceID;
 	NTV2VideoFormat vf = props.videoFormat;
-	bool is_hfr = NTV2_IS_HIGH_NTV2FrameRate(
-		GetNTV2FrameRateFromVideoFormat(props.videoFormat));
 	auto init_src = props.InitialInputSource();
 	auto init_channel = props.Channel();
 
@@ -277,7 +274,7 @@ bool Routing::ConfigureSourceRoute(const SourceProps &props, NTV2Mode mode,
 		for (const auto &name : fs_associated) {
 			std::string placeholder = std::string(
 				name + "[{ch" + aja::to_string(c + 1) + "}]");
-			route_string = aja::replace(
+			aja::replace(
 				route_string, placeholder,
 				name + "[" +
 					aja::to_string(start_framestore_index) +
@@ -291,9 +288,8 @@ bool Routing::ConfigureSourceRoute(const SourceProps &props, NTV2Mode mode,
 	for (ULWord c = 0; c < NTV2_MAX_NUM_CHANNELS; c++) {
 		std::string channel_placeholder =
 			std::string("{ch" + aja::to_string(c + 1) + "}");
-		route_string =
-			aja::replace(route_string, channel_placeholder,
-				     aja::to_string(start_channel_index++));
+		aja::replace(route_string, channel_placeholder,
+			     aja::to_string(start_channel_index++));
 	}
 
 	if (!ParseRouteString(route_string, cnx))
@@ -355,10 +351,7 @@ bool Routing::ConfigureOutputRoute(const OutputProps &props, NTV2Mode mode,
 	if (!card)
 		return false;
 
-	bool found_preset = false;
 	auto deviceID = props.deviceID;
-	bool is_hfr = NTV2_IS_HIGH_NTV2FrameRate(
-		GetNTV2FrameRateFromVideoFormat(props.videoFormat));
 	NTV2OutputDestinations outputDests;
 	aja::IOSelectionToOutputDests(props.ioSelect, outputDests);
 	if (outputDests.empty()) {
@@ -427,7 +420,7 @@ bool Routing::ConfigureOutputRoute(const OutputProps &props, NTV2Mode mode,
 		for (const auto &name : fs_associated) {
 			std::string placeholder = std::string(
 				name + "[{ch" + aja::to_string(c + 1) + "}]");
-			route_string = aja::replace(
+			aja::replace(
 				route_string, placeholder,
 				name + "[" +
 					aja::to_string(start_framestore_index) +
@@ -441,9 +434,8 @@ bool Routing::ConfigureOutputRoute(const OutputProps &props, NTV2Mode mode,
 	for (ULWord c = 0; c < NTV2_MAX_NUM_CHANNELS; c++) {
 		std::string channel_placeholder =
 			std::string("{ch" + aja::to_string(c + 1) + "}");
-		route_string =
-			aja::replace(route_string, channel_placeholder,
-				     aja::to_string(start_channel_index++));
+		aja::replace(route_string, channel_placeholder,
+			     aja::to_string(start_channel_index++));
 	}
 
 	if (!ParseRouteString(route_string, cnx))
@@ -616,4 +608,4 @@ void Routing::LogRoutingPreset(const RoutingPreset &rp)
 	}
 }
 
-} // aja
+} // namespace aja

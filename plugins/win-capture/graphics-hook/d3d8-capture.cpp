@@ -1,6 +1,10 @@
 #include <dxgi.h>
 
+#ifdef OBS_LEGACY
 #include "../d3d8-api/d3d8.h"
+#else
+#include <d3d8.h>
+#endif
 #include "graphics-hook.h"
 
 #include <detours.h>
@@ -35,7 +39,7 @@ static d3d8_data data = {};
 
 static DXGI_FORMAT d3d8_to_dxgi_format(D3DFORMAT format)
 {
-	switch ((unsigned long)format) {
+	switch (format) {
 	case D3DFMT_X1R5G5B5:
 	case D3DFMT_A1R5G5B5:
 		return DXGI_FORMAT_B5G5R5A1_UNORM;
@@ -174,7 +178,8 @@ static void d3d8_free()
 
 static void d3d8_init(IDirect3DDevice8 *device)
 {
-	data.d3d8 = get_system_module("d3d8.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	data.d3d8 = get_system_module(L"d3d8.dll");
 
 	if (!d3d8_init_format_backbuffer(device))
 		return;
@@ -355,7 +360,8 @@ static bool manually_get_d3d8_present_addr(HMODULE d3d8_module,
 
 bool hook_d3d8(void)
 {
-	HMODULE d3d8_module = get_system_module("d3d8.dll");
+	//PRISM/FanZirong/20240102/no issue/use wchar, compatible with Korean paths
+	HMODULE d3d8_module = get_system_module(L"d3d8.dll");
 	uint32_t d3d8_size;
 	void *present_addr = nullptr;
 

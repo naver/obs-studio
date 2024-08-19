@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2014 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -36,17 +36,25 @@ bool obs_view_init(struct obs_view *view)
 obs_view_t *obs_view_create(void)
 {
 	struct obs_view *view = bzalloc(sizeof(struct obs_view));
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Enter]", view, __FUNCTION__);
 
 	if (!obs_view_init(view)) {
 		bfree(view);
 		view = NULL;
 	}
 
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", view, __FUNCTION__);
+
 	return view;
 }
 
 void obs_view_free(struct obs_view *view)
 {
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Enter]", view, __FUNCTION__);
+
 	if (!view)
 		return;
 
@@ -60,14 +68,23 @@ void obs_view_free(struct obs_view *view)
 
 	memset(view->channels, 0, sizeof(view->channels));
 	pthread_mutex_destroy(&view->channels_mutex);
+
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", view, __FUNCTION__);
 }
 
 void obs_view_destroy(obs_view_t *view)
 {
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", view, __FUNCTION__);
+
 	if (view) {
 		obs_view_free(view);
 		bfree(view);
 	}
+
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", view, __FUNCTION__);
 }
 
 obs_source_t *obs_view_get_source(obs_view_t *view, uint32_t channel)
@@ -90,6 +107,10 @@ obs_source_t *obs_view_get_source(obs_view_t *view, uint32_t channel)
 void obs_view_set_source(obs_view_t *view, uint32_t channel,
 			 obs_source_t *source)
 {
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: channel=%u, source=%p", view, __FUNCTION__,
+	     channel, source);
+
 	struct obs_source *prev_source;
 
 	assert(channel < MAX_CHANNELS);
@@ -169,6 +190,9 @@ video_t *obs_view_add(obs_view_t *view)
 
 video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
 {
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Enter] ovi=%p", view, __FUNCTION__, ovi);
+
 	if (!view || !ovi)
 		return NULL;
 
@@ -183,6 +207,10 @@ video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
 	set_main_mix();
 	pthread_mutex_unlock(&obs->video.mixes_mutex);
 
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Exit] mix=%p, video=%p", view, __FUNCTION__,
+	     mix, mix->video);
+
 	return mix->video;
 }
 
@@ -191,10 +219,55 @@ void obs_view_remove(obs_view_t *view)
 	if (!view)
 		return;
 
+	//PRISM/wangshaohui/20231130/none/add logs
+	blog(LOG_INFO, "%s started obs_view_t=%p", __FUNCTION__, view);
+
 	pthread_mutex_lock(&obs->video.mixes_mutex);
-	size_t idx = find_mix_for_view(view);
-	if (idx != DARRAY_INVALID)
-		obs->video.mixes.array[idx]->view = NULL;
+	for (size_t i = 0, num = obs->video.mixes.num; i < num; i++) {
+		if (obs->video.mixes.array[i]->view == view)
+			obs->video.mixes.array[i]->view = NULL;
+	}
+
 	set_main_mix();
+	pthread_mutex_unlock(&obs->video.mixes_mutex);
+
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s: [Exit]", view, __FUNCTION__);
+}
+
+bool obs_view_get_video_info(obs_view_t *view, struct obs_video_info *ovi)
+{
+	if (!view)
+		return false;
+
+	pthread_mutex_lock(&obs->video.mixes_mutex);
+
+	size_t idx = find_mix_for_view(view);
+	if (idx != DARRAY_INVALID) {
+		*ovi = obs->video.mixes.array[idx]->ovi;
+		pthread_mutex_unlock(&obs->video.mixes_mutex);
+		return true;
+	}
+
+	pthread_mutex_unlock(&obs->video.mixes_mutex);
+
+	return false;
+}
+
+void obs_view_enum_video_info(obs_view_t *view,
+			      bool (*enum_proc)(void *,
+						struct obs_video_info *),
+			      void *param)
+{
+	pthread_mutex_lock(&obs->video.mixes_mutex);
+
+	for (size_t i = 0, num = obs->video.mixes.num; i < num; i++) {
+		struct obs_core_video_mix *mix = obs->video.mixes.array[i];
+		if (mix->view != view)
+			continue;
+		if (!enum_proc(param, &mix->ovi))
+			break;
+	}
+
 	pthread_mutex_unlock(&obs->video.mixes_mutex);
 }

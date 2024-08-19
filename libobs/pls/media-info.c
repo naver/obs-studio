@@ -367,14 +367,32 @@ void mi_free(media_info_t *mi)
 	SAFE_FREE_STRING(&mi->metadata.title);
 	SAFE_FREE_STRING(&mi->metadata.album);
 
-	if (mi->cover.data)
+	if (mi->metadata.artist) {
+		free(mi->metadata.artist);
+		mi->metadata.artist = NULL;
+	}
+
+	if (mi->metadata.title) {
+		free(mi->metadata.title);
+		mi->metadata.title = NULL;
+	}
+	if (mi->metadata.album) {
+		free(mi->metadata.album);
+		mi->metadata.album = NULL;
+	}
+
+	if (mi->id3v2.data) {
+		free(mi->id3v2.data);
+		mi->id3v2.data = NULL;
+	}
+
+	if (mi->cover.data) {
 		av_freep(&mi->cover.data);
+	}
 
-	if (mi->first_frame.data)
+	if (mi->first_frame.data) {
 		av_freep(&mi->first_frame.data);
-
-	if (mi->id3v2.data)
-		bfree(mi->id3v2.data);
+	}
 
 	avformat_close_input(&mi->fmt);
 	if (mi->codec_ctx)
@@ -510,11 +528,13 @@ fail:
 static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
 			    int *out_size)
 {
-	char *buffer[MAX_AV_PLANES] = {0};
-	int linesize[MAX_AV_PLANES] = {0};
+    UNUSED_PARAMETER(mi);
+    
+	uint8_t *buffer[MAX_AV_PLANES] = {0};
+	int linesizes[MAX_AV_PLANES] = {0};
 
-	int ret = av_image_alloc(buffer, linesize, frame->width, frame->height,
-				 AV_PIX_FMT_RGBA, 1);
+	int ret = av_image_alloc(buffer, linesizes, frame->width, frame->height,
+				 AV_PIX_FMT_RGBA, 32);
 	if (ret < 0) {
 		blog(LOG_WARNING,
 		     "[mi] Failed to alloc image buffer : %d, '%s'", ret,
@@ -538,7 +558,7 @@ static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
 
 		ret = sws_scale(swsctx, (const uint8_t *const *)frame->data,
 				frame->linesize, 0, frame->height, buffer,
-				linesize);
+			linesizes);
 		sws_freeContext(swsctx);
 		swsctx = NULL;
 		if (ret < 0) {
@@ -547,6 +567,32 @@ static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
 			     ret, av_err2str(ret));
 			goto fail;
 		}
+
+		const size_t linesize = (size_t)frame->width * 4;
+		*out_size = (size_t)frame->height * (size_t)frame->width * 4;
+		*out = av_malloc(frame->height * linesize);
+		if (!(*out)) {
+			blog(LOG_WARNING,
+			     "[mi] Failed to Allocate a memory block size: %d. width: %d, height: %d",
+			     *out_size, frame->width, frame->height);
+			goto fail;
+		}
+		const uint8_t* src = buffer[0];
+		uint8_t* dst = (uint8_t*)*out;
+
+		if (linesize != (size_t)linesizes[0]) {
+			for (size_t y = 0; y < (size_t)frame->height; y++) {
+				memcpy(dst, src, linesize);
+				dst += linesize;
+				src += linesizes[0];
+			}
+		}
+		else {
+			memcpy(dst, src, linesize * frame->height);
+		}
+		av_freep(&buffer);
+		return true;
+
 	} else {
 		ret = av_image_copy_to_buffer(
 			buffer[0], size, (const uint8_t *const *)frame->data,
@@ -560,7 +606,7 @@ static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
 		}
 	}
 
-	*out = buffer[0];
+	*out = (char *)buffer[0];
 	*out_size = size;
 
 	return true;
@@ -650,7 +696,7 @@ static mi_obj get_cover(media_info_t *mi)
 		return NULL;
 
 	for (unsigned int i = 0; i < mi->fmt->nb_streams; ++i) {
-		if (i == mi->cover_index)
+		if (i == (unsigned int)mi->cover_index)
 			mi->fmt->streams[i]->discard = AVDISCARD_DEFAULT;
 		else
 			mi->fmt->streams[i]->discard = AVDISCARD_ALL;
@@ -673,7 +719,7 @@ static mi_obj get_first_frame(media_info_t *mi)
 		return NULL;
 
 	for (unsigned int i = 0; i < mi->fmt->nb_streams; ++i) {
-		if (i == mi->video_index)
+		if (i == (unsigned int)mi->video_index)
 			mi->fmt->streams[i]->discard = AVDISCARD_DEFAULT;
 		else
 			mi->fmt->streams[i]->discard = AVDISCARD_ALL;
@@ -713,8 +759,8 @@ static bool id3v2_match(const uint8_t *buf, const char *magic)
 static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
 {
 	bool succeed = false;
-	char *header = NULL;
-	char *buffer = NULL;
+	unsigned char *header = NULL;
+	unsigned char *buffer = NULL;
 	AVIOContext *io = NULL;
 	AVIOInterruptCB io_interrupt_cb = {interrupt_callback, mi};
 
@@ -767,11 +813,11 @@ static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
 	memmove(buffer, header, ID3V2_HEADER_SIZE);
 
 	ret = avio_read(io, buffer + ID3V2_HEADER_SIZE, (int)body_size);
-	if (ret < body_size) {
+	if (ret < (int)body_size) {
 		blog(LOG_WARNING, "[mi] Fail to read ID3V2 body, ret %d.", ret);
 		goto fail;
 	}
-	mi->id3v2.data = buffer;
+	mi->id3v2.data = (char *)buffer;
 	mi->id3v2.size = (int)size;
 	blog(LOG_INFO, "[mi] Succeed to get ID3 : version %d, size %d.",
 	     header[3], mi->id3v2.size);
@@ -1108,7 +1154,7 @@ static inline bool init_files(media_remux_t *mr, const char *in_files,
 
 		qsort(files.array, files.num, sizeof(struct dstr), sort_path);
 
-		for (int i = 0; i < files.num; ++i) {
+		for (unsigned int i = 0; i < files.num; ++i) {
 			init_input(mr, files.array[i].array);
 			dstr_free(&files.array[i]);
 		}
@@ -1139,7 +1185,7 @@ static bool remux_internal(media_remux_t *mr)
 
 	AVPacket pkt;
 	bool success = false;
-	for (int i = 0; i < mr->mis.num; i++) {
+	for (unsigned int i = 0; i < mr->mis.num; i++) {
 		for (;;) {
 			AVFormatContext *ctx = mr->mis.array[i]->fmt;
 			ret = av_read_frame(ctx, &pkt);
@@ -1193,7 +1239,7 @@ void mi_remux_free(media_remux_t *mr)
 	if (mr->ofmt_ctx)
 		avformat_free_context(mr->ofmt_ctx);
 
-	for (int i = 0; i < mr->mis.num; i++) {
+	for (unsigned int i = 0; i < mr->mis.num; i++) {
 		mi_free(mr->mis.array[i]);
 	}
 

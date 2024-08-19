@@ -112,6 +112,18 @@ bool pls_source_dispatch_cef_js(const obs_source_t *source,
 	pls_source_invoke_func(cef_dispatch_js, event_name, json_data);
 }
 
+void pls_source_invoke_method(obs_source_t *source, const char *method)
+{
+	if (!source || !method)
+		return;
+
+	obs_data_t *data = obs_data_create();
+	obs_data_set_string(data, "method", method);
+
+	pls_source_set_private_data(source, data);
+	obs_data_release(data);
+}
+
 //---------------------------------------- alive module start ----------------------------------------
 pthread_mutex_t mutex_alive;
 DARRAY(void *) alive_list;
@@ -152,42 +164,6 @@ bool pls_is_alive(void *s)
 	pthread_mutex_unlock(&mutex_alive);
 
 	return alive;
-}
-
-void pls_destroy_all_sources()
-{
-	//------------------------ firstly free non-private-source --------------------------
-	DARRAY(struct obs_source *) release_list;
-	da_init(release_list);
-
-	pthread_mutex_lock(&obs->data.sources_mutex);
-	obs_source_t *source = obs->data.first_source;
-	while (source) {
-		if (!source->context.private)
-			da_push_back(release_list, &source);
-
-		source = (obs_source_t *)source->context.next;
-	}
-	pthread_mutex_unlock(&obs->data.sources_mutex);
-
-	for (size_t i = 0; i < release_list.num; ++i) {
-		struct obs_source *src = release_list.array[i];
-		blog(LOG_WARNING, "Freeing non-private source in shutdown : %p",
-		     src);
-
-		obs_source_destroy(src);
-	}
-	da_free(release_list);
-
-	//------------------------ then free left sources --------------------------
-	pthread_mutex_lock(&obs->data.sources_mutex);
-	while (obs->data.first_source) {
-		blog(LOG_WARNING, "Freeing left source in shutdown : %p",
-		     obs->data.first_source);
-
-		obs_source_destroy(obs->data.first_source);
-	}
-	pthread_mutex_unlock(&obs->data.sources_mutex);
 }
 
 //---------------------------------------- alive module end ----------------------------------------

@@ -21,6 +21,14 @@ EXPORT void blogex(bool kr, int log_level, const char *fields[][2],
 EXPORT void bexception(const char *process_name, const char *pid,
 		       const char *src);
 
+//PRISM/Zhongling/20230816/#2251/crash on `gl_update`
+#ifdef __APPLE__
+EXPORT void os_async_on_main_queue(void *context, void (*callback)(void *context));
+#endif
+
+//PRISM/Zhongling/20231122/#/add func stacks
+EXPORT void pls_get_func_stacks(char *info, size_t info_size, int max_layer);
+
 #ifdef __cplusplus
 }
 #endif

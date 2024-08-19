@@ -2,9 +2,17 @@
 #include <util/dstr.h>
 #include <util/threading.h>
 #include <util/windows/window-helpers.h>
+
 #include "dc-capture.h"
+#include "audio-helpers.h"
+#include "compat-helpers.h"
+#ifdef OBS_LEGACY
 #include "../../libobs/util/platform.h"
 #include "../../libobs-winrt/winrt-capture.h"
+#else
+#include <util/platform.h>
+#include <winrt-capture.h>
+#endif
 
 /* clang-format off */
 
@@ -74,6 +82,7 @@ typedef DPI_AWARENESS_CONTEXT(WINAPI *PFN_GetWindowDpiAwarenessContext)(HWND);
 
 struct window_capture {
 	obs_source_t *source;
+	obs_source_t *audio_source;
 
 	pthread_mutex_t update_mutex;
 
@@ -86,10 +95,14 @@ struct window_capture {
 	bool compatibility;
 	bool client_area;
 	bool force_sdr;
+	bool hooked;
+	bool capture_audio;
 
 	struct dc_capture capture;
 
 	bool previously_failed;
+	//PRISM/Xiewei/20240612/none/add logs for window capture
+	bool previously_visible;
 	void *winrt_module;
 	struct winrt_exports exports;
 	struct winrt_capture *capture_winrt;
@@ -115,9 +128,18 @@ static const char *wgc_partial_match_classes[] = {
 static const char *wgc_whole_match_classes[] = {
 	"ApplicationFrameWindow",
 	"Windows.UI.Core.CoreWindow",
-	"XLMAIN",        /* excel*/
-	"PPTFrameClass", /* powerpoint */
-	"OpusApp",       /* word */
+	"GAMINGSERVICESUI_HOSTING_WINDOW_CLASS",
+	"XLMAIN",            /* Microsoft Excel */
+	"PPTFrameClass",     /* Microsoft PowerPoint */
+	"screenClass",       /* Microsoft PowerPoint (Slide Show) */
+	"PodiumParent",      /* Microsoft PowerPoint (Presenter View) */
+	"OpusApp",           /* Microsoft Word */
+	"OMain",             /* Microsoft Access */
+	"Framework::CFrame", /* Microsoft OneNote */
+	"rctrl_renwnd32",    /* Microsoft Outlook */
+	"MSWinPub",          /* Microsoft Publisher */
+	"OfficeApp-Frame",   /* Microsoft 365 Software */
+	"SDL_app",
 	NULL,
 };
 
@@ -180,9 +202,12 @@ static void log_settings(struct window_capture *wc, obs_data_t *s)
 		     "[window-capture: '%s'] update settings:\n"
 		     "\texecutable: %s\n"
 		     "\tmethod selected: %s\n"
-		     "\tmethod chosen: %s\n",
+		     "\tmethod chosen: %s\n"
+		     "\tforce SDR: %s",
 		     obs_source_get_name(wc->source), wc->executable,
-		     get_method_name(method), get_method_name(wc->method));
+		     get_method_name(method), get_method_name(wc->method),
+		     (wc->force_sdr && (wc->method == METHOD_WGC)) ? "true"
+								   : "false");
 		blog(LOG_DEBUG, "\tclass:      %s", wc->class);
 	}
 }
@@ -221,14 +246,46 @@ static void update_settings(struct window_capture *wc, obs_data_t *s)
 	wc->method = choose_method(method, wgc_supported, wc->class);
 	wc->priority = (enum window_priority)priority;
 	wc->cursor = obs_data_get_bool(s, "cursor");
+	wc->capture_audio = obs_data_get_bool(s, "capture_audio");
 	wc->force_sdr = obs_data_get_bool(s, "force_sdr");
 	wc->compatibility = obs_data_get_bool(s, "compatibility");
 	wc->client_area = obs_data_get_bool(s, "client_area");
+
+	setup_audio_source(wc->source, &wc->audio_source, window,
+			   wc->capture_audio, wc->priority);
 
 	pthread_mutex_unlock(&wc->update_mutex);
 }
 
 /* ------------------------------------------------------------------------- */
+
+static void wc_get_hooked(void *data, calldata_t *cd)
+{
+	struct window_capture *wc = data;
+	if (!wc)
+		return;
+
+	if (wc->hooked && wc->window) {
+		calldata_set_bool(cd, "hooked", true);
+		struct dstr title = {0};
+		struct dstr class = {0};
+		struct dstr executable = {0};
+		ms_get_window_title(&title, wc->window);
+		ms_get_window_class(&class, wc->window);
+		ms_get_window_exe(&executable, wc->window);
+		calldata_set_string(cd, "title", title.array);
+		calldata_set_string(cd, "class", class.array);
+		calldata_set_string(cd, "executable", executable.array);
+		dstr_free(&title);
+		dstr_free(&class);
+		dstr_free(&executable);
+	} else {
+		calldata_set_bool(cd, "hooked", false);
+		calldata_set_string(cd, "title", "");
+		calldata_set_string(cd, "class", "");
+		calldata_set_string(cd, "executable", "");
+	}
+}
 
 static const char *wc_getname(void *unused)
 {
@@ -313,6 +370,22 @@ static void *wc_create(obs_data_t *settings, obs_source_t *source)
 				get_window_dpi_awareness_context;
 		}
 	}
+	wc->hooked = false;
+
+	signal_handler_t *sh = obs_source_get_signal_handler(source);
+	signal_handler_add(sh, "void unhooked(ptr source)");
+	signal_handler_add(
+		sh,
+		"void hooked(ptr source, string title, string class, string executable)");
+
+	proc_handler_t *ph = obs_source_get_proc_handler(source);
+	proc_handler_add(
+		ph,
+		"void get_hooked(out bool hooked, out string title, out string class, out string executable)",
+		wc_get_hooked, wc);
+
+	signal_handler_connect(sh, "rename", rename_audio_source,
+			       &wc->audio_source);
 
 	update_settings(wc, settings);
 	log_settings(wc, settings);
@@ -345,7 +418,15 @@ static void wc_actual_destroy(void *data)
 
 static void wc_destroy(void *data)
 {
-	obs_queue_task(OBS_TASK_GRAPHICS, wc_actual_destroy, data, false);
+	struct window_capture *wc = data;
+	if (wc->audio_source)
+		destroy_audio_source(wc->source, &wc->audio_source);
+
+	signal_handler_t *sh = obs_source_get_signal_handler(wc->source);
+	signal_handler_disconnect(sh, "rename", rename_audio_source,
+				  &wc->audio_source);
+
+	obs_queue_task(OBS_TASK_GRAPHICS, wc_actual_destroy, wc, false);
 }
 
 static void force_reset(struct window_capture *wc)
@@ -367,9 +448,18 @@ static void wc_update(void *data, obs_data_t *settings)
 	force_reset(wc);
 }
 
+static bool window_normal(struct window_capture *wc)
+{
+	return (IsWindow(wc->window) && !IsIconic(wc->window));
+}
+
 static uint32_t wc_width(void *data)
 {
 	struct window_capture *wc = data;
+
+	if (!window_normal(wc))
+		return 0;
+
 	return (wc->method == METHOD_WGC)
 		       ? wc->exports.winrt_capture_width(wc->capture_winrt)
 		       : wc->capture.width;
@@ -378,6 +468,10 @@ static uint32_t wc_width(void *data)
 static uint32_t wc_height(void *data)
 {
 	struct window_capture *wc = data;
+
+	if (!window_normal(wc))
+		return 0;
+
 	return (wc->method == METHOD_WGC)
 		       ? wc->exports.winrt_capture_height(wc->capture_winrt)
 		       : wc->capture.height;
@@ -401,8 +495,9 @@ static void update_settings_visibility(obs_properties_t *props,
 	const bool bitblt_options = method == METHOD_BITBLT;
 	const bool wgc_options = method == METHOD_WGC;
 
+	//PRISM/Xiewei/20240308/#4063/fix a crash caused by executing a null pointer function
 	const bool wgc_cursor_toggle =
-		wgc_options &&
+		wgc_options && wc->capture_winrt &&
 		wc->exports.winrt_capture_cursor_toggle_supported();
 
 	obs_property_t *p = obs_properties_get(props, "cursor");
@@ -420,6 +515,26 @@ static void update_settings_visibility(obs_properties_t *props,
 	pthread_mutex_unlock(&wc->update_mutex);
 }
 
+static void wc_check_compatibility(struct window_capture *wc,
+				   obs_properties_t *props)
+{
+	obs_property_t *p_warn = obs_properties_get(props, "compat_info");
+
+	struct compat_result *compat =
+		check_compatibility(wc->title, wc->class, wc->executable,
+				    (enum source_type)wc->method);
+	if (!compat) {
+		obs_property_set_visible(p_warn, false);
+		return;
+	}
+
+	obs_property_set_long_description(p_warn, compat->message);
+	obs_property_text_set_info_type(p_warn, compat->severity);
+	obs_property_set_visible(p_warn, true);
+
+	compat_result_free(compat);
+}
+
 static bool wc_capture_method_changed(obs_properties_t *props,
 				      obs_property_t *p, obs_data_t *settings)
 {
@@ -432,6 +547,8 @@ static bool wc_capture_method_changed(obs_properties_t *props,
 	update_settings(wc, settings);
 
 	update_settings_visibility(props, wc);
+
+	wc_check_compatibility(wc, props);
 
 	return true;
 }
@@ -448,6 +565,9 @@ static bool wc_window_changed(obs_properties_t *props, obs_property_t *p,
 	update_settings_visibility(props, wc);
 
 	ms_check_window_property_setting(props, p, settings, "window", 0);
+
+	wc_check_compatibility(wc, props);
+
 	return true;
 }
 
@@ -480,6 +600,15 @@ static obs_properties_t *wc_properties(void *data)
 	obs_property_list_add_int(p, TEXT_MATCH_CLASS, WINDOW_PRIORITY_CLASS);
 	obs_property_list_add_int(p, TEXT_MATCH_EXE, WINDOW_PRIORITY_EXE);
 
+	p = obs_properties_add_text(ppts, "compat_info", NULL, OBS_TEXT_INFO);
+	obs_property_set_enabled(p, false);
+
+	if (audio_capture_available()) {
+		p = obs_properties_add_bool(ppts, "capture_audio",
+					    TEXT_CAPTURE_AUDIO);
+		obs_property_set_long_description(p, TEXT_CAPTURE_AUDIO_TT);
+	}
+
 	obs_properties_add_bool(ppts, "cursor", TEXT_CAPTURE_CURSOR);
 
 	obs_properties_add_bool(ppts, "compatibility", TEXT_COMPATIBILITY);
@@ -501,6 +630,17 @@ static void wc_hide(void *data)
 	}
 
 	memset(&wc->last_rect, 0, sizeof(wc->last_rect));
+
+	if (wc->hooked) {
+		wc->hooked = false;
+
+		signal_handler_t *sh =
+			obs_source_get_signal_handler(wc->source);
+		calldata_t data = {0};
+		calldata_set_ptr(&data, "source", wc->source);
+		signal_handler_signal(sh, "unhooked", &data);
+		calldata_free(&data);
+	}
 }
 
 static void wc_tick(void *data, float seconds)
@@ -513,6 +653,17 @@ static void wc_tick(void *data, float seconds)
 		return;
 
 	if (!wc->window || !IsWindow(wc->window)) {
+		if (wc->hooked) {
+			wc->hooked = false;
+
+			signal_handler_t *sh =
+				obs_source_get_signal_handler(wc->source);
+			calldata_t data = {0};
+			calldata_set_ptr(&data, "source", wc->source);
+			signal_handler_signal(sh, "unhooked", &data);
+			calldata_free(&data);
+		}
+
 		if (!wc->title && !wc->class) {
 			if (wc->capture.valid)
 				dc_capture_free(&wc->capture);
@@ -553,9 +704,25 @@ static void wc_tick(void *data, float seconds)
 		reset_capture = true;
 
 	} else if (IsIconic(wc->window) || !IsWindowVisible(wc->window)) {
+		//PRISM/Xiewei/20240612/none/add logs for window capture
+		if (wc->previously_visible) {
+			wc->previously_visible = false;
+			blog(LOG_INFO,
+			     "[window-capture: '%s'] [obs_source:%p plugin_obj:%p] '%s' is invisible now.",
+			     obs_source_get_name(wc->source), wc->source, wc,
+			     wc->executable);
+		}
 		return; /* If HWND is invisible, WGC module can't be initialized successfully */
 	}
 
+	//PRISM/Xiewei/20240612/none/add logs for window capture
+	if (!wc->previously_visible) {
+		wc->previously_visible = true;
+		blog(LOG_INFO,
+		     "[window-capture: '%s'] [obs_source:%p plugin_obj:%p] '%s' is visible now.",
+		     obs_source_get_name(wc->source), wc->source, wc,
+		     wc->executable);
+	}
 	wc->cursor_check_time += seconds;
 	if (wc->cursor_check_time >= CURSOR_CHECK_TIME) {
 		DWORD foreground_pid, target_pid;
@@ -575,6 +742,17 @@ static void wc_tick(void *data, float seconds)
 		    !wc->exports.winrt_capture_show_cursor(wc->capture_winrt,
 							   !cursor_hidden)) {
 			force_reset(wc);
+			if (wc->hooked) {
+				wc->hooked = false;
+
+				signal_handler_t *sh =
+					obs_source_get_signal_handler(
+						wc->source);
+				calldata_t data = {0};
+				calldata_set_ptr(&data, "source", wc->source);
+				signal_handler_signal(sh, "unhooked", &data);
+				calldata_free(&data);
+			}
 			return;
 		}
 
@@ -619,6 +797,35 @@ static void wc_tick(void *data, float seconds)
 					rect.right - rect.left,
 					rect.bottom - rect.top, wc->cursor,
 					wc->compatibility);
+			if (!wc->hooked && wc->capture.valid) {
+				wc->hooked = true;
+
+				signal_handler_t *sh =
+					obs_source_get_signal_handler(
+						wc->source);
+				calldata_t data = {0};
+				struct dstr title = {0};
+				struct dstr class = {0};
+				struct dstr executable = {0};
+
+				ms_get_window_title(&title, wc->window);
+				ms_get_window_class(&class, wc->window);
+				ms_get_window_exe(&executable, wc->window);
+
+				calldata_set_ptr(&data, "source", wc->source);
+				calldata_set_string(&data, "title",
+						    title.array);
+				calldata_set_string(&data, "class",
+						    class.array);
+				calldata_set_string(&data, "executable",
+						    executable.array);
+				signal_handler_signal(sh, "hooked", &data);
+
+				dstr_free(&title);
+				dstr_free(&class);
+				dstr_free(&executable);
+				calldata_free(&data);
+			}
 		}
 
 		dc_capture_capture(&wc->capture, wc->window);
@@ -635,6 +842,37 @@ static void wc_tick(void *data, float seconds)
 
 				if (!wc->capture_winrt) {
 					wc->previously_failed = true;
+				} else if (!wc->hooked) {
+					wc->hooked = true;
+
+					signal_handler_t *sh =
+						obs_source_get_signal_handler(
+							wc->source);
+					calldata_t data = {0};
+					struct dstr title = {0};
+					struct dstr class = {0};
+					struct dstr executable = {0};
+
+					ms_get_window_title(&title, wc->window);
+					ms_get_window_class(&class, wc->window);
+					ms_get_window_exe(&executable,
+							  wc->window);
+
+					calldata_set_ptr(&data, "source",
+							 wc->source);
+					calldata_set_string(&data, "title",
+							    title.array);
+					calldata_set_string(&data, "class",
+							    class.array);
+					calldata_set_string(&data, "executable",
+							    executable.array);
+					signal_handler_signal(sh, "hooked",
+							      &data);
+
+					dstr_free(&title);
+					dstr_free(&class);
+					dstr_free(&executable);
+					calldata_free(&data);
 				}
 			}
 		}
@@ -646,6 +884,10 @@ static void wc_tick(void *data, float seconds)
 static void wc_render(void *data, gs_effect_t *effect)
 {
 	struct window_capture *wc = data;
+
+	if (!window_normal(wc))
+		return;
+
 	if (wc->method == METHOD_WGC) {
 		if (wc->capture_winrt) {
 			if (wc->exports.winrt_capture_active(
@@ -691,11 +933,18 @@ wc_get_color_space(void *data, size_t count,
 	return space;
 }
 
+static void wc_child_enum(void *data, obs_source_enum_proc_t cb, void *param)
+{
+	struct window_capture *wc = data;
+	if (wc->audio_source)
+		cb(wc->source, wc->audio_source, param);
+}
+
 struct obs_source_info window_capture_info = {
 	.id = "window_capture",
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-			OBS_SOURCE_SRGB,
+	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO |
+			OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB,
 	.get_name = wc_getname,
 	.create = wc_create,
 	.destroy = wc_destroy,
@@ -707,6 +956,7 @@ struct obs_source_info window_capture_info = {
 	.get_height = wc_height,
 	.get_defaults = wc_defaults,
 	.get_properties = wc_properties,
+	.enum_active_sources = wc_child_enum,
 	.icon_type = OBS_ICON_TYPE_WINDOW_CAPTURE,
 	.video_get_color_space = wc_get_color_space,
 };

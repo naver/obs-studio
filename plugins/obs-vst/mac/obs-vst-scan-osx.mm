@@ -5,14 +5,6 @@
 
 #define TEST_SAMPLERATE 48000
 
-struct util_api_exports{
-    process_create pls_process_create;
-    process_destroy pls_process_destroy;
-    current_process_id pls_current_process_id;
-    process_terminate pls_process_terminate;
-};
-
-util_api_exports exports;
 void *process_handle = nullptr;
 void *module_handle = nullptr;
 CFBundleRef bundle    = NULL;
@@ -26,7 +18,7 @@ float **inputs      = nullptr;
 float **outputs     = nullptr;
 float **channelrefs = nullptr;
         
-void *utils_api_import(void *module, const char *func, bool *success)
+void utils_api_import(void *module, const char *func, bool *success)
 {
     void *handle = os_dlsym(module, func);
     if(!handle){
@@ -145,7 +137,7 @@ bool InitEffect(const char *path, int *result)
 	if (!effect) {
 		CFRelease(pluginPathStringRef);
 		CFRelease(bundle);
-		*result = VST_STATUS_UNKNOWN_ERROR;
+		*result = VST_STATUS_EFFECT_NULLPTR;
 		return false;
 	}
 
@@ -182,7 +174,7 @@ bool CheckEffect(int *result)
 	inputs          = (float **)malloc(sizeof(float *) * numChannels);
 	outputs         = (float **)malloc(sizeof(float *) * numChannels);
 	channelrefs     = (float **)malloc(sizeof(float *) * numChannels);
-	for (size_t channel = 0; channel < numChannels; channel++) {
+	for (int channel = 0; channel < numChannels; channel++) {
 		inputs[channel]      = (float *)malloc(sizeof(float) * blocksize);
 		outputs[channel]     = (float *)malloc(sizeof(float) * blocksize);
 		channelrefs[channel] = (float *)malloc(sizeof(float) * blocksize);

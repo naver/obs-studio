@@ -62,6 +62,8 @@ public:
 	void buildEffectContainer(AEffect *effect);
 	void closeEvent(QCloseEvent *event) override;
 	void handleResizeRequest(int width, int height);
+	//PRISM/Xiewei/20231219/3637/add log
+	void showEvent(QShowEvent *event) override;
 
 public slots:
 	void resizeWindow(int width, int heigh);
