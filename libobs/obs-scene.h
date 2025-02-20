@@ -91,6 +91,18 @@ struct obs_scene_item {
 	/* would do **prev_next, but not really great for reordering */
 	struct obs_scene_item *prev;
 	struct obs_scene_item *next;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	bool is_vertical;
+};
+
+struct scene_source_mix {
+	obs_source_t *source;
+	obs_source_t *transition;
+	size_t pos;
+	size_t count;
+	bool apply_buf;
+	float buf[AUDIO_OUTPUT_FRAMES];
 };
 
 struct obs_scene {
@@ -107,6 +119,10 @@ struct obs_scene {
 	pthread_mutex_t audio_mutex;
 	struct obs_scene_item *first_item;
 
+	DARRAY(struct scene_source_mix) mix_sources;
+
 	//PRISM/ZengQin/20230201/#none/for DrawPen feature.
 	gs_texture_t *canvas_texture;
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	bool is_vertical;
 };

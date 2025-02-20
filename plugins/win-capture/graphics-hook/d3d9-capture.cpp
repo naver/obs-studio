@@ -592,6 +592,9 @@ static void d3d9_capture(IDirect3DDevice9 *device,
 			d3d9_shtex_capture(backbuffer);
 		else
 			d3d9_shmem_capture(backbuffer);
+
+		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+		send_game_render_type("d3d9");
 	}
 }
 

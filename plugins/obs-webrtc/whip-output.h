@@ -37,13 +37,17 @@ private:
 	void StartThread();
 	void SendDelete();
 	void StopThread(bool signal);
+	void ParseLinkHeader(std::string linkHeader,
+			     std::vector<rtc::IceServer> &iceServers);
 
 	void Send(void *data, uintptr_t size, uint64_t duration,
 		  std::shared_ptr<rtc::Track> track,
 		  std::shared_ptr<rtc::RtcpSrReporter> rtcp_sr_reporter);
 
+	//PRISM/FanZirong//20241206/PRISM_PC-1715/print libdatachannel log
+	static void OnRtcLog(rtcLogLevel level, const char *message);
+
 	obs_output_t *output;
-	bool is_av1;
 
 	std::string endpoint_url;
 	std::string bearer_token;

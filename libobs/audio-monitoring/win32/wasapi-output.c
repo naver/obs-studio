@@ -7,6 +7,10 @@
 
 #include "wasapi-output.h"
 
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+#include <pls/pls-base.h>
+
+
 #define ACTUALLY_DEFINE_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
 	EXTERN_C const GUID DECLSPEC_SELECTANY                                \
 		name = {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}}
@@ -14,6 +18,13 @@
 #define do_log(level, format, ...)                      \
 	blog(level, "[audio monitoring: '%s'] " format, \
 	     obs_source_get_name(monitor->source), ##__VA_ARGS__)
+
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+#define do_logex(kr, level, fields, field_count, format, ...)                      \
+	blogex(kr, level, fields, field_count,                \
+	       "[audio monitoring: '%s'] " format, \
+	     obs_source_get_name(monitor->source), ##__VA_ARGS__)
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 
 #define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
@@ -54,6 +65,9 @@ struct audio_monitor {
 	//PRISM/FanZirong/20230809/#2220/reduce log
 	bool active_device_failed;
 	bool initialize_client_failed;
+
+	//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+	bool is_first_audio_playback;
 };
 
 /* #define DEBUG_AUDIO */
@@ -410,6 +424,18 @@ static void on_audio_playback(void *param, obs_source_t *source,
 		goto free_for_reconnect;
 	}
 
+	//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+	if (monitor->is_first_audio_playback) {
+		char monitor_p[50];
+		snprintf(monitor_p, sizeof(monitor_p), "%p", monitor);
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+					   {"monitor", monitor_p}};
+		do_logex(false, LOG_INFO, fields, 2,
+			 "[monitor: %p]first audio playback", monitor);
+
+		monitor->is_first_audio_playback = false;
+	}
+
 	goto unlock;
 
 free_for_reconnect:
@@ -420,6 +446,14 @@ unlock:
 
 static inline void audio_monitor_free(struct audio_monitor *monitor)
 {
+	//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+	char monitor_p[50];
+	snprintf(monitor_p, sizeof(monitor_p), "%p", monitor);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"monitor", monitor_p}};
+	do_logex(false, LOG_INFO, fields, 2, "[monitor: %p]audio_monitor_free",
+		 monitor);
+
 	if (monitor->ignore)
 		return;
 
@@ -444,6 +478,16 @@ static bool audio_monitor_init(struct audio_monitor *monitor,
 			       obs_source_t *source)
 {
 	monitor->source = source;
+
+	//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+	char monitor_p[50];
+	snprintf(monitor_p, sizeof(monitor_p), "%p", monitor);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"monitor", monitor_p}};
+	do_logex(false, LOG_INFO, fields, 2, "[monitor: %p]audio_monitor_init",
+		 monitor);
+
+	monitor->is_first_audio_playback = true;
 
 	const char *id = obs->audio.monitoring_device_id;
 	if (!id) {

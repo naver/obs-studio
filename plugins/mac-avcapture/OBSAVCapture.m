@@ -75,7 +75,16 @@
             dispatch_async(_sessionQueue, ^{
                 NSError *error = nil;
 
-                OBSAVCapture *instance = weakSelf;
+				OBSAVCapture *instance = weakSelf;
+				if (!instance) {
+					return;
+				}
+
+				//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+				obs_source_t *strong_source = obs_source_get_ref(instance.captureInfo->source);
+				if (!strong_source) {
+					return;
+				}
 
                 if ([instance createSession:&error]) {
                     if ([instance switchCaptureDevice:UUID withError:nil]) {
@@ -94,6 +103,9 @@
                 } else {
                     [instance AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
                 }
+				
+				//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+				obs_source_release(strong_source);
             });
         }
     }
@@ -376,7 +388,9 @@
             self.captureInfo->previousSurface = NULL;
         }
     } else {
-        obs_source_output_video(self.captureInfo->source, NULL);
+        if (self.captureInfo->source) {
+            obs_source_output_video(self.captureInfo->source, NULL);
+        }
     }
 }
 
@@ -1030,6 +1044,12 @@
     NSString *presetName = [OBSAVCapture stringFromSettings:self.captureInfo->settings withSetting:@"preset"];
     BOOL isPresetEnabled = obs_data_get_bool(self.captureInfo->settings, "use_preset");
     BOOL isFastPath = self.captureInfo->isFastPath;
+	
+	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+	obs_source_t *strong_source = obs_source_get_ref(self.captureInfo->source);
+	if (!strong_source) {
+		return;
+	}
 
     if ([self switchCaptureDevice:device.uniqueID withError:&error]) {
         BOOL success;
@@ -1044,13 +1064,23 @@
                 [self startCaptureSession];
             });
         } else {
-            [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
+		//PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
+		if (error.localizedDescription) {
+			[self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
+		}
+            
         }
     } else {
-        [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
+	    //PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
+	    if (error.localizedDescription) {
+		    [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
+	    }
     }
 
     obs_source_update_properties(self.captureInfo->source);
+	
+	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+	obs_source_release(strong_source);
 }
 
 - (void)deviceDisconnected:(NSNotification *)notification
@@ -1080,7 +1110,12 @@
     dispatch_async(self.sessionQueue, ^{
         OBSAVCapture *instance = weakSelf;
 
-        [instance stopCaptureSession];
+		//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+		obs_source_t *strong_source = obs_source_get_ref(instance.captureInfo->source);
+		if (strong_source) {
+			[instance stopCaptureSession];
+			obs_source_release(strong_source);
+		}
         [instance.session removeInput:instance.deviceInput];
 
         instance.deviceInput = nil;

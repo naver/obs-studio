@@ -46,6 +46,7 @@ struct obs_scene;
 struct obs_scene_item;
 struct obs_output;
 struct obs_encoder;
+struct obs_encoder_group;
 struct obs_service;
 struct obs_module;
 struct obs_fader;
@@ -59,6 +60,7 @@ typedef struct obs_scene obs_scene_t;
 typedef struct obs_scene_item obs_sceneitem_t;
 typedef struct obs_output obs_output_t;
 typedef struct obs_encoder obs_encoder_t;
+typedef struct obs_encoder_group obs_encoder_group_t;
 typedef struct obs_service obs_service_t;
 typedef struct obs_module obs_module_t;
 typedef struct obs_fader obs_fader_t;
@@ -958,6 +960,7 @@ EXPORT video_t *obs_view_add(obs_view_t *view);
 /** Adds a view to the main render loop, with custom video settings */
 EXPORT video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi);
 
+
 /** Removes a view from the main render loop */
 EXPORT void obs_view_remove(obs_view_t *view);
 
@@ -1816,6 +1819,12 @@ EXPORT bool obs_source_is_scene(const obs_source_t *source);
 /** Adds/creates a new scene item for a source */
 EXPORT obs_sceneitem_t *obs_scene_add(obs_scene_t *scene, obs_source_t *source);
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+EXPORT obs_sceneitem_t *obs_scene_add_vertical(obs_scene_t *scene,
+					       obs_source_t *source,
+					       obs_sceneitem_t *insert_after,
+					       obs_data_t *settings);
+
 typedef void (*obs_scene_atomic_update_func)(void *, obs_scene_t *scene);
 EXPORT void obs_scene_atomic_update(obs_scene_t *scene,
 				    obs_scene_atomic_update_func func,
@@ -2576,6 +2585,13 @@ EXPORT void obs_encoder_set_audio(obs_encoder_t *encoder, audio_t *audio);
 EXPORT video_t *obs_encoder_video(const obs_encoder_t *encoder);
 
 /**
+ * Returns the parent video output context used with this encoder, or NULL if not
+ * a video context. Used when an FPS divisor is set, where the original video
+ * context would not otherwise be gettable.
+ */
+EXPORT video_t *obs_encoder_parent_video(const obs_encoder_t *encoder);
+
+/**
  * Returns the audio output context used with this encoder, or NULL if not
  * a audio context
  */
@@ -2616,6 +2632,17 @@ EXPORT void obs_encoder_set_last_error(obs_encoder_t *encoder,
 				       const char *message);
 
 EXPORT uint64_t obs_encoder_get_pause_offset(const obs_encoder_t *encoder);
+
+/**
+ * Creates an "encoder group", allowing synchronized startup of encoders within
+ * the group. Encoder groups are single owner, and hold strong references to
+ * encoders within the group. Calling destroy on an active group will not actually
+ * destroy the group until it becomes completely inactive.
+ */
+EXPORT bool obs_encoder_set_group(obs_encoder_t *encoder,
+				  obs_encoder_group_t *group);
+EXPORT obs_encoder_group_t *obs_encoder_group_create();
+EXPORT void obs_encoder_group_destroy(obs_encoder_group_t *group);
 
 /* ------------------------------------------------------------------------- */
 /* Stream Services */
@@ -2774,6 +2801,14 @@ EXPORT enum obs_icon_type obs_source_get_icon_type(const char *id);
 
 //PRISM/FanZirong/20231227/noissue/add log
 EXPORT void obs_source_notify_update(obs_source_t *source, uint64_t update_time);
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+/** Gets video info by index*/
+EXPORT size_t obs_get_video_info_count();
+EXPORT bool obs_get_video_info_by_index(size_t index,
+					struct obs_video_info *ovi);
+/** Gets video info currently being rendired*/
+EXPORT bool obs_get_video_info_current(struct obs_video_info *ovi);
 
 #ifdef __cplusplus
 }

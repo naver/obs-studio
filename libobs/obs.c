@@ -23,6 +23,10 @@
 #include "obs.h"
 #include "obs-internal.h"
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+#include "pls/pls-dual-output.h"
+#include "pls/pls-dual-output-internal.h"
+
 struct obs_core *obs = NULL;
 
 static THREAD_LOCAL bool is_ui_thread = false;
@@ -483,8 +487,10 @@ static bool obs_init_textures(struct obs_core_video_mix *video)
 		break;
 	}
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info *ovi = video->ovi;
 	video->render_texture =
-		gs_texture_create(video->ovi.base_width, video->ovi.base_height,
+		gs_texture_create(ovi->base_width, ovi->base_height,
 				  format, 1, NULL, GS_RENDER_TARGET);
 	if (!video->render_texture)
 		success = false;
@@ -682,16 +688,18 @@ static int obs_init_video_mix(struct obs_video_info *ovi,
 	pthread_mutex_init_value(&video->gpu_encoder_mutex);
 
 	make_video_info(&vi, ovi);
-	video->ovi = *ovi;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	video->ovi = ovi;
 
 	/* main view graphics thread drives all frame output,
 	 * so share FPS settings for aux views */
 	pthread_mutex_lock(&obs->video.mixes_mutex);
 	size_t num = obs->video.mixes.num;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	if (num && obs->video.main_mix) {
-		struct obs_video_info main_ovi = obs->video.main_mix->ovi;
-		video->ovi.fps_num = main_ovi.fps_num;
-		video->ovi.fps_den = main_ovi.fps_den;
+		struct obs_video_info main_ovi = *(obs->video.main_mix->ovi);
+		video->ovi->fps_num = main_ovi.fps_num;
+		video->ovi->fps_den = main_ovi.fps_den;
 	}
 	pthread_mutex_unlock(&obs->video.mixes_mutex);
 
@@ -732,6 +740,11 @@ struct obs_core_video_mix *obs_create_video_mix(struct obs_video_info *ovi)
 {
 	struct obs_core_video_mix *video =
 		bzalloc(sizeof(struct obs_core_video_mix));
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	video->ovi = ovi;
+	assert(ovi != NULL);
+
 	if (obs_init_video_mix(ovi, video) != OBS_VIDEO_SUCCESS) {
 		bfree(video);
 		video = NULL;
@@ -739,25 +752,73 @@ struct obs_core_video_mix *obs_create_video_mix(struct obs_video_info *ovi)
 	return video;
 }
 
-static int obs_init_video(struct obs_video_info *ovi)
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+static void obs_free_graphics(void);
+static int obs_init_video()
 {
 	struct obs_core_video *video = &obs->video;
 
-	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: video=%p", ovi, __FUNCTION__, video);
+	if (video->canvases.num == 0) {
+		video->thread_initialized = false;
+		return OBS_VIDEO_SUCCESS;
+	}
+
+	if (!obs->video.graphics) {
+		int errorcode = obs_init_graphics(obs->video.canvases.array[0]->ovi);
+		if (errorcode != OBS_VIDEO_SUCCESS) {
+			obs_free_graphics();
+			return errorcode;
+		}
+	}
+
+	blog(LOG_INFO, "[VIDEO_CANVAS] wait obs_graphics_thread to stop");
+	pthread_join(video->video_thread, NULL);
+
+	uint32_t max_fps_den = 0;
+	uint32_t max_fps_num = 1;
+	for (size_t i = 0, num = obs->video.canvases.num; i < num; i++) {
+		struct obs_video_info_v2 *ovi = obs->video.canvases.array[i];
+
+		if (!ovi->initialized)
+			continue;
+
+		if (ovi->ovi->fps_den / ovi->ovi->fps_den > max_fps_den / max_fps_num) {
+			max_fps_den = ovi->ovi->fps_den;
+			max_fps_num = ovi->ovi->fps_num;
+		}
+	}
 
 	video->video_frame_interval_ns =
-		util_mul_div64(1000000000ULL, ovi->fps_den, ovi->fps_num);
+		util_mul_div64(1000000000ULL, max_fps_den, max_fps_num);
 	video->video_half_frame_interval_ns =
-		util_mul_div64(500000000ULL, ovi->fps_den, ovi->fps_num);
+		util_mul_div64(500000000ULL, max_fps_den, max_fps_num);
 
 	if (pthread_mutex_init(&video->task_mutex, NULL) < 0)
+		return OBS_VIDEO_FAIL;
+	if (pthread_mutex_init(&video->encoder_group_mutex, NULL) < 0)
 		return OBS_VIDEO_FAIL;
 	if (pthread_mutex_init(&video->mixes_mutex, NULL) < 0)
 		return OBS_VIDEO_FAIL;
 
-	if (!obs_view_add2(&obs->data.main_view, ovi))
-		return OBS_VIDEO_FAIL;
+	blog(LOG_INFO, "[VIDEO_CANVAS] init with canvases %zu",
+	     obs->video.canvases.num);
+
+	for (size_t i = 0, num = obs->video.canvases.num; i < num; i++) {
+		struct obs_video_info_v2 *ovi = obs->video.canvases.array[i];
+
+		if (!ovi->initialized)
+			continue;
+
+		video_t *v = obs_view_add2(&obs->data.main_view, ovi->ovi);
+
+		blog(LOG_INFO,
+		     "[CANVAS]: %s: ovi=%p, ovi_v2=%p, num=%d, video=%p", ovi->ovi,
+		     ovi, __FUNCTION__, i, v);
+
+		if (!v)
+			return OBS_VIDEO_FAIL;
+	}
+
 
 	int errorcode;
 #ifdef __APPLE__
@@ -883,10 +944,11 @@ void obs_free_video_mix(struct obs_core_video_mix *video)
 	bfree(video);
 }
 
-static void obs_free_video(void)
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+static void obs_free_video(bool full_clean)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%s", __FUNCTION__);
+	blog(LOG_INFO, "%s: full_clean=%d", __FUNCTION__, full_clean);
 
 	pthread_mutex_lock(&obs->video.mixes_mutex);
 	size_t num_views = 0;
@@ -897,13 +959,52 @@ static void obs_free_video(void)
 		obs_free_video_mix(video);
 		obs->video.mixes.array[i] = NULL;
 	}
+	da_free(obs->video.mixes);
 	if (num_views > 0)
 		blog(LOG_WARNING, "Number of remaining views: %ld", num_views);
+	
+	
+	
 	pthread_mutex_unlock(&obs->video.mixes_mutex);
 
-	pthread_mutex_destroy(&obs->video.mixes_mutex);
-	pthread_mutex_init_value(&obs->video.mixes_mutex);
-	da_free(obs->video.mixes);
+	
+	//PRISM/FanZirong/20240813/none/mixes_mutex cannot be destroyed frequently
+	//pthread_mutex_destroy(&obs->video.mixes_mutex);
+	//pthread_mutex_init_value(&obs->video.mixes_mutex);
+
+	for (size_t i = 0; i < obs->video.ready_encoder_groups.num; i++) {
+		obs_weak_encoder_release(
+			obs->video.ready_encoder_groups.array[i]);
+	}
+	da_free(obs->video.ready_encoder_groups);
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (full_clean) {
+		pthread_mutex_lock(&obs->video.canvases_mutex);
+		size_t num = obs->video.canvases.num;
+		for (size_t i = 0; i < num; i++) {
+			bfree(obs->video.canvases.array[i]);
+			obs->video.canvases.array[i] = NULL;
+		}
+		da_free(obs->video.canvases);
+		pthread_mutex_unlock(&obs->video.canvases_mutex);
+		pthread_mutex_destroy(&obs->video.canvases_mutex);
+		pthread_mutex_init_value(&obs->video.canvases_mutex);
+
+		pthread_mutex_lock(&obs->video.thirdpart_ovi_mutex);
+		num = obs->video.thirdpart_ovi_pool.num;
+		for (size_t i = 0; i < num; i++) {
+			bfree(obs->video.thirdpart_ovi_pool.array[i]);
+			obs->video.thirdpart_ovi_pool.array[i] = NULL;
+		}
+		da_free(obs->video.thirdpart_ovi_pool);
+		pthread_mutex_unlock(&obs->video.thirdpart_ovi_mutex);
+		pthread_mutex_destroy(&obs->video.thirdpart_ovi_mutex);
+		pthread_mutex_init_value(&obs->video.thirdpart_ovi_mutex);
+	}
+
+	pthread_mutex_destroy(&obs->video.encoder_group_mutex);
+	pthread_mutex_init_value(&obs->video.encoder_group_mutex);
 
 	pthread_mutex_destroy(&obs->video.task_mutex);
 	pthread_mutex_init_value(&obs->video.task_mutex);
@@ -1129,6 +1230,8 @@ static const char *obs_signals[] = {
 	"void source_hide(ptr source)",
 	"void source_audio_activate(ptr source)",
 	"void source_audio_deactivate(ptr source)",
+	"void source_filter_add(ptr source, ptr filter)",
+	"void source_filter_remove(ptr source, ptr filter)",
 	"void source_rename(ptr source, string new_name, string prev_name)",
 	"void source_volume(ptr source, in out float volume)",
 	"void source_volume_level(ptr source, float level, float magnitude, "
@@ -1265,6 +1368,7 @@ static bool obs_init(const char *locale, const char *module_config_path,
 	pthread_mutex_init_value(&obs->audio.monitoring_mutex);
 	pthread_mutex_init_value(&obs->audio.task_mutex);
 	pthread_mutex_init_value(&obs->video.task_mutex);
+	pthread_mutex_init_value(&obs->video.encoder_group_mutex);
 	pthread_mutex_init_value(&obs->video.mixes_mutex);
 
 	obs->name_store_owned = !store;
@@ -1294,6 +1398,13 @@ static bool obs_init(const char *locale, const char *module_config_path,
 	obs_register_source(&group_info);
 	obs_register_source(&audio_line_info);
 	add_default_module_paths();
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	da_init(obs->video.canvases);
+	da_init(obs->video.thirdpart_ovi_pool);
+	pthread_mutex_init_value(&obs->video.canvases_mutex);
+	pthread_mutex_init_value(&obs->video.thirdpart_ovi_mutex);
+
 	return true;
 }
 
@@ -1462,7 +1573,8 @@ void obs_shutdown(void)
 
 	obs_free_data();
 	obs_free_audio();
-	obs_free_video();
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_free_video(true);
 	os_task_queue_destroy(obs->destruction_task_thread);
 	obs_free_hotkeys();
 	obs_free_graphics();
@@ -1546,39 +1658,48 @@ static inline bool size_valid(uint32_t width, uint32_t height)
 		width <= OBS_SIZE_MAX && height <= OBS_SIZE_MAX);
 }
 
-int obs_reset_video(struct obs_video_info *ovi)
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+int obs_deactivate_video_info()
 {
-	if (!obs)
+	if (!obs) {
+		blog(LOG_ERROR,
+		     "[VIDEO_CANVAS] obs object is null, video reset is not possible");
 		return OBS_VIDEO_FAIL;
-
-	/* don't allow changing of video settings if active. */
-	if (obs_video_active())
-		return OBS_VIDEO_CURRENTLY_ACTIVE;
-
-	if (!size_valid(ovi->output_width, ovi->output_height) ||
-	    !size_valid(ovi->base_width, ovi->base_height))
-		return OBS_VIDEO_INVALID_PARAM;
-
-	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s", ovi, __FUNCTION__);
-
-	stop_video();
-	obs_free_video();
-
-	/* align to multiple-of-two and SSE alignment sizes */
-	ovi->output_width &= 0xFFFFFFFC;
-	ovi->output_height &= 0xFFFFFFFE;
-
-	if (!obs->video.graphics) {
-		int errorcode = obs_init_graphics(ovi);
-		if (errorcode != OBS_VIDEO_SUCCESS) {
-			obs_free_graphics();
-			return errorcode;
-		}
 	}
 
+	/* don't allow changing of video settings if active. */
+	if (obs_video_active()) {
+		blog(LOG_ERROR,
+		     "[VIDEO_CANVAS] video is active, video reset is not possible");
+		return OBS_VIDEO_CURRENTLY_ACTIVE;
+	}
+
+	blog(LOG_DEBUG, "[VIDEO_CANVAS] About to stop and reset video");
+	stop_video();
+	obs_free_video(false);
+	blog(LOG_DEBUG, "[VIDEO_CANVAS] Video stopped and ready too init");
+
+	return OBS_VIDEO_SUCCESS;
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+int obs_set_video_info(struct obs_video_info_v2 *canvas,
+		       struct obs_video_info *updated)
+{
+	if (!size_valid(updated->output_width, updated->output_height) ||
+	    !size_valid(updated->base_width, updated->base_height))
+		return OBS_VIDEO_INVALID_PARAM;
+
+	int ret = obs_deactivate_video_info();
+	if (ret != OBS_VIDEO_SUCCESS)
+		return ret;
+
+	/* align to multiple-of-two and SSE alignment sizes */
+	updated->output_width &= 0xFFFFFFFC;
+	updated->output_height &= 0xFFFFFFFE;
+
 	const char *scale_type_name = "";
-	switch (ovi->scale_type) {
+	switch (updated->scale_type) {
 	case OBS_SCALE_DISABLE:
 		scale_type_name = "Disabled";
 		break;
@@ -1599,26 +1720,231 @@ int obs_reset_video(struct obs_video_info *ovi)
 		break;
 	}
 
-	bool yuv = format_is_yuv(ovi->output_format);
-	const char *yuv_format = get_video_colorspace_name(ovi->colorspace);
-	const char *yuv_range =
-		get_video_range_name(ovi->output_format, ovi->range);
+	bool yuv = format_is_yuv(updated->output_format);
+	const char *yuv_format = get_video_colorspace_name(updated->colorspace);
+	const char *yuv_range = get_video_range_name(updated->output_format, updated->range);
 
 	blog(LOG_INFO, "---------------------------------");
 	blog(LOG_INFO,
-	     "video settings reset:\n"
+	     "[VIDEO_CANVAS] video settings reset for %p:\n"
 	     "\tbase resolution:   %dx%d\n"
 	     "\toutput resolution: %dx%d\n"
 	     "\tdownscale filter:  %s\n"
 	     "\tfps:               %d/%d\n"
 	     "\tformat:            %s\n"
 	     "\tYUV mode:          %s%s%s",
-	     ovi->base_width, ovi->base_height, ovi->output_width,
-	     ovi->output_height, scale_type_name, ovi->fps_num, ovi->fps_den,
-	     get_video_format_name(ovi->output_format),
+	     canvas, updated->base_width, updated->base_height,
+	     updated->output_width, updated->output_height, scale_type_name,
+	     updated->fps_num, updated->fps_den,
+	     get_video_format_name(updated->output_format),
 	     yuv ? yuv_format : "None", yuv ? "/" : "", yuv ? yuv_range : "");
 
-	return obs_init_video(ovi);
+	*(canvas->ovi) = *updated;
+	canvas->initialized = true;
+
+	return obs_init_video();
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+int obs_remove_video_info(struct obs_video_info_v2 *ovi)
+{
+	blog(LOG_INFO, "[VIDEO_CANVAS] remove %p", ovi);
+	int ret = obs_deactivate_video_info();
+	if (ret != OBS_VIDEO_SUCCESS)
+		return ret;
+
+	pthread_mutex_lock(&obs->video.canvases_mutex);
+	size_t num = obs->video.canvases.num;
+	for (size_t i = 0; i < num; i++) {
+		if (obs->video.canvases.array[i] == ovi) {
+			bfree(obs->video.canvases.array[i]->ovi);
+			bfree(obs->video.canvases.array[i]);
+			da_erase(obs->video.canvases, i);
+			obs_set_video_rendering_canvas(NULL);
+			break;
+		}
+	}
+
+	pthread_mutex_unlock(&obs->video.canvases_mutex);
+
+	return obs_init_video();
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+struct obs_video_info_v2* obs_create_3dr_ovi(struct obs_video_info* in)
+{
+	if (in == NULL) {
+		assert(false);
+		return NULL;
+	}
+
+	struct obs_video_info_v2 *ovi_v2 = bzalloc(sizeof(struct obs_video_info_v2));
+	if (ovi_v2 == NULL) {
+		return NULL;
+	}
+
+	struct obs_video_info *ovi =
+		bzalloc(sizeof(struct obs_video_info));
+	if (ovi == NULL) {
+		bfree(ovi_v2);
+		return NULL;
+	}
+
+	ovi_v2->ovi = ovi;
+	*(ovi_v2->ovi) = *in;
+	
+	pthread_mutex_lock(&obs->video.thirdpart_ovi_mutex);
+	da_push_back(obs->video.thirdpart_ovi_pool, &ovi_v2);
+	pthread_mutex_unlock(&obs->video.thirdpart_ovi_mutex);
+	blog(LOG_INFO,
+	     "[VIDEO_CANVAS_OUTER] created ovi=%p, ovi_v2=%p, in=%p, index=[%zu]",
+	     ovi_v2->ovi, ovi, in, obs->video.thirdpart_ovi_pool.num - 1);
+
+	return ovi_v2;
+}
+
+struct obs_video_info_v2* obs_find_ovi_v2_by_ovi(struct obs_video_info* ovi)
+{
+	if (ovi == NULL) {
+		return NULL;
+	}
+
+	struct obs_video_info_v2 *ret = NULL;
+
+	pthread_mutex_lock(&obs->video.canvases_mutex);
+	for (size_t i = 0, num = obs->video.canvases.num; i < num; i++) {
+		struct obs_video_info_v2 *ovi_v2 = obs->video.canvases.array[i];
+		if (ovi_v2->ovi == ovi) {
+			ret = ovi_v2;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&obs->video.canvases_mutex);
+
+	if (ret != NULL) {
+		return ret;
+	}
+
+	pthread_mutex_lock(&obs->video.thirdpart_ovi_mutex);
+	for (size_t i = 0, num = obs->video.thirdpart_ovi_pool.num; i < num;
+	     i++) {
+		struct obs_video_info_v2 *ovi_v2 =
+			obs->video.thirdpart_ovi_pool.array[i];
+		if (ovi_v2->ovi == ovi) {
+			ret = ovi_v2;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&obs->video.thirdpart_ovi_mutex);
+
+	return ret;
+
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+struct obs_video_info_v2 *obs_create_video_info_v2()
+{
+	struct obs_video_info_v2 *ovi_v2 = bzalloc(sizeof(struct obs_video_info_v2));
+	struct obs_video_info *ovi = bzalloc(sizeof(struct obs_video_info));
+	ovi_v2->ovi = ovi;
+	pthread_mutex_lock(&obs->video.canvases_mutex);
+	da_push_back(obs->video.canvases, &ovi_v2);
+	pthread_mutex_unlock(&obs->video.canvases_mutex);
+	blog(LOG_INFO, "[VIDEO_CANVAS] created ovi=%p, v2=%p, index=[%zu]", ovi, ovi_v2, obs->video.canvases.num - 1);
+
+#ifdef _WIN32
+	ovi->graphics_module = "libobs-d3d11.dll";
+#else
+	ovi->graphics_module = "libobs-opengl.dylib";
+#endif
+
+	ovi->base_width = 1280;
+	ovi->base_height = 720;
+	ovi->output_width = 1280;
+	ovi->output_height = 720;
+	ovi->fps_num = 30;
+	ovi->fps_den = 1;
+
+	ovi->output_format = VIDEO_FORMAT_NV12;
+	ovi->colorspace = VIDEO_CS_DEFAULT;
+	ovi->range = VIDEO_RANGE_DEFAULT;
+	ovi->scale_type = OBS_SCALE_BILINEAR;
+	ovi->adapter = 0;
+	ovi->gpu_conversion = true;
+
+	return ovi_v2;
+}
+
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+//default: this ovi is for landscape
+int obs_reset_video(struct obs_video_info *ovi)
+{
+	struct obs_video_info_v2 *canvas = NULL;
+	if (obs->video.canvases.num)
+		canvas = obs->video.canvases.array[0];
+	else
+		canvas = obs_create_video_info_v2();
+
+	//PRISM/WuLongyue/20231122/#2212/add logs
+	blog(LOG_INFO, "%p-%s", ovi, __FUNCTION__);
+
+	return obs_set_video_info(canvas, ovi);
+
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+size_t obs_get_video_info_count()
+{
+	return obs->video.canvases.num;
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+bool obs_get_video_info_by_index(size_t index, struct obs_video_info *ovi)
+{
+	//blog(LOG_INFO, "[VIDEO_CANVAS] get video info by index %zu", index);
+	if (index >= obs->video.canvases.num)
+		return false;
+	*ovi = *(obs->video.canvases.array[index]->ovi);
+	return true;
+}
+
+
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+void obs_set_video_rendering_canvas(struct obs_video_info *ovi)
+{
+	if (!obs)
+		return;
+
+	obs->video_rendering_canvas = ovi;
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+struct obs_video_info *obs_get_video_rendering_canvas(void)
+{
+	if (!obs)
+		return NULL;
+	else
+		return obs->video_rendering_canvas;
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+bool obs_get_video_info_current(struct obs_video_info *ovi)
+{
+	if (!obs_in_task_thread(OBS_TASK_GRAPHICS))
+	{
+		assert(false);
+		blog(LOG_WARNING, "call obs_get_video_info_current not in render");
+	}
+	
+	if (!obs->video.graphics || !obs->video_rendering_canvas || !ovi) {
+		return false;
+	}
+
+	*ovi = *(obs->video_rendering_canvas);
+
+	return true;
 }
 
 #ifndef SEC_TO_MSEC
@@ -1683,11 +2009,22 @@ bool obs_reset_audio(const struct obs_audio_info *oai)
 
 bool obs_get_video_info(struct obs_video_info *ovi)
 {
-	if (!obs->video.graphics || !obs->video.main_mix)
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (!obs->video.graphics || !obs->video.main_mix || !ovi)
 		return false;
 
-	*ovi = obs->video.main_mix->ovi;
-	return true;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//*ovi = obs->video.main_mix->ovi;
+	bool ret = false;
+	pthread_mutex_lock(&obs->video.canvases_mutex);
+	if (obs->video.canvases.num > 0) {
+		*ovi = *(obs->video.canvases.array[0]->ovi);
+
+		ret = true;
+	}
+	pthread_mutex_unlock(&obs->video.canvases_mutex);
+
+	return ret;
 }
 
 float obs_get_video_sdr_white_level(void)
@@ -1714,6 +2051,12 @@ void obs_set_video_levels(float sdr_white_level, float hdr_nominal_peak_level)
 bool obs_get_audio_info(struct obs_audio_info *oai)
 {
 	struct obs_core_audio *audio = &obs->audio;
+	
+	//PRISM/cao.kewei/20240813/crash fix
+	if (!audio) {
+		return false;
+	}
+	
 	const struct audio_output_info *info;
 
 	if (!oai || !audio->audio)
@@ -1924,8 +2267,13 @@ void obs_enum_scenes(bool (*enum_proc)(void *, obs_source_t *), void *param)
 	while (source) {
 		obs_source_t *s = obs_source_get_ref(source);
 		if (s) {
+			//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+			obs_data_t *settings = obs_source_get_settings(s);
+			bool is_vertical =
+				obs_data_get_bool(settings, "is_vertical");
+			obs_data_release(settings);
 			if (source->info.type == OBS_SOURCE_TYPE_SCENE &&
-			    !enum_proc(param, s)) {
+			    !is_vertical && !enum_proc(param, s)) {
 				obs_source_release(s);
 				break;
 			}
@@ -2199,18 +2547,23 @@ void obs_render_main_view(void)
 	obs_view_render(&obs->data.main_view);
 }
 
-static void obs_render_main_texture_internal(enum gs_blend_type src_c,
-					     enum gs_blend_type dest_c,
-					     enum gs_blend_type src_a,
-					     enum gs_blend_type dest_a)
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+void obs_render_main_texture_internal(enum gs_blend_type src_c,
+				      enum gs_blend_type dest_c,
+				      enum gs_blend_type src_a,
+				      enum gs_blend_type dest_a,
+				      struct obs_core_video_mix *video)
 {
-	struct obs_core_video_mix *video;
+	//struct obs_core_video_mix *video;
 	gs_texture_t *tex;
 	gs_effect_t *effect;
 	gs_eparam_t *param;
 
-	video = obs->video.main_mix;
-	if (!video->texture_rendered)
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//video = obs->video.main_mix;
+	//if (!video->texture_rendered)
+	//	return;
+	if (!video || !video->texture_rendered)
 		return;
 
 	const enum gs_color_space source_space = video->render_space;
@@ -2254,14 +2607,18 @@ static void obs_render_main_texture_internal(enum gs_blend_type src_c,
 
 void obs_render_main_texture(void)
 {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	obs_render_main_texture_internal(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA,
-					 GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+					 GS_BLEND_ONE, GS_BLEND_INVSRCALPHA,
+					 obs->video.main_mix);
 }
 
 void obs_render_main_texture_src_color_only(void)
 {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	obs_render_main_texture_internal(GS_BLEND_ONE, GS_BLEND_ZERO,
-					 GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+					 GS_BLEND_ONE, GS_BLEND_INVSRCALPHA,
+					 obs->video.main_mix);
 }
 
 gs_texture_t *obs_get_main_texture(void)
@@ -2587,6 +2944,13 @@ obs_data_array_t *obs_save_sources_filtered(obs_save_source_filter_cb cb,
 	source = data->public_sources;
 
 	while (source) {
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (is_save_bypass_vertical &&
+		    pls_is_vertical_scene_or_group(source)) {
+			source = (obs_source_t *)source->context.hh.next;
+			continue;
+		}
+
 		if ((source->info.type != OBS_SOURCE_TYPE_FILTER) != 0 &&
 		    !source->removed && !source->temp_removed &&
 		    cb(data_, source)) {
@@ -2688,7 +3052,10 @@ obs_context_data_init_wrap(struct obs_context_data *context,
 	else if (type == OBS_OBJ_TYPE_SOURCE)
 		context->uuid = os_generate_uuid();
 
-	context->name = dup_name(name, private);
+	//PRISM/wangshaohui/20241210/none/fix crash if name is NULL
+	context->name = dup_name(name ? name : "", private);
+	//context->name = dup_name(name, private);
+
 	context->settings = obs_data_newref(settings);
 	context->hotkey_data = obs_data_newref(hotkey_data);
 	return true;

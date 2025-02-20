@@ -45,6 +45,13 @@
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 #define debug(format, ...) do_log(LOG_DEBUG, format, ##__VA_ARGS__)
 
+//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+#include "pls/pls-base.h"
+#define do_log_event(level, format, ...) \
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}}; \
+	blogex(false, level, fields, 1, "[x264 encoder: '%s'] " format, \
+		obs_encoder_get_name(obsx264->encoder), ##__VA_ARGS__) \
+
 //#define ENABLE_VFR
 
 /* ------------------------------------------------------------------------- */
@@ -312,7 +319,9 @@ static inline void set_param(struct obs_x264 *obsx264, struct obs_option option)
 	if (strcmp(name, "preset") != 0 && strcmp(name, "profile") != 0 &&
 	    strcmp(name, "tune") != 0 && strcmp(name, "fps") != 0 &&
 	    strcmp(name, "force-cfr") != 0 && strcmp(name, "width") != 0 &&
-	    strcmp(name, "height") != 0 && strcmp(name, "opencl") != 0) {
+	    strcmp(name, "height") != 0 && strcmp(name, "opencl") != 0 &&
+	    strcmp(name, "stats") != 0 && strcmp(name, "qpfile") != 0 &&
+	    strcmp(name, "pass") != 0) {
 		if (strcmp(option.name, OPENCL_ALIAS) == 0)
 			name = "opencl";
 		if (x264_param_parse(&obsx264->params, name, val) != 0)
@@ -719,10 +728,13 @@ static void *obs_x264_create(obs_data_t *settings, obs_encoder_t *encoder)
 	if (update_settings(obsx264, settings, false)) {
 		obsx264->context = x264_encoder_open(&obsx264->params);
 
-		if (obsx264->context == NULL)
-			warn("x264 failed to load");
-		else
+		//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+		if (obsx264->context == NULL) {
+			//			warn("x264 failed to load");
+			do_log_event(LOG_WARNING, "x264 failed to load");
+		} else {
 			load_headers(obsx264);
+		}
 	} else {
 		warn("bad settings specified");
 	}
@@ -863,25 +875,27 @@ static bool obs_x264_encode(void *data, struct encoder_frame *frame,
 		info("[x264] Request key frame");
 		pic.i_type = X264_TYPE_KEYFRAME;
 	}
-	
+
 	if (obs_encoder_has_roi(obsx264->encoder))
 		add_roi(obsx264, &pic);
 
 	ret = x264_encoder_encode(obsx264->context, &nals, &nal_count,
 				  (frame ? &pic : NULL), &pic_out);
 	if (ret < 0) {
-		warn("encode failed");
+//		warn("encode failed");
+		//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+		do_log_event(LOG_WARNING, "encode failed");
 		return false;
 	}
 
 	*received_packet = (nal_count != 0);
 	parse_packet(obsx264, packet, nals, nal_count, &pic_out);
-	
+
 	//PRISM/cao.kewei/20240514/#5378/force keyframe
 	if (obs_encoder_request_keyframe(obsx264->encoder)) {
 		bool is_keyframe = IS_X264_TYPE_I(pic_out.i_type);
 		info("[x264] is keyframe: %s", is_keyframe ? "true" : "false");
-		
+
 		if (is_keyframe) {
 			obs_encoder_set_request_keyframe(obsx264->encoder, false);
 		}

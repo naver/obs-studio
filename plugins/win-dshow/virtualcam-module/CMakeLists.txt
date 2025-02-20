@@ -7,7 +7,12 @@ if(OBS_CMAKE_VERSION VERSION_GREATER_EQUAL 3.0.0)
     target_disable(obs-virtualcam-module)
     return()
   endif()
-
+  #PRISM/Xiewei/20240918/check the Virtual camera GUID start
+    if(NOT DEFINED VIRTUALCAM_GUID OR NOT "${VIRTUALCAM_GUID}" STREQUAL "A49F51EE-8841-4425-BEC0-85D0C470BBDE")
+      message(FATAL_ERROR "Invalid PRISM Virtual Camera GUID set.")
+      return()
+    endif()
+  #PRISM/Xiewei/20240918/check the Virtual camera GUID end
   if(NOT VIRTUALCAM_GUID)
     # cmake-format: off
     set(VIRTUALCAM_GUID "" CACHE STRING "Virtual Camera GUID" FORCE)

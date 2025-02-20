@@ -144,6 +144,8 @@ static void *scale_filter_create(obs_data_t *settings, obs_source_t *context)
 
 static void scale_filter_tick(void *data, float seconds)
 {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	#if 0
 	struct scale_filter_data *filter = data;
 	enum obs_base_effect type;
 	obs_source_t *target;
@@ -267,8 +269,138 @@ static void scale_filter_tick(void *data, float seconds)
 
 	filter->multiplier_param =
 		gs_effect_get_param_by_name(filter->effect, "multiplier");
-
+	#endif
+	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(seconds);
+	return;
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+static void scale_filter_prepare_for_rendering(void *data)
+{
+	struct scale_filter_data *filter = data;
+	enum obs_base_effect type;
+	obs_source_t *target;
+	bool lower_than_2x;
+	double cx_f;
+	double cy_f;
+	int cx;
+	int cy;
+
+	if (filter->base_canvas_resolution) {
+		struct obs_video_info ovi;
+		obs_get_video_info_current(&ovi);
+		filter->cx_in = ovi.base_width;
+		filter->cy_in = ovi.base_height;
+	}
+
+	target = obs_filter_get_target(filter->context);
+	filter->cx_out = 0;
+	filter->cy_out = 0;
+
+	filter->target_valid = !!target;
+	if (!filter->target_valid)
+		return;
+
+	cx = obs_source_get_base_width(target);
+	cy = obs_source_get_base_height(target);
+
+	if (!cx || !cy) {
+		filter->target_valid = false;
+		return;
+	}
+
+	filter->cx_out = cx;
+	filter->cy_out = cy;
+
+	if (!filter->valid)
+		return;
+
+	/* ------------------------- */
+
+	cx_f = (double)cx;
+	cy_f = (double)cy;
+
+	double old_aspect = cx_f / cy_f;
+	double new_aspect = (double)filter->cx_in / (double)filter->cy_in;
+
+	if (filter->aspect_ratio_only) {
+		if (fabs(old_aspect - new_aspect) <= EPSILON) {
+			filter->target_valid = false;
+			return;
+		} else {
+			if (new_aspect > old_aspect) {
+				filter->cx_out = (int)(cy_f * new_aspect);
+			} else {
+				filter->cy_out = (int)(cx_f / new_aspect);
+			}
+		}
+	} else {
+		filter->cx_out = filter->cx_in;
+		filter->cy_out = filter->cy_in;
+	}
+
+	vec2_set(&filter->dimension, (float)cx, (float)cy);
+	vec2_set(&filter->dimension_i, 1.0f / (float)cx, 1.0f / (float)cy);
+
+	filter->undistort = false;
+	filter->upscale = false;
+
+	/* ------------------------- */
+
+	lower_than_2x = filter->cx_out < cx / 2 || filter->cy_out < cy / 2;
+
+	if (lower_than_2x && filter->sampling != OBS_SCALE_POINT) {
+		type = OBS_EFFECT_BILINEAR_LOWRES;
+	} else {
+		switch (filter->sampling) {
+		default:
+		case OBS_SCALE_POINT:
+		case OBS_SCALE_BILINEAR:
+			type = OBS_EFFECT_DEFAULT;
+			break;
+		case OBS_SCALE_BICUBIC:
+			type = OBS_EFFECT_BICUBIC;
+			filter->undistort = filter->can_undistort;
+			break;
+		case OBS_SCALE_LANCZOS:
+			type = OBS_EFFECT_LANCZOS;
+			filter->undistort = filter->can_undistort;
+			break;
+		case OBS_SCALE_AREA:
+			type = OBS_EFFECT_AREA;
+			if ((filter->cx_out >= cx) && (filter->cy_out >= cy))
+				filter->upscale = true;
+			break;
+		}
+	}
+
+	filter->undistort_factor = filter->undistort ? (new_aspect / old_aspect)
+						     : 1.0;
+
+	filter->effect = obs_get_base_effect(type);
+	filter->image_param =
+		gs_effect_get_param_by_name(filter->effect, "image");
+
+	if (type != OBS_EFFECT_DEFAULT) {
+		filter->dimension_param = gs_effect_get_param_by_name(
+			filter->effect, "base_dimension");
+		filter->dimension_i_param = gs_effect_get_param_by_name(
+			filter->effect, "base_dimension_i");
+	} else {
+		filter->dimension_param = NULL;
+		filter->dimension_i_param = NULL;
+	}
+
+	if (type == OBS_EFFECT_BICUBIC || type == OBS_EFFECT_LANCZOS) {
+		filter->undistort_factor_param = gs_effect_get_param_by_name(
+			filter->effect, "undistort_factor");
+	} else {
+		filter->undistort_factor_param = NULL;
+	}
+
+	filter->multiplier_param =
+		gs_effect_get_param_by_name(filter->effect, "multiplier");
 }
 
 static const char *
@@ -410,6 +542,9 @@ static void scale_filter_render(void *data, gs_effect_t *effect)
 
 	struct scale_filter_data *filter = data;
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	scale_filter_prepare_for_rendering(data);
+
 	if (!filter->valid || !filter->target_valid) {
 		obs_source_skip_video_filter(filter->context);
 		return;
@@ -514,14 +649,15 @@ static obs_properties_t *scale_filter_properties(void *data)
 
 	/* ----------------- */
 
-	obs_get_video_info(&ovi);
-	cx = ovi.base_width;
-	cy = ovi.base_height;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//obs_get_video_info(&ovi);
+	//cx = ovi.base_width;
+	//cy = ovi.base_height;
 
-	for (size_t i = 0; i < NUM_DOWNSCALES; i++) {
-		downscales[i].cx = (int)((double)cx / downscale_vals[i]);
-		downscales[i].cy = (int)((double)cy / downscale_vals[i]);
-	}
+	//for (size_t i = 0; i < NUM_DOWNSCALES; i++) {
+	//	downscales[i].cx = (int)((double)cx / downscale_vals[i]);
+	//	downscales[i].cy = (int)((double)cy / downscale_vals[i]);
+	//}
 
 	p = obs_properties_add_list(props, S_SAMPLING, T_SAMPLING,
 				    OBS_COMBO_TYPE_LIST,
@@ -546,11 +682,32 @@ static obs_properties_t *scale_filter_properties(void *data)
 	for (size_t i = 0; i < NUM_ASPECTS; i++)
 		obs_property_list_add_string(p, aspects[i], aspects[i]);
 
-	for (size_t i = 0; i < NUM_DOWNSCALES; i++) {
-		char str[32];
-		snprintf(str, sizeof(str), "%dx%d", downscales[i].cx,
-			 downscales[i].cy);
-		obs_property_list_add_string(p, str, str);
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//for (size_t i = 0; i < NUM_DOWNSCALES; i++) {
+	//	char str[32];
+	//	snprintf(str, sizeof(str), "%dx%d", downscales[i].cx,
+	//		 downscales[i].cy);
+	//	obs_property_list_add_string(p, str, str);
+	//}
+	size_t contexts = obs_get_video_info_count();
+	for (size_t i = 0; i < contexts; i++) {
+		obs_get_video_info_by_index(i, &ovi);
+		cx = ovi.base_width;
+		cy = ovi.base_height;
+
+		for (size_t i = 0; i < NUM_DOWNSCALES; i++) {
+			downscales[i].cx =
+				(int)((double)cx / downscale_vals[i]);
+			downscales[i].cy =
+				(int)((double)cy / downscale_vals[i]);
+		}
+
+		for (size_t i = 0; i < NUM_DOWNSCALES; i++) {
+			char str[32];
+			snprintf(str, sizeof(str), "%dx%d", downscales[i].cx,
+				 downscales[i].cy);
+			obs_property_list_add_string(p, str, str);
+		}
 	}
 
 	obs_properties_add_bool(props, S_UNDISTORT, T_UNDISTORT);

@@ -429,7 +429,7 @@ static void log_module_address(obs_module_t *mod)
 						   &modInfo,
 						   sizeof(MODULEINFO));
 		if (result) {
-			blog(LOG_INFO, "third_plugins: %s: %p-%p", mod->file,
+			blog(LOG_INFO, "log module address: %s: %p-%p", mod->file,
 			     modInfo.lpBaseOfDll,
 			     (BYTE *)modInfo.lpBaseOfDll + modInfo.SizeOfImage);
 		}

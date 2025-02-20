@@ -284,6 +284,66 @@ static void do_transition(void *data, bool to_null)
 	}
 }
 
+//PRISM/chenguoxi/20240726/PRISM_PC-735/order files
+static int compare_string(const void *a, const void *b)
+{
+	return strcmp(*(const char **)a, *(const char **)b);
+}
+
+static void add_folder(struct slideshow *ss, os_dir_t *dir, const char *path,
+		       image_file_array_t *new_files, uint32_t *cx, uint32_t *cy)
+{
+	struct dstr dir_path = {0};
+	struct os_dirent *ent;
+
+	DARRAY(char *) files;
+	da_init(files);
+	da_reserve(files, 20);
+
+	char *file_name = NULL;
+	size_t i;
+
+	for (;;) {
+		const char *ext;
+
+		ent = os_readdir(dir);
+		if (!ent)
+			break;
+		if (ent->directory)
+			continue;
+
+		ext = os_get_path_extension(ent->d_name);
+		if (!valid_extension(ext))
+			continue;
+
+		file_name = bstrdup(ent->d_name);
+		if (file_name != NULL) {
+			da_push_back(files, &file_name);
+		}
+	}
+
+	os_closedir(dir);
+
+	qsort(files.array, files.num, sizeof(char *), compare_string);
+
+	for (i = 0; i < files.num; i++) {
+		dstr_copy(&dir_path, path);
+		dstr_cat_ch(&dir_path, '/');
+		dstr_cat(&dir_path, files.array[i]);
+		add_file(ss, new_files, dir_path.array, cx, cy);
+
+		if (ss->mem_usage >= MAX_MEM_USAGE)
+			break;
+	}
+
+	for (i = 0; i < files.num; i++) {
+		bfree(files.array[i]);
+	}
+
+	da_free(files);
+	dstr_free(&dir_path);
+}
+
 static void ss_update(void *data, obs_data_t *settings)
 {
 	image_file_array_t new_files;
@@ -358,6 +418,8 @@ static void ss_update(void *data, obs_data_t *settings)
 		}
 
 		if (dir) {
+			//PRISM/chenguoxi/20240726/PRISM_PC-735/order files
+			/*
 			struct dstr dir_path = {0};
 			struct os_dirent *ent;
 
@@ -384,8 +446,11 @@ static void ss_update(void *data, obs_data_t *settings)
 					break;
 			}
 
-			dstr_free(&dir_path);
-			os_closedir(dir);
+                        dstr_free(&dir_path);
+                        os_closedir(dir);
+			*/
+			add_folder(ss, dir, path, & new_files, &cx, &cy);
+
 		} else {
 			add_file(ss, &new_files, path, &cx, &cy);
 		}
@@ -896,14 +961,15 @@ static obs_properties_t *ss_properties(void *data)
 	struct obs_video_info ovi;
 	struct dstr path = {0};
 	obs_property_t *p;
-	int cx;
-	int cy;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//int cx;
+	//int cy;
 
 	/* ----------------- */
-
-	obs_get_video_info(&ovi);
-	cx = (int)ovi.base_width;
-	cy = (int)ovi.base_height;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//obs_get_video_info(&ovi);
+	//cx = (int)ovi.base_width;
+	//cy = (int)ovi.base_height;
 
 	/* ----------------- */
 
@@ -951,9 +1017,18 @@ static obs_properties_t *ss_properties(void *data)
 	for (size_t i = 0; i < NUM_ASPECTS; i++)
 		obs_property_list_add_string(p, aspects[i], aspects[i]);
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	char str[32];
-	snprintf(str, sizeof(str), "%dx%d", cx, cy);
-	obs_property_list_add_string(p, str, str);
+	//snprintf(str, sizeof(str), "%dx%d", cx, cy);
+	//obs_property_list_add_string(p, str, str);
+	size_t contexts = obs_get_video_info_count();
+	for (size_t i = 0; i < contexts; i++) {
+		if (obs_get_video_info_by_index(i, &ovi)) {
+			snprintf(str, 32, "%dx%d", ovi.base_width,
+				 ovi.base_height);
+			obs_property_list_add_string(p, str, str);
+		}
+	}
 
 	if (ss) {
 		pthread_mutex_lock(&ss->mutex);

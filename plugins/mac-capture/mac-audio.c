@@ -12,6 +12,9 @@
 
 #include "audio-device-enum.h"
 
+//PRISM/cao.kewei/20241101/log limit
+#include <util/platform.h>
+
 #define PROPERTY_DEFAULT_DEVICE kAudioHardwarePropertyDefaultInputDevice
 #define PROPERTY_FORMATS kAudioStreamPropertyAvailablePhysicalFormats
 
@@ -650,10 +653,16 @@ static bool coreaudio_get_device_name(struct coreaudio_data *ca)
 	OSStatus stat = AudioObjectGetPropertyData(ca->device_id, &addr, 0,
 						   NULL, &size, &cf_name);
 	if (stat != noErr) {
-		blog(LOG_WARNING,
-		     "[coreaudio_get_device_name] failed to "
-		     "get name: %d",
-		     (int)stat);
+		//PRISM/cao.kewei/20241101/log limit
+		static uint64_t last_log_time = 0;
+		uint64_t current_time = os_gettime_ns();
+		if (current_time - last_log_time > 1000000000) { // Only log once per second
+			last_log_time = current_time;
+			blog(LOG_WARNING,
+			     "[coreaudio_get_device_name] failed to "
+			     "get name: %d",
+			     (int)stat);
+		}
 		return false;
 	}
 
@@ -1019,7 +1028,19 @@ static void ensure_output_channels_visible(obs_properties_t *props,
 					   const struct coreaudio_data *ca,
 					   uint32_t channels)
 {
+	//PRISM/cao.kewei/20241118/PRISM_PC_NELO-92
+	if (!ca || !ca->device_uid) {
+		return;
+	}
+	//PRISM/cao.kewei/20241202/PRISM_PC_NELO-114
+	if (!ca->channel_names) {
+		return;
+	}
 	char *device_config_name = sanitize_device_name(ca->device_uid);
+	//PRISM/cao.kewei/PRISM_PC_NELO-4
+	if (!device_config_name) {
+		return;
+	}
 	for (uint32_t out_chan = 0; out_chan < channels; out_chan++) {
 		ensure_output_channel_prop(ca, props, device_config_name,
 					   out_chan);
@@ -1109,7 +1130,8 @@ static obs_properties_t *coreaudio_properties(bool input, void *data)
 	obs_property_set_modified_callback2(property, coreaudio_downmix_changed,
 					    ca);
 
-	if (ca != NULL) {
+	//PRISM/cao.kewei/20240821/crash fix
+	if (ca != NULL && ca->au_initialized) {
 		uint32_t channels = get_audio_channels(ca->speakers);
 		ensure_output_channels_visible(props, ca, channels);
 

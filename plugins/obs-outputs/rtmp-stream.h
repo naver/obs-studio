@@ -23,6 +23,17 @@
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 #define debug(format, ...) do_log(LOG_DEBUG, format, ##__VA_ARGS__)
 
+//PRISM/Xiewei/20241104/PRISM_PC-1673/Add logs start
+#define do_log_ex(level, fields, count, format, ...)                 \
+	blogex(false, level, fields, count, "[rtmp stream: '%s'] " format, \
+	     obs_output_get_name(stream->output), ##__VA_ARGS__)
+
+#define warn_ex(fields, count, format, ...) \
+	do_log_ex(LOG_WARNING, fields, count, format, ##__VA_ARGS__)
+#define info_ex(fields, count, format, ...) \
+	do_log_ex(LOG_INFO, fields, count, format, ##__VA_ARGS__)
+//PRISM/Xiewei/20241104/PRISM_PC-1673/Add logs end
+
 #define OPT_DYN_BITRATE "dyn_bitrate"
 #define OPT_DROP_THRESHOLD "drop_threshold_ms"
 #define OPT_PFRAME_DROP_THRESHOLD "pframe_drop_threshold_ms"
@@ -60,7 +71,7 @@ struct rtmp_stream {
 	struct deque packets;
 	bool sent_headers;
 
-	bool got_first_video;
+	bool got_first_packet;
 	int64_t start_dts_offset;
 
 	volatile bool connecting;
@@ -115,7 +126,8 @@ struct rtmp_stream {
 	long dbr_inc_bitrate;
 	bool dbr_enabled;
 
-	enum video_id_t video_codec;
+	enum audio_id_t audio_codec[MAX_OUTPUT_AUDIO_ENCODERS];
+	enum video_id_t video_codec[MAX_OUTPUT_VIDEO_ENCODERS];
 
 	RTMP rtmp;
 

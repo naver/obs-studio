@@ -180,6 +180,13 @@ EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode,
 EXPORT bool pls_is_dll_already_loaded(const char *dllName);
 EXPORT void pls_remember_dll_name(const char *dllName);
 
+#ifdef _WIN32
+EXPORT void pls_start_recording_third_party_plugin();
+EXPORT void pls_record_third_party_plugin(const char *dllName);
+EXPORT void pls_finish_recording_third_party_plugin();
+EXPORT bool os_is_pls_plugin(const char *path);
+#endif
+
 EXPORT bool pls_is_plugin_in_black_list(const char *dllName);
 
 //PRISM/Zhongling/20231027/#2902/exit crashed
@@ -210,7 +217,7 @@ EXPORT void pls_leave_font_collection();
 EXPORT void *pls_get_private_font_collection();
 EXPORT bool pls_add_font_to_private_collection(const char *font_path);
 #endif
-	
+
 EXPORT signal_handler_t* pls_freetype_get_signal();
 EXPORT void pls_freetype_add_font(const char *font_path);
 EXPORT const char *pls_freetype_pop_font_path();
@@ -228,6 +235,14 @@ EXPORT bool pls_design_mode();
 
 //PRISM/fanzirong/20240704/none/separate stop and free
 EXPORT void stop_audio_thread(audio_t *audio);
+
+/** Create dual output scene **/
+EXPORT obs_scene_t *pls_create_vertical_scene(const char *name);
+
+/** Enum scenes list (except scenes for dual output)**/
+EXPORT void pls_enum_all_scenes(bool (*enum_proc)(void *, obs_source_t *),
+				void *param);
+
 #ifdef __cplusplus
 }
 #endif

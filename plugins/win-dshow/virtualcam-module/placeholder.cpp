@@ -107,6 +107,10 @@ static bool load_placeholder_internal()
 	cx = bmp.GetWidth();
 	cy = bmp.GetHeight();
 
+	//PRISM/Xiewei/20240730/#5922/vcam crashed when load placeholder image
+	if (0 == cx || 0 == cy)
+		return false;
+
 	BitmapData bmd = {};
 	Rect r(0, 0, cx, cy);
 

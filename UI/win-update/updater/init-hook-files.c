@@ -129,7 +129,9 @@ static bool update_hook_file(bool b64)
 	StringCbCat(src, sizeof(src), HOOK_LOCATION);
 	make_filename(src, L"graphics-hook", L".dll");
 
-	get_programdata_path(temp, L"obs-studio-hook\\");
+	//PRISM/FanZirong/20241115/PRISM_PC-1560/Solve the hook dll copy problem
+	//get_programdata_path(temp, L"obs-studio-hook\\");
+	get_programdata_path(temp, L"PRISMLiveStudio-hook\\");
 	StringCbCopyW(dst_json, sizeof(dst_json), temp);
 	StringCbCopyW(dst, sizeof(dst), temp);
 	make_filename(dst_json, L"obs-vulkan", L".json");
@@ -154,7 +156,9 @@ static void update_vulkan_registry(bool b64)
 	LSTATUS s;
 	HKEY key;
 
-	get_programdata_path(path, L"obs-studio-hook\\");
+	//PRISM/FanZirong/20241115/PRISM_PC-1560/Solve the hook dll copy problem
+	//get_programdata_path(path, L"obs-studio-hook\\");
+	get_programdata_path(path, L"PRISMLiveStudio-hook\\");
 	make_filename(path, L"obs-vulkan", L".json");
 
 	s = get_reg(HKEY_CURRENT_USER, IMPLICIT_LAYERS, path, b64);

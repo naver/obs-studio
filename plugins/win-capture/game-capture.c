@@ -19,8 +19,24 @@
 #include "app-helpers.h"
 #include "audio-helpers.h"
 #include "nt-stuff.h"
+
 //PRISM/Xiewei/20230505/add game capture hook failed log
 #include "pls/pls-obs-api.h"
+#include "pls/pls-base.h"
+
+//PRISM/FanZirong/20240730/PRISM_PC-801/add game capture exe log
+#include "util/windows/win-version.h"
+#include <psapi.h>
+#include <winver.h>
+
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log
+#define do_logex(kr, level, fields, field_count, format, ...)         \
+	{                                                             \
+		blogex(kr, level, fields, field_count,                \
+		      "[game-capture: '%s'] " format,                  \
+		       obs_source_get_name(gc->source), ##__VA_ARGS__);                                \
+	}
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log
 
 #define do_log(level, format, ...)                  \
 	blog(level, "[game-capture: '%s'] " format, \
@@ -194,6 +210,9 @@ struct game_capture {
 	//PRISM/Xiewei/20230712/NoIssue/add debug log
 	char game_title[MAX_PATH];
 	char game_exe[MAX_PATH];
+
+	//PRISM/FanZirong/20241121/NoIssue/reduce log
+	int init_pipe_failed_num;
 
 	union {
 		struct {
@@ -624,23 +643,30 @@ static void game_capture_update(void *data, obs_data_t *settings)
 			   cfg.mode == CAPTURE_MODE_WINDOW ? window : NULL,
 			   cfg.capture_audio, cfg.priority);
 
+	gc->init_pipe_failed_num = 0;
 	//PRISM/Xiewei/20230712/NoIssue/add debug log
-	info("game updated.\n"
-	     "\ttitle: %s\n"
-	     "\tclass: %s\n"
-	     "\texe: %s\n"
-	     "\tmode: %d\n"
-	     "\tmatchPriority: %d\n"
-	     "\tforce_shmem: %d\n"
-	     "\tanticheat_hook: %d\n"
-	     "\tallow_transparency: %d\n"
-	     "\tlimit_framerate: %d\n"
-	     "\tcapture_overlays: %d\n"
-	     "\thook_rate: %d",
-	     cfg.title ? cfg.title : "empty", cfg.class ? cfg.class : "empty",
-	     cfg.executable, cfg.mode, cfg.priority, cfg.force_shmem,
-	     cfg.anticheat_hook, cfg.allow_transparency, cfg.limit_framerate,
-	     cfg.capture_overlays, cfg.hook_rate);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"source_name",
+				    obs_source_get_name(gc->source)}};
+
+	do_logex(false, LOG_INFO, fields, 2,
+		 "game updated.\n"
+		 "\ttitle: %s\n"
+		 "\tclass: %s\n"
+		 "\texe: %s\n"
+		 "\tmode: %d\n"
+		 "\tmatchPriority: %d\n"
+		 "\tforce_shmem: %d\n"
+		 "\tanticheat_hook: %d\n"
+		 "\tallow_transparency: %d\n"
+		 "\tlimit_framerate: %d\n"
+		 "\tcapture_overlays: %d\n"
+		 "\thook_rate: %d",
+		 cfg.title ? cfg.title : "empty",
+		 cfg.class ? cfg.class : "empty", cfg.executable, cfg.mode,
+		 cfg.priority, cfg.force_shmem, cfg.anticheat_hook,
+		 cfg.allow_transparency, cfg.limit_framerate,
+		 cfg.capture_overlays, cfg.hook_rate);
 }
 
 extern void wait_for_hook_initialization(void);
@@ -851,6 +877,8 @@ static inline void reset_frame_interval(struct game_capture *gc)
 	struct obs_video_info ovi;
 	uint64_t interval = 0;
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	// default landscape
 	if (obs_get_video_info(&ovi)) {
 		interval =
 			util_mul_div64(ovi.fps_den, 1000000000ULL, ovi.fps_num);
@@ -912,6 +940,26 @@ static void pipe_log(void *param, uint8_t *data, size_t size)
 	struct game_capture *gc = param;
 	if (data && size)
 		info("%s", data);
+
+	//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+	if (data && size) {
+		static char *key = "pls_game_render_type=";
+		size_t key_len = strlen(key);
+
+		char *sub = strstr(data, key);
+		if ((uint64_t)sub == (uint64_t)data && size > key_len) {
+			char *type = sub + key_len;
+
+			const char *fields[][2] = {
+				{"game_title", gc->game_title},
+				{"game_render_type", type},
+			};
+
+			blogex(false, LOG_INFO, fields, 2,
+			       "[game-capture : %p] game render type is [%s], title: %s",
+			       gc->source, type, gc->game_title);
+		}
+	}
 }
 
 static inline bool init_pipe(struct game_capture *gc)
@@ -920,7 +968,14 @@ static inline bool init_pipe(struct game_capture *gc)
 	snprintf(name, sizeof(name), "%s%lu", PIPE_NAME, gc->process_id);
 
 	if (!ipc_pipe_server_start(&gc->pipe, name, pipe_log, gc)) {
-		warn("init_pipe: failed to start pipe");
+		//PRISM/FanZirong/20241121/NoIssue/reduce log
+		if (gc->init_pipe_failed_num == 0 ||
+		    (gc->init_pipe_failed_num >= 15 && gc->init_pipe_failed_num % 15 ==
+		    0)) {
+			warn("init_pipe: failed to start pipe %lu",
+			     GetLastError());
+		}
+		gc->init_pipe_failed_num++;
 		return false;
 	}
 
@@ -1023,10 +1078,42 @@ static void log_game_capture_failed(struct game_capture *gc,
 				    enum obs_source_event_type type,
 				    const char *reason)
 {
+	//PRISM/FanZirong/20240730/PRISM_PC-801/add game capture exe log
 	struct dstr exe = {0};
-	ms_get_window_exe(&exe, gc->next_window);
+	char exe_version[100] = "0";
+	DWORD game_process_id = 0;
+	if (gc->next_window) {
+		ms_get_window_exe(&exe, gc->next_window);
+		GetWindowThreadProcessId(gc->next_window, &game_process_id);
+	} else {
+		ms_get_window_exe(&exe, gc->window);
+		GetWindowThreadProcessId(gc->window, &game_process_id);
+	}
+	if (game_process_id == 0)
+		goto done;
+
+	wchar_t exe_path[MAX_PATH] = {0};
+	HANDLE process = open_process(PROCESS_QUERY_INFORMATION, false,
+				       game_process_id);
+	if (!process)
+		goto done;
+
+	if (GetModuleFileNameExW(process, NULL, exe_path, MAX_PATH) == 0)
+		goto done;
+
+	struct win_version_info ver_info;
+	if (!get_dll_ver(exe_path, &ver_info))
+		goto done;
+
+	snprintf(exe_version, sizeof(exe_version), "%d.%d.%d.%d",
+		 ver_info.major, ver_info.minor, ver_info.build,
+		 ver_info.revis);
+	
+done:
 	obs_data_t *log = obs_data_create();
+	
 	obs_data_set_string(log, "game_exe", exe.array);
+	obs_data_set_string(log, "game_version", exe_version);
 	obs_data_set_string(log, "game_title", gc->game_title);
 	obs_data_set_string(log, "game_event_type", reason);
 	pls_source_send_message(gc->source, type, log);

@@ -1,19 +1,5 @@
 #include "winrt-capture.h"
 
-extern "C" {
-HRESULT __stdcall CreateDirect3D11DeviceFromDXGIDevice(
-	::IDXGIDevice *dxgiDevice, ::IInspectable **graphicsDevice);
-
-HRESULT __stdcall CreateDirect3D11SurfaceFromDXGISurface(
-	::IDXGISurface *dgxiSurface, ::IInspectable **graphicsSurface);
-}
-
-struct __declspec(uuid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1"))
-	IDirect3DDxgiInterfaceAccess : ::IUnknown {
-	virtual HRESULT __stdcall GetInterface(GUID const &id,
-					       void **object) = 0;
-};
-
 extern "C" EXPORT BOOL winrt_capture_supported()
 try {
 	/* no contract for IGraphicsCaptureItemInterop, verify 10.0.18362.0 */
@@ -50,7 +36,8 @@ template<typename T>
 static winrt::com_ptr<T> GetDXGIInterfaceFromObject(
 	winrt::Windows::Foundation::IInspectable const &object)
 {
-	auto access = object.as<IDirect3DDxgiInterfaceAccess>();
+	auto access = object.as<Windows::Graphics::DirectX::Direct3D11::
+					IDirect3DDxgiInterfaceAccess>();
 	winrt::com_ptr<T> result;
 	winrt::check_hresult(
 		access->GetInterface(winrt::guid_of<T>(), result.put_void()));
@@ -267,8 +254,8 @@ struct winrt_capture {
 			bool valid_size = (frame_content_size.Width > 0 &&
 					   frame_content_size.Height > 0);
 
-			if (valid_size && frame_content_size.Width != last_size.Width ||
-			    frame_content_size.Height != last_size.Height) {
+			if (valid_size && (frame_content_size.Width != last_size.Width ||
+			    frame_content_size.Height != last_size.Height)) {
 				format = desc.Format;
 				frame_pool.Recreate(
 					device,

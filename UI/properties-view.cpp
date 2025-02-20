@@ -143,6 +143,9 @@ void OBSPropertiesView::RefreshProperties()
 	adjustSize();
 	SetScrollPos(h, v, hend, vend);
 
+	if (disableScrolling)
+		setMinimumHeight(widget->minimumSizeHint().height());
+
 	lastFocused.clear();
 	if (lastWidget) {
 		lastWidget->setFocus(Qt::OtherFocusReason);
@@ -242,6 +245,13 @@ OBSPropertiesView::OBSPropertiesView(OBSData settings_, const char *type_,
 				  Qt::QueuedConnection);
 }
 
+void OBSPropertiesView::SetDisabled(bool disabled)
+{
+	for (auto child : findChildren<QWidget *>()) {
+		child->setDisabled(disabled);
+	}
+}
+
 void OBSPropertiesView::resizeEvent(QResizeEvent *event)
 {
 	emit PropertiesResized();
@@ -270,7 +280,11 @@ QWidget *OBSPropertiesView::AddCheckbox(obs_property_t *prop)
 
 	QCheckBox *checkbox = new QCheckBox(QT_UTF8(desc));
 	checkbox->setCheckState(val ? Qt::Checked : Qt::Unchecked);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+	return NewWidget(prop, checkbox, &QCheckBox::checkStateChanged);
+#else
 	return NewWidget(prop, checkbox, &QCheckBox::stateChanged);
+#endif
 }
 
 QWidget *OBSPropertiesView::AddText(obs_property_t *prop, QFormLayout *layout,
@@ -1626,18 +1640,15 @@ void OBSPropertiesView::AddProperty(obs_property_t *property,
 			QHBoxLayout *boxLayout = new QHBoxLayout(newWidget);
 			boxLayout->setContentsMargins(0, 0, 0, 0);
 			boxLayout->setAlignment(Qt::AlignLeft);
-#ifdef __APPLE__
-			/* TODO: This fixes the issue of tooltip not aligning
-			 * correcty on macOS, the root cause needs further
-			 * investigation. */
-			boxLayout->setSpacing(10);
-#else
 			boxLayout->setSpacing(0);
-#endif
+
 			QCheckBox *check = qobject_cast<QCheckBox *>(widget);
 			check->setText(desc);
 			check->setToolTip(
 				obs_property_long_description(property));
+#ifdef __APPLE__
+			check->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+#endif
 
 			QLabel *help = new QLabel(check);
 			help->setText(bStr.arg(file));
@@ -1810,17 +1821,21 @@ bool WidgetInfo::PathChanged(const char *setting)
 	obs_path_type type = obs_property_path_type(property);
 	const char *filter = obs_property_path_filter(property);
 	const char *default_path = obs_property_path_default_path(property);
+
+	QLineEdit *edit = static_cast<QLineEdit *>(widget);
+
+	QString startDir = edit->text();
+	if (startDir.isEmpty())
+		startDir = default_path;
+
 	QString path;
 
 	if (type == OBS_PATH_DIRECTORY)
-		path = SelectDirectory(view, QT_UTF8(desc),
-				       QT_UTF8(default_path));
+		path = SelectDirectory(view, QT_UTF8(desc), startDir);
 	else if (type == OBS_PATH_FILE)
-		path = OpenFile(view, QT_UTF8(desc), QT_UTF8(default_path),
-				QT_UTF8(filter));
+		path = OpenFile(view, QT_UTF8(desc), startDir, QT_UTF8(filter));
 	else if (type == OBS_PATH_FILE_SAVE)
-		path = SaveFile(view, QT_UTF8(desc), QT_UTF8(default_path),
-				QT_UTF8(filter));
+		path = SaveFile(view, QT_UTF8(desc), startDir, QT_UTF8(filter));
 
 #ifdef __APPLE__
 	// TODO: Revisit when QTBUG-42661 is fixed
@@ -1830,7 +1845,6 @@ bool WidgetInfo::PathChanged(const char *setting)
 	if (path.isEmpty())
 		return false;
 
-	QLineEdit *edit = static_cast<QLineEdit *>(widget);
 	edit->setText(path);
 	obs_data_set_string(view->settings, setting, QT_TO_UTF8(path));
 	return true;

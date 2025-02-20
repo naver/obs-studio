@@ -23,6 +23,9 @@
 #include "obs-internal.h"
 //PRISM/ZengQin/20230201/#none/for DrawPen feature.
 #include "pls/pls-obs-api.h"
+//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+#include "pls/pls-dual-output.h"
+#include "pls/pls-dual-output-internal.h"
 
 const struct obs_source_info group_info;
 
@@ -165,6 +168,10 @@ static void *scene_create(obs_data_t *settings, struct obs_source *source)
 		scene->cx = 0;
 		scene->cy = 0;
 	}
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	if (settings)
+		scene->is_vertical =
+			obs_data_get_bool(settings, ID_IS_VERTICAL);
 
 	signal_handler_add_array(obs_source_get_signal_handler(source),
 				 obs_scene_signals);
@@ -245,6 +252,7 @@ static void scene_destroy(void *data)
 
 	pthread_mutex_destroy(&scene->video_mutex);
 	pthread_mutex_destroy(&scene->audio_mutex);
+	da_free(scene->mix_sources);
 	bfree(scene);
 }
 
@@ -513,8 +521,28 @@ static void update_item_transform(struct obs_scene_item *item, bool update_tex)
 	/* Reset bounds crop */
 	memset(&item->bounds_crop, 0, sizeof(item->bounds_crop));
 
-	width = obs_source_get_width(item->source);
-	height = obs_source_get_height(item->source);
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info *saved_canvas = NULL;
+	struct obs_video_info_v2 *item_canvas = obs_sceneitem_get_canvas(item);
+	if (item_canvas) {
+		saved_canvas = obs_get_video_rendering_canvas();
+		obs_set_video_rendering_canvas(item_canvas->ovi);
+	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	// for scene source
+	if (item->is_vertical) {
+		width = pls_source_get_vertical_width(item->source);
+		height = pls_source_get_vertical_height(item->source);
+	} else {
+		width = obs_source_get_width(item->source);
+		height = obs_source_get_height(item->source);
+	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (saved_canvas)
+		obs_set_video_rendering_canvas(saved_canvas);
+
 	cx = calc_cx(item, width);
 	cy = calc_cy(item, height);
 	scale = item->scale;
@@ -993,6 +1021,22 @@ static void scene_video_render(void *data, gs_effect_t *effect)
 
 	item = scene->first_item;
 	while (item) {
+#ifdef _DEBUG //PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output ================= start
+		if (pls_is_vertical_sceneitem(item)) {
+			struct vec2 pos;
+			struct vec2 scale;
+			obs_sceneitem_get_pos(item, &pos);
+			obs_sceneitem_get_scale(item, &scale);
+
+			bool is_scene = obs_source_is_scene(item->source);
+			bool is_group = obs_source_is_group(item->source);
+		}
+#endif
+		if (!pls_sceneitem_is_rendering(item)) {
+			item = item->next;
+			continue;
+		}//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output ================= end
+
 		if (item->user_visible ||
 		    transition_active(item->hide_transition))
 			render_item(item);
@@ -1003,7 +1047,8 @@ static void scene_video_render(void *data, gs_effect_t *effect)
 	gs_blend_state_pop();
 
 	//PRISM/Zengqin/20230201/#none/for DrawPen feature
-	pls_scene_canvas_render(data);
+	if (pls_landscape_canvas_is_rendering())
+		pls_scene_canvas_render(data);
 
 	video_unlock(scene);
 
@@ -1084,6 +1129,15 @@ static void scene_load_item(struct obs_scene *scene, obs_data_t *item_data)
 		return;
 	}
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	item->is_vertical = obs_data_get_bool(item_data, "is_vertical");
+
+	obs_data_release(item->private_settings);
+	item->private_settings =
+		obs_data_get_obj(item_data, "private_settings");
+	if (!item->private_settings)
+		item->private_settings = obs_data_create();
+
 	calldata_init_fixed(&params, stack, sizeof(stack));
 	calldata_set_ptr(&params, "scene", scene);
 	calldata_set_ptr(&params, "item", item);
@@ -1102,11 +1156,12 @@ static void scene_load_item(struct obs_scene *scene, obs_data_t *item_data)
 	obs_data_get_vec2(item_data, "pos", &item->pos);
 	obs_data_get_vec2(item_data, "scale", &item->scale);
 
-	obs_data_release(item->private_settings);
-	item->private_settings =
-		obs_data_get_obj(item_data, "private_settings");
-	if (!item->private_settings)
-		item->private_settings = obs_data_create();
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//obs_data_release(item->private_settings);
+	//item->private_settings =
+	//	obs_data_get_obj(item_data, "private_settings");
+	//if (!item->private_settings)
+	//	item->private_settings = obs_data_create();
 
 	set_visibility(item, visible);
 	obs_sceneitem_set_locked(item, lock);
@@ -1253,6 +1308,9 @@ static void scene_save_item(obs_data_array_t *array,
 	obs_data_set_int(item_data, "id", item->id);
 	obs_data_set_bool(item_data, "group_item_backup", !!backup_group);
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_data_set_bool(item_data, "is_vertical", item->is_vertical);
+
 	if (item->is_group) {
 		obs_scene_t *group_scene = item->source->context.data;
 		obs_sceneitem_t *group_item;
@@ -1336,10 +1394,19 @@ static void scene_save(void *data, obs_data_t *settings)
 
 	item = scene->first_item;
 	while (item) {
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (is_save_bypass_vertical && item->is_vertical)
+		{
+			item = item->next;
+			continue;
+		}
+
 		scene_save_item(array, item, NULL);
 		item = item->next;
 	}
 
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	obs_data_set_bool(settings, ID_IS_VERTICAL, scene->is_vertical);
 	obs_data_set_int(settings, "id_counter", scene->id_counter);
 	obs_data_set_bool(settings, "custom_size", scene->custom_size);
 	if (scene->custom_size) {
@@ -1353,14 +1420,66 @@ static void scene_save(void *data, obs_data_t *settings)
 	obs_data_array_release(array);
 }
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+void scene_save_internal(void* data, obs_data_t* settings)
+{
+	scene_save(data, settings);
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+typedef enum {
+	WIDTH,
+	HEIGHT,
+} SmartSizeType;
+
+static uint32_t ovi_get_size(struct obs_video_info* ovi, SmartSizeType type)
+{
+	if (ovi == NULL) {
+		return 0;
+	}
+	return type == WIDTH ? ovi->base_width : ovi->base_height;
+}
+
+static uint32_t scene_get_size_smart(obs_scene_t* scene, SmartSizeType type)
+{
+	if (scene == NULL)
+		return 0;
+
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	if (scene->is_vertical) {
+		struct obs_video_info ovi = {0};
+		if (pls_get_vertical_video_info(&ovi))
+			return ovi_get_size(&ovi, type);
+	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info ovi;
+	if (pls_obs_is_rendering() && pls_get_video_info_current(&ovi)) {
+		return ovi_get_size(&ovi, type);
+	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	// for vertical size
+	if (is_force_get_vertical_size > 0) {
+		struct obs_video_info ovi = {0};
+		if (pls_get_vertical_video_info(&ovi))
+			return ovi_get_size(&ovi, type);
+	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	// default for landscape
+	if (obs_get_video_info(&ovi)) {
+		return ovi_get_size(&ovi, type);
+	}
+	return 0;
+}
+
 static uint32_t scene_getwidth(void *data)
 {
 	obs_scene_t *scene = data;
 	if (scene->custom_size)
 		return scene->cx;
-	if (obs->video.main_mix)
-		return obs->video.main_mix->ovi.base_width;
-	return 0;
+	return scene_get_size_smart(scene, WIDTH);
 }
 
 static uint32_t scene_getheight(void *data)
@@ -1368,9 +1487,7 @@ static uint32_t scene_getheight(void *data)
 	obs_scene_t *scene = data;
 	if (scene->custom_size)
 		return scene->cy;
-	if (obs->video.main_mix)
-		return obs->video.main_mix->ovi.base_height;
-	return 0;
+	return scene_get_size_smart(scene, HEIGHT);
 }
 
 static void apply_scene_item_audio_actions(struct obs_scene_item *item,
@@ -1484,16 +1601,28 @@ static inline void mix_audio(float *p_out, float *p_in, size_t pos,
 		*(out++) += *(in++);
 }
 
-static bool scene_audio_render(void *data, uint64_t *ts_out,
-			       struct obs_source_audio_mix *audio_output,
-			       uint32_t mixers, size_t channels,
-			       size_t sample_rate)
+static inline struct scene_source_mix *get_source_mix(struct obs_scene *scene,
+						      struct obs_source *source)
+{
+	for (size_t i = 0; i < scene->mix_sources.num; i++) {
+		struct scene_source_mix *mix = &scene->mix_sources.array[i];
+		if (mix->source == source)
+			return mix;
+	}
+
+	return NULL;
+}
+
+static bool scene_audio_render_internal(
+	struct obs_scene *scene, struct obs_scene *parent, uint64_t *ts_out,
+	struct obs_source_audio_mix *audio_output, uint32_t mixers,
+	size_t channels, size_t sample_rate, float *parent_buf)
 {
 	uint64_t timestamp = 0;
 	float buf[AUDIO_OUTPUT_FRAMES];
 	struct obs_source_audio_mix child_audio;
-	struct obs_scene *scene = data;
 	struct obs_scene_item *item;
+	struct obs_scene *mix_scene = parent ? parent : scene;
 
 	audio_lock(scene);
 
@@ -1507,6 +1636,7 @@ static bool scene_audio_render(void *data, uint64_t *ts_out,
 			source = item->hide_transition;
 		else
 			source = item->source;
+
 		if (!obs_source_audio_pending(source) &&
 		    (item->visible ||
 		     transition_active(item->hide_transition))) {
@@ -1536,9 +1666,11 @@ static bool scene_audio_render(void *data, uint64_t *ts_out,
 	item = scene->first_item;
 	while (item) {
 		uint64_t source_ts;
-		size_t pos, count;
+		size_t pos;
 		bool apply_buf;
 		struct obs_source *source;
+		struct scene_source_mix *source_mix;
+
 		if (item->visible && transition_active(item->show_transition))
 			source = item->show_transition;
 		else if (!item->visible &&
@@ -1569,15 +1701,94 @@ static bool scene_audio_render(void *data, uint64_t *ts_out,
 			continue;
 		}
 
-		count = AUDIO_OUTPUT_FRAMES - pos;
-
 		if (!apply_buf && !item->visible &&
 		    !transition_active(item->hide_transition)) {
 			item = item->next;
 			continue;
 		}
 
-		obs_source_get_audio_mix(source, &child_audio);
+		size_t count = AUDIO_OUTPUT_FRAMES - pos;
+
+		/* Update buf so that parent mute state applies to all current
+		 * scene items as well */
+		if (parent_buf &&
+		    (!apply_buf ||
+		     memcmp(buf, parent_buf, sizeof(float) * count) != 0)) {
+			for (size_t i = 0; i < count; i++) {
+				if (!apply_buf) {
+					buf[i] = parent_buf[i];
+				} else {
+					buf[i] = buf[i] < parent_buf[i]
+							 ? buf[i]
+							 : parent_buf[i];
+				}
+			}
+
+			apply_buf = true;
+		}
+
+		/* If "source" is a group/scene and has no transition,
+		 * add their items to the current list */
+		if (source == item->source && (obs_source_is_group(source) ||
+					       obs_source_is_scene(source))) {
+			scene_audio_render_internal(source->context.data,
+						    mix_scene, NULL, NULL, 0, 0,
+						    sample_rate,
+						    apply_buf ? buf : NULL);
+			item = item->next;
+			continue;
+		}
+
+		source_mix = get_source_mix(mix_scene, item->source);
+
+		if (!source_mix) {
+			source_mix = da_push_back_new(mix_scene->mix_sources);
+			source_mix->source = item->source;
+			source_mix->transition = source != item->source ? source
+									: NULL;
+			source_mix->apply_buf = apply_buf;
+			source_mix->pos = pos;
+			source_mix->count = count;
+			if (apply_buf) {
+				memcpy(source_mix->buf, buf,
+				       sizeof(float) * source_mix->count);
+			}
+		} else {
+			/* Only transition audio if there are no
+			 * non-transitioning scene items. */
+			if (source_mix->transition && source == item->source)
+				source_mix->transition = NULL;
+			/* Only apply buf to mix if all scene items for this
+			 * source require it. */
+			source_mix->apply_buf = source_mix->apply_buf &&
+						apply_buf;
+			/* Update buf so that only highest value across all
+			 * items is used. */
+			if (source_mix->apply_buf &&
+			    memcmp(source_mix->buf, buf,
+				   source_mix->count * sizeof(float)) != 0) {
+				for (size_t i = 0; i < source_mix->count; i++) {
+					if (buf[i] > source_mix->buf[i])
+						source_mix->buf[i] = buf[i];
+				}
+			}
+		}
+
+		item = item->next;
+	}
+
+	if (!audio_output) {
+		audio_unlock(scene);
+		return true;
+	}
+
+	for (size_t i = 0; i < scene->mix_sources.num; i++) {
+		struct scene_source_mix *source_mix =
+			&scene->mix_sources.array[i];
+		obs_source_get_audio_mix(source_mix->transition
+						 ? source_mix->transition
+						 : source_mix->source,
+					 &child_audio);
 
 		for (size_t mix = 0; mix < MAX_AUDIO_MIXES; mix++) {
 			if ((mixers & (1 << mix)) == 0)
@@ -1587,21 +1798,34 @@ static bool scene_audio_render(void *data, uint64_t *ts_out,
 				float *out = audio_output->output[mix].data[ch];
 				float *in = child_audio.output[mix].data[ch];
 
-				if (apply_buf)
-					mix_audio_with_buf(out, in, buf, pos,
-							   count);
+				if (source_mix->apply_buf)
+					mix_audio_with_buf(out, in,
+							   source_mix->buf,
+							   source_mix->pos,
+							   source_mix->count);
 				else
-					mix_audio(out, in, pos, count);
+					mix_audio(out, in, source_mix->pos,
+						  source_mix->count);
 			}
 		}
-
-		item = item->next;
 	}
+
+	da_clear(scene->mix_sources);
 
 	*ts_out = timestamp;
 	audio_unlock(scene);
 
 	return true;
+}
+
+static bool scene_audio_render(void *data, uint64_t *ts_out,
+			       struct obs_source_audio_mix *audio_output,
+			       uint32_t mixers, size_t channels,
+			       size_t sample_rate)
+{
+	struct obs_scene *scene = data;
+	return scene_audio_render_internal(scene, NULL, ts_out, audio_output,
+					   mixers, channels, sample_rate, NULL);
 }
 
 enum gs_color_space
@@ -1614,7 +1838,8 @@ scene_video_get_color_space(void *data, size_t count,
 
 	enum gs_color_space space = GS_CS_SRGB;
 	struct obs_video_info ovi;
-	if (obs_get_video_info(&ovi)) {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (pls_get_video_info_current(&ovi)) {
 		if (ovi.colorspace == VIDEO_CS_2100_PQ ||
 		    ovi.colorspace == VIDEO_CS_2100_HLG)
 			space = GS_CS_709_EXTENDED;
@@ -1753,6 +1978,9 @@ static inline void duplicate_item_data(struct obs_scene_item *dst,
 	dst->crop_to_bounds = src->crop_to_bounds;
 	dst->bounds_crop = src->bounds_crop;
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	dst->is_vertical = src->is_vertical;
+
 	if (src->show_transition) {
 		obs_source_t *transition = obs_source_duplicate(
 			src->show_transition,
@@ -1854,8 +2082,14 @@ obs_scene_t *obs_scene_duplicate(obs_scene_t *scene, const char *name,
 				 : new_ref(item->source);
 
 		if (source) {
-			struct obs_scene_item *new_item =
-				obs_scene_add(new_scene, source);
+			//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+			struct obs_scene_item *new_item = NULL;
+			if (item->is_vertical) {
+				new_item = pls_vertical_scene_add(new_scene,
+								  source, NULL, item->private_settings);
+			} else {
+				new_item = obs_scene_add(new_scene, source);
+			}
 
 			if (!new_item) {
 				obs_source_release(source);
@@ -2040,6 +2274,12 @@ void obs_scene_enum_items(obs_scene_t *scene,
 	while (item) {
 		struct obs_scene_item *next = item->next;
 
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (is_enum_scene_include_vertical == 0 && item->is_vertical) {
+			item = next;
+			continue;
+		}
+
 		obs_sceneitem_addref(item);
 
 		if (!callback(scene, item, param)) {
@@ -2054,6 +2294,7 @@ void obs_scene_enum_items(obs_scene_t *scene,
 
 	full_unlock(scene);
 }
+
 
 static obs_sceneitem_t *sceneitem_get_ref(obs_sceneitem_t *si)
 {
@@ -2140,6 +2381,14 @@ static void init_hotkeys(obs_scene_t *scene, obs_sceneitem_t *item,
 		scene->source, show.array, show_desc.array, hide.array,
 		hide_desc.array, hotkey_show_sceneitem, hotkey_hide_sceneitem,
 		item, item);
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (item->is_vertical) {
+		if (!obs_hotkey_pair_set_vertical(item->toggle_visibility)) {
+			blog(LOG_ERROR, "%s: sceneitem %p set vertical failed!",
+			     __FUNCTION__, item);
+		}
+	}
 
 	dstr_free(&show);
 	dstr_free(&hide);
@@ -2289,11 +2538,48 @@ release_source_and_fail:
 obs_sceneitem_t *obs_scene_add(obs_scene_t *scene, obs_source_t *source)
 {
 	obs_sceneitem_t *item = obs_scene_add_internal(scene, source, NULL, 0);
+
 	struct calldata params;
 	uint8_t stack[128];
 
 	if (!item)
 		return NULL;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	item->is_vertical = false;
+
+	calldata_init_fixed(&params, stack, sizeof(stack));
+	calldata_set_ptr(&params, "scene", scene);
+	calldata_set_ptr(&params, "item", item);
+	signal_handler_signal(scene->source->context.signals, "item_add",
+			      &params);
+	return item;
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+obs_sceneitem_t *obs_scene_add_vertical(obs_scene_t *scene,
+					obs_source_t *source,
+					obs_sceneitem_t *insert_after,
+					obs_data_t *settings)
+{
+	obs_sceneitem_t *item =
+		obs_scene_add_internal(scene, source, insert_after, 0);
+	struct calldata params;
+	uint8_t stack[128];
+
+	if (!item)
+		return NULL;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	item->is_vertical = true;
+
+	if (settings != NULL) {
+		obs_data_t *data = obs_sceneitem_get_private_settings(item);
+
+		obs_data_apply(data, settings);
+
+		obs_data_release(data);
+	}
 
 	calldata_init_fixed(&params, stack, sizeof(stack));
 	calldata_set_ptr(&params, "scene", scene);
@@ -2412,9 +2698,14 @@ void obs_sceneitem_remove(obs_sceneitem_t *item)
 
 	//full_lock(scene); // PRISM/liuying
 	obs_sceneitem_remove_internal(item);
-	full_unlock(scene);
+
+	//PRISM/FanZirong/20240830/#6069/avoid audio_thread use item crash
+	//full_unlock(scene);
 
 	obs_sceneitem_release(item);
+
+	//PRISM/FanZirong/20240830/#6069/avoid audio_thread use item crash
+	full_unlock(scene);
 }
 
 void obs_sceneitem_save(obs_sceneitem_t *item, obs_data_array_t *arr)
@@ -2636,6 +2927,21 @@ void obs_scene_load_transform_states(const char *data)
 
 void obs_sceneitem_select(obs_sceneitem_t *item, bool select)
 {
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	if (0 == strcmp(item->source->info.id, "group")) {
+		if (pls_is_dual_output_on()) {
+			select = false;
+		}
+	}
+
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	if (0 == strcmp(item->source->info.id, "scene")) {
+		if (pls_is_dual_output_on() &&
+		    pls_is_vertical_scene(item->source->context.data)) {
+			select = false;
+		}
+	}
+
 	struct calldata params;
 	uint8_t stack[128];
 	const char *command = select ? "item_select" : "item_deselect";
@@ -3402,6 +3708,12 @@ static bool resize_scene_base(obs_scene_t *scene, struct vec2 *minv,
 	}
 
 	while (item) {
+		//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+		if (scene->is_group && !scene->is_vertical &&
+		    pls_is_vertical_sceneitem(item)) {
+			item = item->next;
+			continue;
+		}
 #define get_min_max(x_val, y_val)                             \
 	do {                                                  \
 		struct vec3 v;                                \
@@ -3450,6 +3762,11 @@ static void resize_scene(obs_scene_t *scene)
 /* assumes group scene and parent scene is locked */
 static void resize_group(obs_sceneitem_t *group)
 {
+	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
+	if (0 == strcmp(group->source->info.id, "group") &&
+	    pls_is_dual_output_on())
+		return;
+
 	obs_scene_t *scene = group->source->context.data;
 	struct vec2 minv;
 	struct vec2 maxv;
@@ -4254,4 +4571,16 @@ void pls_sceneitem_group_ungroup(obs_sceneitem_t *item)
 	full_unlock(scene);
 
 	obs_sceneitem_release(item);
+}
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+struct obs_video_info_v2 *obs_sceneitem_get_canvas(obs_sceneitem_t *item)
+{
+	if (!pls_is_dual_output_initialized() && item->is_vertical) {
+		return NULL;
+	}
+
+	int index = item->is_vertical ? VERTIVAL_CANVAS_INDEX
+				      : LANDSCAPE_CANVAS_INDEX;
+	return obs_get_canvas_by_index(index);
 }

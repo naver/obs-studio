@@ -99,6 +99,7 @@ VADisplay vaapi_open_device(int *fd, const char *device_path,
 	if (va_status != VA_STATUS_SUCCESS) {
 		blog(LOG_ERROR, "VAAPI: Failed to initialize display in %s",
 		     func_name);
+		vaapi_close_device(fd, va_dpy);
 		return NULL;
 	}
 
@@ -128,7 +129,6 @@ static uint32_t vaapi_display_ep_combo_rate_controls(VAProfile profile,
 						     VADisplay dpy,
 						     const char *device_path)
 {
-	bool ret = false;
 	VAStatus va_status;
 	VAConfigAttrib attrib[1];
 	attrib->type = VAConfigAttribRateControl;

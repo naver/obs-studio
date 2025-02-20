@@ -362,13 +362,28 @@ int64_t os_get_free_space(const char *path)
 {
     if (path) {
         NSURL *fileURL = [NSURL fileURLWithPath:@(path)];
+	// PRISM/cao.kewei/20240802/add log/start
+	NSError *error = nil;
+	if (![fileURL checkResourceIsReachableAndReturnError:&error]) {
+		blog(LOG_ERROR, "Path is not reachable: %s", error.localizedDescription.UTF8String);
+	}
 
         NSArray *availableCapacityKeys = @[
             NSURLVolumeAvailableCapacityKey, NSURLVolumeAvailableCapacityForImportantUsageKey,
             NSURLVolumeAvailableCapacityForOpportunisticUsageKey
         ];
 
-        NSDictionary *values = [fileURL resourceValuesForKeys:availableCapacityKeys error:nil];
+        NSDictionary *values = [fileURL resourceValuesForKeys:availableCapacityKeys error:&error];
+	if (error) {
+		blog(LOG_ERROR, "Error getting resource values: %s", error.localizedDescription.UTF8String);
+	}
+
+	NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:fileURL.path error:&error];
+	if (attrs) {
+		NSNumber *freeSpace = [attrs objectForKey:NSFileSystemFreeSize];
+		blog(LOG_INFO, "Free disk space from NSFileManager: %lld", freeSpace.longLongValue);
+	}
+	// PRISM/cao.kewei/20240802/add log/end
 
         NSNumber *availableImportantSpace = values[NSURLVolumeAvailableCapacityForImportantUsageKey];
         NSNumber *availableSpace = values[NSURLVolumeAvailableCapacityKey];

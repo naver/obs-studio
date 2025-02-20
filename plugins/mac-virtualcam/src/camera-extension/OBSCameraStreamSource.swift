@@ -72,6 +72,21 @@ class OBSCameraStreamSource: NSObject, CMIOExtensionStreamSource {
     }
 
     func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool {
+		//PRISM/Zhongling/20240725/#/Analog for vcam start
+		let signingID: String
+		if #available(macOS 13.0, *) {
+			signingID = client.signingID ?? ""
+		} else {
+			signingID = ""
+		}
+		
+		let dateFormatter = DateFormatter()
+		dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+		SwiftWebSocketServer.singleton?.appendExtensionClientInfo(.init(
+			pid: client.pid, signingId: signingID,
+			clientId: client.clientID.uuidString,
+			date: dateFormatter.string(from: Date())))
+		//PRISM/Zhongling/20240725/#/Analog for vcam end
         return true
     }
 

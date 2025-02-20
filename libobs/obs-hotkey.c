@@ -19,6 +19,10 @@
 
 #include "obs-internal.h"
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+#include "pls/pls-dual-output.h"
+#include "pls/pls-dual-output-internal.h"
+
 /* Since ids are just sequential size_t integers, we don't really need a
  * hash function to get an even distribution across buckets.
  * (Realistically this should never wrap, who has 4.29 billion hotkeys?!)  */
@@ -113,6 +117,19 @@ void obs_hotkey_set_description(obs_hotkey_id id, const char *desc)
 	hotkey->description = bstrdup(desc);
 }
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+bool obs_hotkey_set_vertical(obs_hotkey_id id)
+{
+	obs_hotkey_t *hotkey;
+	HASH_FIND_HKEY(obs->hotkeys.hotkeys, id, hotkey);
+	if (!hotkey)
+		blog(LOG_ERROR, "Can not find hotkey. id=[%zu]", id);
+		return false;
+
+	hotkey->is_vertical = true;
+	return true;
+}
+
 void obs_hotkey_pair_set_names(obs_hotkey_pair_id id, const char *name0,
 			       const char *name1)
 {
@@ -137,6 +154,22 @@ void obs_hotkey_pair_set_descriptions(obs_hotkey_pair_id id, const char *desc0,
 
 	obs_hotkey_set_description(pair->id[0], desc0);
 	obs_hotkey_set_description(pair->id[1], desc1);
+}
+
+bool obs_hotkey_pair_set_vertical(obs_hotkey_pair_id id)
+{
+	obs_hotkey_pair_t *pair;
+
+	HASH_FIND_HKEY(obs->hotkeys.hotkey_pairs, id, pair);
+	if (!pair)
+		blog(LOG_ERROR, "Can not find hotkey pair. id=[%zu]", id);
+		return false;
+
+	bool ret = false;
+
+	ret = obs_hotkey_set_vertical(pair->id[0]);
+	ret &= obs_hotkey_set_vertical(pair->id[1]);
+	return ret;
 }
 
 static void hotkey_signal(const char *signal, obs_hotkey_t *hotkey)
@@ -477,6 +510,11 @@ static inline void enum_bindings(obs_hotkey_binding_internal_enum_func func,
 	const size_t num = obs->hotkeys.bindings.num;
 	obs_hotkey_binding_t *array = obs->hotkeys.bindings.array;
 	for (size_t i = 0; i < num; i++) {
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (is_enum_hotkey_bypass_vertical && array[i].is_vertical) {
+			continue;
+		}
+
 		if (!func(data, i, &array[i]))
 			break;
 	}
@@ -518,6 +556,9 @@ static inline void create_binding(obs_hotkey_t *hotkey,
 	binding->key = combo;
 	binding->hotkey_id = hotkey->id;
 	binding->hotkey = hotkey;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	binding->is_vertical = hotkey->is_vertical;
 }
 
 static inline void load_binding(obs_hotkey_t *hotkey, obs_data_t *data)
@@ -1036,6 +1077,12 @@ void obs_enum_hotkeys(obs_hotkey_enum_func func, void *data)
 
 	obs_hotkey_t *hk, *tmp;
 	HASH_ITER (hh, obs->hotkeys.hotkeys, hk, tmp) {
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (is_enum_hotkey_bypass_vertical && hk->is_vertical)
+		{
+			continue;
+		}
+
 		if (!func(data, hk->id, hk))
 			break;
 	}
@@ -1049,6 +1096,17 @@ void obs_enum_hotkey_bindings(obs_hotkey_binding_enum_func func, void *data)
 		return;
 
 	enum_bindings(func, data);
+	unlock();
+}
+
+void obs_enum_hotkey_bindings_all(obs_hotkey_binding_enum_func func, void* data)
+{
+	if (!lock())
+		return;
+
+	is_enum_hotkey_bypass_vertical = false;
+	enum_bindings(func, data);
+	is_enum_hotkey_bypass_vertical = true;
 	unlock();
 }
 
@@ -1283,6 +1341,13 @@ void obs_hotkey_trigger_routed_callback(obs_hotkey_id id, bool pressed)
 	if (!hotkey) {
 		//PRISM/cao.kewei/20240122/#4022/hotkey log
 		blog(LOG_INFO, "%s hotkey is null. id: %zu pressed: %s", __FUNCTION__, id, pressed ? "true" : "false");
+		goto unlock;
+	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (!pls_is_dual_output_on() && pls_is_vertical_hotkey(hotkey)) {
+		blog(LOG_INFO, "%s hotkey is vertical and dual output is off. id: %zu pressed: %s",
+		     __FUNCTION__, id, pressed ? "true" : "false");
 		goto unlock;
 	}
 

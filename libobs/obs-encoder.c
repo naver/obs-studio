@@ -19,6 +19,13 @@
 #include "obs-internal.h"
 #include "util/util_uint64.h"
 #include "pls/pls-encoder.h"
+//PRISM/cao.kewei/20241016/PRISM_PC-1296
+#include "pls/pls-statistics.h"
+//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+#include "pls/pls-base.h"
+
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+#include "pls/pls-dual-output-internal.h"
 
 #define encoder_active(encoder) os_atomic_load_bool(&encoder->active)
 #define set_encoder_active(encoder, val) \
@@ -127,6 +134,9 @@ create_encoder(const char *id, enum obs_encoder_type type, const char *name,
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: id=%s, name=%s, data=%p, media=%p", encoder,
 	     __FUNCTION__, id, name, encoder->context.data, encoder->media);
+
+	//PRISM/Xiewei/20240806/#5901/trace encoders' lifetime
+	on_encoder_created(encoder);
 
 	return encoder;
 }
@@ -255,7 +265,8 @@ static void maybe_set_up_gpu_rescale(struct obs_encoder *encoder)
 	if (!create_mix)
 		return;
 
-	ovi = current_mix->ovi;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	ovi = *(current_mix->ovi);
 
 	ovi.output_format = info->format;
 	ovi.colorspace = info->colorspace;
@@ -267,7 +278,13 @@ static void maybe_set_up_gpu_rescale(struct obs_encoder *encoder)
 
 	ovi.gpu_conversion = true;
 
-	mix = obs_create_video_mix(&ovi);
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info_v2 *ovi_v2 = obs_create_3dr_ovi(&ovi);
+	if (ovi_v2 == NULL)
+		return;
+	ovi_v2->parent = obs_find_ovi_v2_by_ovi(current_mix->ovi);
+
+	mix = obs_create_video_mix(ovi_v2->ovi);
 	if (!mix)
 		return;
 
@@ -333,12 +350,23 @@ static void add_connection(struct obs_encoder *encoder)
 		}
 	}
 
+	if (encoder->encoder_group) {
+		pthread_mutex_lock(&encoder->encoder_group->mutex);
+		encoder->encoder_group->num_encoders_started += 1;
+		bool ready = encoder->encoder_group->num_encoders_started >=
+			     encoder->encoder_group->encoders.num;
+		pthread_mutex_unlock(&encoder->encoder_group->mutex);
+		if (ready)
+			add_ready_encoder_group(encoder);
+	}
+
 	set_encoder_active(encoder, true);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Exit]", encoder, __FUNCTION__);
 }
 
+void obs_encoder_group_actually_destroy(obs_encoder_group_t *group);
 static void remove_connection(struct obs_encoder *encoder, bool shutdown)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
@@ -355,6 +383,13 @@ static void remove_connection(struct obs_encoder *encoder, bool shutdown)
 		}
 	}
 
+	if (encoder->encoder_group) {
+		pthread_mutex_lock(&encoder->encoder_group->mutex);
+		if (--encoder->encoder_group->num_encoders_started == 0)
+			encoder->encoder_group->start_timestamp = 0;
+		pthread_mutex_unlock(&encoder->encoder_group->mutex);
+	}
+
 	/* obs_encoder_shutdown locks init_mutex, so don't call it on encode
 	 * errors, otherwise you can get a deadlock with outputs when they end
 	 * data capture, which will lock init_mutex and the video callback
@@ -362,6 +397,8 @@ static void remove_connection(struct obs_encoder *encoder, bool shutdown)
 	 * up again */
 	if (shutdown)
 		obs_encoder_shutdown(encoder);
+	encoder->initialized = false;
+
 	set_encoder_active(encoder, false);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
@@ -383,6 +420,8 @@ static void obs_encoder_actually_destroy(obs_encoder_t *encoder)
 	blog(LOG_INFO, "%p-%s: [Enter]", encoder, __FUNCTION__);
 
 	if (encoder) {
+		//PRISM/Xiewei/20240806/#5901/trace encoders' lifetime
+		on_encoder_destoryed(encoder);
 		pthread_mutex_lock(&encoder->outputs_mutex);
 		for (size_t i = 0; i < encoder->outputs.num; i++) {
 			struct obs_output *output = encoder->outputs.array[i];
@@ -396,6 +435,8 @@ static void obs_encoder_actually_destroy(obs_encoder_t *encoder)
 		//PRISM/WuLongyue/20231122/#2212/add logs
 		blog(LOG_INFO, "%p-%s: id=%s before destroy plugin %p", encoder,
 		     __FUNCTION__, encoder->info.id, encoder->context.data);
+
+		obs_encoder_set_group(encoder, NULL);
 
 		free_audio_buffers(encoder);
 
@@ -551,7 +592,10 @@ void obs_encoder_update(obs_encoder_t *encoder, obs_data_t *settings)
 	//PRISM/wangshaohui/20231214/none/add logs
 	if (settings) {
 		const char *json = obs_data_get_json(settings);
-		blog(LOG_INFO,
+
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+
+		blogex(false, LOG_INFO, fields, 1,
 		     "%p - %s, encoder settings is set for %s: \n%s\n", encoder,
 		     __FUNCTION__, encoder->info.id ? encoder->info.id : "null",
 		     json ? json : "null");
@@ -659,6 +703,10 @@ static inline bool obs_encoder_initialize_internal(obs_encoder_t *encoder)
 	if (encoder->orig_info.type == OBS_ENCODER_AUDIO)
 		intitialize_audio_encoder(encoder);
 
+	//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
+	init_pts_stats(&encoder->pts_stats, encoder, encoder->context.name,
+		       encoder->info.id);
+
 	//PRISM/wangshaohui/20231214/none/add logs
 	blog(LOG_INFO,
 	     "%p-%s orig_id=%s real_id=%s plugin=%p, really successed", encoder,
@@ -709,8 +757,18 @@ bool obs_encoder_initialize(obs_encoder_t *encoder)
 	pthread_mutex_unlock(&encoder->init_mutex);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: [Exit] success=%d", encoder, __FUNCTION__,
-	     success);
+	const char *e = obs_encoder_get_last_error(encoder);
+	//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+	if (success) {
+		blog(LOG_INFO,
+		     "%p-%s: [Exit] success=1 encoderId=%s error=successed", encoder,
+		     __FUNCTION__, encoder->info.id);
+	} else {
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+		blogex(false, LOG_ERROR, fields, 1,
+		     "%p-%s: [Exit] success=0 encoderId=%s error=%s", encoder,
+		     __FUNCTION__, encoder->info.id, e ? e : "");
+	}
 
 	return success;
 }
@@ -844,10 +902,10 @@ void obs_encoder_start(obs_encoder_t *encoder,
 	pthread_mutex_unlock(&encoder->init_mutex);
 }
 
-static inline bool obs_encoder_stop_internal(
-	obs_encoder_t *encoder,
-	void (*new_packet)(void *param, struct encoder_packet *packet),
-	void *param)
+void obs_encoder_stop(obs_encoder_t *encoder,
+		      void (*new_packet)(void *param,
+					 struct encoder_packet *packet),
+		      void *param)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Enter] new_packet=%p, param=%p", encoder,
@@ -856,6 +914,16 @@ static inline bool obs_encoder_stop_internal(
 	bool last = false;
 	size_t idx;
 
+	if (!obs_encoder_valid(encoder, "obs_encoder_stop"))
+		return;
+	if (!obs_ptr_valid(new_packet, "obs_encoder_stop"))
+		return;
+
+	/* Ensure encoder is not destroyed elsewhere before we are done with it
+	 * by adding a reference of our own. */
+	obs_encoder_addref(encoder);
+
+	pthread_mutex_lock(&encoder->init_mutex);
 	pthread_mutex_lock(&encoder->callbacks_mutex);
 
 	idx = get_callback_idx(encoder, new_packet, param);
@@ -868,49 +936,40 @@ static inline bool obs_encoder_stop_internal(
 
 	if (last) {
 		remove_connection(encoder, true);
-		encoder->initialized = false;
+		pthread_mutex_unlock(&encoder->init_mutex);
 
 		//PRISM/WuLongyue/20231212/#2212
 		encoder->is_full_stop = false;
 
-		if (encoder->destroy_on_stop) {
-			pthread_mutex_unlock(&encoder->init_mutex);
+		struct obs_encoder_group *group = encoder->encoder_group;
+
+		if (encoder->destroy_on_stop)
 			obs_encoder_actually_destroy(encoder);
-			return true;
+		else
+			obs_encoder_release(encoder);
+
+		/* Destroying the group all the way back here prevents a race
+		 * where destruction of the group can prematurely destroy the
+		 * encoder within internal functions. This is the point where it
+		 * is safe to destroy the group, even if the encoder is then
+		 * also destroyed. */
+		if (group) {
+			pthread_mutex_lock(&group->mutex);
+			if (group->destroy_on_stop &&
+			    group->num_encoders_started == 0)
+				obs_encoder_group_actually_destroy(group);
+			else
+				pthread_mutex_unlock(&group->mutex);
 		}
+	} else {
+		pthread_mutex_unlock(&encoder->init_mutex);
+		obs_encoder_release(encoder);
 	}
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Exit] idx=%zu, last=%d", encoder, __FUNCTION__,
 	     idx, last);
 
-	return false;
-}
-
-void obs_encoder_stop(obs_encoder_t *encoder,
-		      void (*new_packet)(void *param,
-					 struct encoder_packet *packet),
-		      void *param)
-{
-	bool destroyed;
-
-	if (!obs_encoder_valid(encoder, "obs_encoder_stop"))
-		return;
-	if (!obs_ptr_valid(new_packet, "obs_encoder_stop"))
-		return;
-
-	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: [Enter] new_packet=%p, param=%p", encoder,
-	     __FUNCTION__, new_packet, param);
-
-	pthread_mutex_lock(&encoder->init_mutex);
-	destroyed = obs_encoder_stop_internal(encoder, new_packet, param);
-	if (!destroyed)
-		pthread_mutex_unlock(&encoder->init_mutex);
-
-	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: [Exit] new_packet=%p, param=%p", encoder,
-	     __FUNCTION__, new_packet, param);
 }
 
 const char *obs_encoder_get_codec(const obs_encoder_t *encoder)
@@ -1304,6 +1363,21 @@ video_t *obs_encoder_video(const obs_encoder_t *encoder)
 	return encoder->fps_override ? encoder->fps_override : encoder->media;
 }
 
+video_t *obs_encoder_parent_video(const obs_encoder_t *encoder)
+{
+	if (!obs_encoder_valid(encoder, "obs_encoder_parent_video"))
+		return NULL;
+	if (encoder->info.type != OBS_ENCODER_VIDEO) {
+		blog(LOG_WARNING,
+		     "obs_encoder_parent_video: "
+		     "encoder '%s' is not a video encoder",
+		     obs_encoder_get_name(encoder));
+		return NULL;
+	}
+
+	return encoder->media;
+}
+
 audio_t *obs_encoder_audio(const obs_encoder_t *encoder)
 {
 	if (!obs_encoder_valid(encoder, "obs_encoder_audio"))
@@ -1416,8 +1490,7 @@ void full_stop(struct obs_encoder *encoder)
 		da_free(encoder->callbacks);
 		pthread_mutex_unlock(&encoder->callbacks_mutex);
 
-		remove_connection(encoder, false);
-		encoder->initialized = false;*/
+		remove_connection(encoder, false);*/
 	}
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
@@ -1428,8 +1501,10 @@ void send_off_encoder_packet(obs_encoder_t *encoder, bool success,
 			     bool received, struct encoder_packet *pkt)
 {
 	if (!success) {
-		blog(LOG_ERROR, "Error encoding with encoder '%s'",
-		     encoder->context.name);
+		//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+		blogex(false, LOG_ERROR, fields, 1, "Error encoding with encoder '%s'", encoder->context.name);
+
 		full_stop(encoder);
 		return;
 	}
@@ -1466,10 +1541,12 @@ static const char *do_encode_name = "do_encode";
 bool do_encode(struct obs_encoder *encoder, struct encoder_frame *frame)
 {
 	profile_start(do_encode_name);
+
+	//PRISM/wangshaohui/20240929/none/log encode time
 	if (!encoder->profile_encoder_encode_name)
 		encoder->profile_encoder_encode_name =
 			profile_store_name(obs_get_profiler_name_store(),
-					   "encode(%s)", encoder->context.name);
+				"encode(%s)(%p)(%s)", encoder->context.name, encoder, encoder->info.id);
 
 	struct encoder_packet pkt = {0};
 	bool received = false;
@@ -1489,6 +1566,15 @@ bool do_encode(struct obs_encoder *encoder, struct encoder_frame *frame)
 	success = encoder->info.encode(encoder->context.data, frame, &pkt,
 				       &received);
 	profile_end(encoder->profile_encoder_encode_name);
+
+	//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
+	if (success && received &&
+	    encoder->info.type == OBS_ENCODER_VIDEO  && frame != NULL) {
+		record_pts_stats(&encoder->pts_stats,
+				 (double)frame->pts * encoder->timebase_num * 1000 / encoder->timebase_den,
+				 (double)pkt.pts * pkt.timebase_num * 1000 / pkt.timebase_den);
+	}
+
 	send_off_encoder_packet(encoder, success, received, &pkt);
 
 	profile_end(do_encode_name);
@@ -1540,6 +1626,16 @@ static void receive_video(void *param, struct video_data *frame)
 	struct obs_encoder **paired = encoder->paired_encoders.array;
 	struct encoder_frame enc_frame;
 
+	if (encoder->encoder_group && !encoder->start_ts) {
+		struct obs_encoder_group *group = encoder->encoder_group;
+		bool ready = false;
+		pthread_mutex_lock(&group->mutex);
+		ready = group->start_timestamp == frame->timestamp;
+		pthread_mutex_unlock(&group->mutex);
+		if (!ready)
+			goto wait_for_audio;
+	}
+
 	if (!encoder->first_received && encoder->paired_encoders.num) {
 		for (size_t i = 0; i < encoder->paired_encoders.num; i++) {
 			if (!paired[i]->first_received ||
@@ -1564,6 +1660,13 @@ static void receive_video(void *param, struct video_data *frame)
 
 	enc_frame.frames = 1;
 	enc_frame.pts = encoder->cur_pts;
+
+	//PRISM/cao.kewei/20241016/PRISM_PC-1296
+	int64_t encode_pts = enc_frame.pts;
+	pls_statistics_log_encoder_pts(encoder, (struct pls_statistics_item) {
+		.packet_pts = encode_pts,
+		.encoding_start_ts = os_gettime_ns()
+	});
 
 	if (do_encode(encoder, &enc_frame))
 		encoder->cur_pts +=
@@ -2132,4 +2235,101 @@ void obs_encoder_enum_roi(obs_encoder_t *encoder,
 uint32_t obs_encoder_get_roi_increment(const obs_encoder_t *encoder)
 {
 	return encoder->roi_increment;
+}
+
+bool obs_encoder_set_group(obs_encoder_t *encoder, obs_encoder_group_t *group)
+{
+	if (!obs_encoder_valid(encoder, "obs_encoder_set_group"))
+		return false;
+
+	if (obs_encoder_active(encoder)) {
+		blog(LOG_ERROR,
+		     "obs_encoder_set_group: encoder '%s' is already active",
+		     obs_encoder_get_name(encoder));
+		return false;
+	}
+
+	if (encoder->encoder_group) {
+		struct obs_encoder_group *old_group = encoder->encoder_group;
+		pthread_mutex_lock(&old_group->mutex);
+		if (old_group->num_encoders_started) {
+			pthread_mutex_unlock(&old_group->mutex);
+			blog(LOG_ERROR,
+			     "obs_encoder_set_group: encoder '%s' existing group has started encoders",
+			     obs_encoder_get_name(encoder));
+			return false;
+		}
+		da_erase_item(old_group->encoders, &encoder);
+		obs_encoder_release(encoder);
+		pthread_mutex_unlock(&old_group->mutex);
+	}
+
+	if (!group)
+		return true;
+
+	pthread_mutex_lock(&group->mutex);
+
+	if (group->num_encoders_started) {
+		pthread_mutex_unlock(&group->mutex);
+		blog(LOG_ERROR,
+		     "obs_encoder_set_group: specified group has started encoders");
+		return false;
+	}
+
+	obs_encoder_t *ref = obs_encoder_get_ref(encoder);
+	if (!ref) {
+		pthread_mutex_unlock(&group->mutex);
+		return false;
+	}
+	da_push_back(group->encoders, &ref);
+	encoder->encoder_group = group;
+
+	pthread_mutex_unlock(&group->mutex);
+
+	return true;
+}
+
+obs_encoder_group_t *obs_encoder_group_create()
+{
+	struct obs_encoder_group *group =
+		bzalloc(sizeof(struct obs_encoder_group));
+
+	pthread_mutex_init_value(&group->mutex);
+	if (pthread_mutex_init(&group->mutex, NULL) != 0) {
+		bfree(group);
+		return NULL;
+	}
+
+	return group;
+}
+
+void obs_encoder_group_actually_destroy(obs_encoder_group_t *group)
+{
+	for (size_t i = 0; i < group->encoders.num; i++) {
+		struct obs_encoder *encoder = group->encoders.array[i];
+		encoder->encoder_group = NULL;
+		obs_encoder_release(encoder);
+	}
+
+	da_free(group->encoders);
+	pthread_mutex_unlock(&group->mutex);
+	pthread_mutex_destroy(&group->mutex);
+
+	bfree(group);
+}
+
+void obs_encoder_group_destroy(obs_encoder_group_t *group)
+{
+	if (!group)
+		return;
+
+	pthread_mutex_lock(&group->mutex);
+
+	if (group->num_encoders_started) {
+		group->destroy_on_stop = true;
+		pthread_mutex_unlock(&group->mutex);
+		return;
+	}
+
+	obs_encoder_group_actually_destroy(group);
 }

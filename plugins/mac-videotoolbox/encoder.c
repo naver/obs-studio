@@ -25,6 +25,18 @@
 	VT_LOG_ENCODER(enc->encoder, enc->codec_type, level, format, \
 		       ##__VA_ARGS__)
 
+//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+#include "pls/pls-base.h"
+#define VT_LOG_EVENT(level, format, ...)                                  \
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}}; \
+	blogex(false, level, fields, 1, "[VideoToolbox encoder]: " format, ##__VA_ARGS__) \
+
+#define VT_BLOG_EVENT(level, format, ...) \
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}}; \
+	blogex(false, level, fields, 1, "[VideoToolbox %s: '%s']: " format,         \
+	obs_encoder_get_name(enc->encoder),                     \
+	codec_type_to_print_fmt(enc->codec_type), ##__VA_ARGS__)
+
 struct vt_encoder_type_data {
 	const char *disp_name;
 	const char *id;
@@ -108,10 +120,12 @@ static void log_osstatus(int log_level, struct vt_encoder *enc,
 
 	c_str = cfstr_copy_cstr(str, kCFStringEncodingUTF8);
 	if (c_str) {
-		if (enc)
-			VT_BLOG(log_level, "Error in %s: %s", context, c_str);
-		else
-			VT_LOG(log_level, "Error in %s: %s", context, c_str);
+		//PRISM/cao.kewei/20241211/PRISM_PC-1671/log field
+		if (enc) {
+			VT_BLOG_EVENT(log_level, "Error in %s: %s", context, c_str);
+		} else {
+			VT_LOG_EVENT(log_level, "Error in %s: %s", context, c_str);
+		}
 	}
 
 	bfree(c_str);
@@ -1292,7 +1306,7 @@ static bool vt_encode(void *data, struct encoder_frame *frame,
 	if (code != noErr) {
 		goto fail;
 	}
-	
+
 	//PRISM/cao.kewei/20240514/#5378/force keyframe
 	CFMutableDictionaryRef frameProperties = CFDictionaryCreateMutable(NULL, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
@@ -1300,12 +1314,12 @@ static bool vt_encode(void *data, struct encoder_frame *frame,
 		CFDictionaryAddValue(frameProperties, kVTEncodeFrameOptionKey_ForceKeyFrame, kCFBooleanTrue);
 		VT_BLOG(LOG_INFO, "Request key frame");
 	}
-	
+
 	code = VTCompressionSessionEncodeFrame(enc->session, pixbuf, pts, dur,
 										   frameProperties, pixbuf, NULL);
-	
+
 	CFRelease(frameProperties);
-	
+
 	if (code != noErr) {
 		goto fail;
 	}
@@ -1322,7 +1336,7 @@ static bool vt_encode(void *data, struct encoder_frame *frame,
 	if (obs_encoder_request_keyframe(enc->encoder)) {
 		bool keyframe = is_sample_keyframe(buffer);
 		VT_BLOG(LOG_INFO, "is keyframe: %s", keyframe ? "true" : "false");
-		
+
 		if (keyframe) {
 			obs_encoder_set_request_keyframe(enc->encoder, false);
 		}
@@ -1731,7 +1745,10 @@ void obs_module_post_load(void)
 		type_data->hardware_accelerated = hardware_accelerated;
 		info.type_data = type_data;
 
-		obs_register_encoder(&info);
+		//PRISM/cao.kewei/20241118/PRISM_PC-1572 PRISM_PC-1548
+		if (strcmp(id, "com.apple.videotoolbox.videoencoder.h264") && strcmp(id, "com.apple.videotoolbox.videoencoder.hevc.vcp")) {
+			obs_register_encoder(&info);
+		}
 	}
 
 	CFRelease(encoder_list);

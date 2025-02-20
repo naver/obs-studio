@@ -32,6 +32,9 @@
 #include "pls/data-monitor/pls-data-monitor.h"
 #include "pls/data-monitor/device-notification.h"
 
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+#include <pls/pls-base.h>
+
 /*
  * TODO:
  *   - handle disconnections and reconnections
@@ -114,6 +117,18 @@ using namespace DShow;
 		     ##__VA_ARGS__);                                       \
 	}
 //PRISM/Xiewei/20230712/noissue/add log
+
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log
+#define do_logex(kr, level, fields, field_count, format, ...)                                         \
+	{                                                                   \
+		blogex(kr, level, fields,                                   \
+		       field_count , "[obs_camera] %p['%s']['%s'] " format, \
+		       source, \
+		     obs_source_get_name(source), video_device,             \
+		     ##__VA_ARGS__);                                        \
+	}
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log
+
 static DStr GetVideoFormatName(VideoFormat format);
 
 //PRISM/Xiewei/20220119/#11238/resolve ui block, close config dialog before exit
@@ -276,11 +291,16 @@ struct DShowInput {
 	obs_source_audio audio;
 	long lastRotation = 0;
 
-	WinHandle semaphore;
+	//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+	//WinHandle semaphore;
 	WinHandle activated_event;
 	WinHandle thread;
 	CriticalSection mutex;
 	vector<Action> actions;
+
+	//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+	HANDLE thread_exit_event = nullptr;
+
 	//PRISM/Xiewei/20220119/#11238/resolve ui block, close config dialog
 	std::atomic<bool> showing_dialog = false;
 	//PRISM/Zengqin/20231229/#3744/notify ui to not support HDR color space.
@@ -291,11 +311,16 @@ struct DShowInput {
 	int subscribeId = INVALID_NOTIFY_ID;
 	//PRISM/Xiewei/20240621/none/add more logs to trace video data end
 
+	//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
+	int decodeErrorNum = 0;
+
 	inline void QueueAction(Action action)
 	{
 		CriticalScope scope(mutex);
 		actions.push_back(action);
-		ReleaseSemaphore(semaphore, 1, nullptr);
+
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		//ReleaseSemaphore(semaphore, 1, nullptr);
 	}
 
 	inline void QueueActivate(obs_data_t *settings)
@@ -319,13 +344,20 @@ struct DShowInput {
 		av_log_set_level(AV_LOG_WARNING);
 		av_log_set_callback(ffmpeg_log);
 
-		semaphore = CreateSemaphore(nullptr, 0, 0x7FFFFFFF, nullptr);
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		/*semaphore = CreateSemaphore(nullptr, 0, 0x7FFFFFFF, nullptr);
 		if (!semaphore)
-			throw "Failed to create semaphore";
+			throw "Failed to create semaphore";*/
 
 		activated_event = CreateEvent(nullptr, false, false, nullptr);
 		if (!activated_event)
 			throw "Failed to create activated_event";
+
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		thread_exit_event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+		if (!thread_exit_event)
+			throw "Failed to create thread_exit_event";
+		ResetEvent(thread_exit_event);
 
 		thread =
 			CreateThread(nullptr, 0, DShowThread, this, 0, nullptr);
@@ -372,12 +404,10 @@ struct DShowInput {
 			actions[0] = Action::Shutdown;
 		}
 
-		ReleaseSemaphore(semaphore, 1, nullptr);
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		//ReleaseSemaphore(semaphore, 1, nullptr);
+		SetEvent(thread_exit_event);
 
-		//PRISM/Xiewei/20240621/none/add more logs to trace video data
-		DeviceNotification::instance()->Unsubscribe(subscribeId);
-		monitor_video.SendCatchLogs();
-		
 		//PRISM/Xiewei/20220119/#11238/resolve ui block, close config dialog
 		while (WAIT_OBJECT_0 != WaitForSingleObject(thread, 20)) {
 			if (showing_dialog) {
@@ -388,10 +418,24 @@ struct DShowInput {
 			}
 		}
 
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		if (thread_exit_event &&
+		    (thread_exit_event != INVALID_HANDLE_VALUE)) {
+			::CloseHandle(thread_exit_event);
+			thread_exit_event = nullptr;
+		}
+
+		//PRISM/Xiewei/20240621/none/add more logs to trace video data
+		monitor_video.SendCatchLogs();
+
 		//PRISM/Xiewei/20240621/none/add more logs to trace video data
 		if (data_monitor) {
 			data_monitor.reset();
 		}
+
+		//PRISM/FanZirong/20240920/none/#6103/put it after the thread ends to avoid crash
+		//PRISM/Xiewei/20240621/none/add more logs to trace video data
+		DeviceNotification::instance()->Unsubscribe(subscribeId);
 	}
 
 	void OnEncodedVideoData(enum AVCodecID id, unsigned char *data,
@@ -447,14 +491,19 @@ static inline void ProcessMessages()
 void DShowInput::DShowLoop()
 {
 	while (true) {
-		DWORD ret = MsgWaitForMultipleObjects(1, &semaphore, false,
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		/*DWORD ret = MsgWaitForMultipleObjects(1, &semaphore, false,
 						      INFINITE, QS_ALLINPUT);
 		if (ret == (WAIT_OBJECT_0 + 1)) {
 			ProcessMessages();
 			continue;
 		} else if (ret != WAIT_OBJECT_0) {
 			break;
-		}
+		}*/
+
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		if (WAIT_OBJECT_0 == WaitForSingleObject(thread_exit_event, 5))
+			break;
 
 		Action action = Action::None;
 		{
@@ -534,7 +583,11 @@ void DShowInput::DShowLoop()
 
 		case Action::None:;
 		}
+		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+		ProcessMessages();
 	}
+	//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
+	device.ShutdownGraph();
 }
 
 //PRISM/Xiewei/20220119/#11238/resolve ui block, close config dialog before exit
@@ -677,7 +730,11 @@ void DShowInput::OnEncodedVideoData(enum AVCodecID id, unsigned char *data,
 					   frame.range, &frame, &got_output);
 	if (!success) {
 		//PRISM/Xiewei/20230712/none/silence log
-		do_log(LOG_DEBUG, "Error decoding video");
+		//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
+		if (decodeErrorNum % 10000 == 0) {
+			do_log(LOG_DEBUG, "Error decoding video");
+		}
+		decodeErrorNum++;
 		return;
 	}
 
@@ -707,8 +764,14 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data,
 		DStr fmt = GetVideoFormatName(videoConfig.format);
 		//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
 		first_video_pts = startTime;
-		do_log(LOG_INFO, "first video received. %dx%d %s size:%llu",
-		       config.cx, config.cy_abs, fmt->array, (ULONG64)size);
+
+		char source_p[50];
+		snprintf(source_p, sizeof(source_p), "%p", source);
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+					   {"source", source_p}};
+		do_logex(false, LOG_INFO, fields, 2,
+			 "first video received. %dx%d %s size:%llu", config.cx,
+			 config.cy_abs, fmt->array, (ULONG64)size);
 
 		//PRISM/Xiewei/20240621/none/add more logs to trace video data
 		if (data_monitor)
@@ -938,9 +1001,15 @@ void DShowInput::OnAudioData(const AudioConfig &config, unsigned char *data,
 		is_first_audio = false;
 		//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
 		first_audio_pts = startTime;
-		do_log(LOG_INFO,
-		       "first audio received. channels: %d, format: %d",
-		       config.channels, config.format);
+
+		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+		char source_p[50];
+		snprintf(source_p, sizeof(source_p), "%p", source);
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+					   {"source", source_p}};
+		do_logex(false, LOG_INFO, fields, 2,
+			 "first audio received. channels: %d, format: %d",
+			 config.channels, config.format);
 	}
 	//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
 	if (is_need_transform_pts) {
@@ -1471,11 +1540,17 @@ bool DShowInput::UpdateAudioConfig(obs_data_t *settings)
 		break;
 	}
 
-	blog(LOG_INFO,
-	     "\tsample rate: %d\n"
-	     "\tchannels: %d\n"
-	     "\taudio type: %s",
-	     audioConfig.sampleRate, audioConfig.channels, mode);
+	//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+	char source_p[50];
+	snprintf(source_p, sizeof(source_p), "%p", source);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"source", source_p}};
+
+	blogex(false, LOG_INFO, fields, 2,
+	       "\tsample rate: %d\n"
+	       "\tchannels: %d\n"
+	       "\taudio type: %s",
+	       audioConfig.sampleRate, audioConfig.channels, mode);
 	return true;
 }
 
@@ -1543,19 +1618,27 @@ inline bool DShowInput::Activate(obs_data_t *settings)
 	//PRISM/Xiewei/202312125/noissue/add debug log end
 	video_device[0] = 0;
 
+	//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
+	decodeErrorNum = 0;
+
 	if (!UpdateVideoConfig(settings)) {
-		blog(LOG_WARNING, "%s: Video configuration failed",
-		     obs_source_get_name(source));
+		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+		blogex(false, LOG_WARNING, fields, 1,
+		       "%s: Video configuration failed",
+		       obs_source_get_name(source));
 		obs_source_set_audio_active(source, false);
 		return false;
 	}
 
-	if (!UpdateAudioConfig(settings))
-		blog(LOG_WARNING,
-		     "%s: Audio configuration failed, ignoring "
-		     "audio",
-		     obs_source_get_name(source));
-
+	if (!UpdateAudioConfig(settings)) {
+		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+		blogex(false, LOG_WARNING, fields, 1,
+		       "%s: Audio configuration failed, ignoring audio",
+		       obs_source_get_name(source));
+	}
+		
 	if (!device.ConnectFilters())
 		return false;
 
@@ -1649,7 +1732,11 @@ inline bool DShowInput::Activate(obs_data_t *settings)
 	obs_data_set_bool(settings, "not_support_hdr", not_support_hdr);
 
 	//PRISM/Xiewei/20230712/noissue/add log
-	do_log(LOG_INFO, "sucess to init OBS camera");
+	char source_p[50];
+	snprintf(source_p, sizeof(source_p), "%p", source);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"source", source_p}};
+	do_logex(false, LOG_INFO, fields, 2, "sucess to init OBS camera")
 
 	//PRISM/FanZirong/20231227/noissue/add log
 	uint64_t source_update_time = os_gettime_ns();

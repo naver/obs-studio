@@ -22,6 +22,9 @@
 #include <RTWorkQ.h>
 #include <wrl/implements.h>
 
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+#include <pls/pls-base.h>
+
 using namespace std;
 
 #define OPT_DEVICE_ID "device_id"
@@ -582,22 +585,30 @@ void WASAPISource::UpdateSettings(UpdateParams &&params)
 
 void WASAPISource::LogSettings()
 {
+	//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+	char source_p[50];
+	snprintf(source_p, sizeof(source_p), "%p", source);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"source", source_p}};
+
 	if (sourceType == SourceType::ProcessOutput) {
-		blog(LOG_INFO,
-		     "[win-wasapi: '%s'] update settings:\n"
-		     "\texecutable: %s\n"
-		     "\ttitle: %s\n"
-		     "\tclass: %s\n"
-		     "\tpriority: %d",
-		     obs_source_get_name(source), executable.c_str(),
-		     title.c_str(), window_class.c_str(), (int)priority);
+		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+		blogex(false, LOG_INFO, fields, 2,
+		       "[win-wasapi: '%s'][%p] update settings:\n"
+		       "\texecutable: %s\n"
+		       "\ttitle: %s\n"
+		       "\tclass: %s\n"
+		       "\tpriority: %d",
+		       obs_source_get_name(source), source, executable.c_str(),
+		       title.c_str(), window_class.c_str(), (int)priority);
 	} else {
-		blog(LOG_INFO,
-		     "[win-wasapi: '%s'] update settings:\n"
-		     "\tdevice id: %s\n"
-		     "\tuse device timing: %d",
-		     obs_source_get_name(source), device_id.c_str(),
-		     (int)useDeviceTiming);
+		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+		blogex(false, LOG_INFO, fields, 2,
+		       "[win-wasapi: '%s'][%p] update settings:\n"
+		       "\tdevice id: %s\n"
+		       "\tuse device timing: %d",
+		       obs_source_get_name(source), source, device_id.c_str(),
+		       (int)useDeviceTiming);
 	}
 }
 
@@ -1116,21 +1127,11 @@ bool WASAPISource::ProcessCaptureData()
 			sawBadTimestamp = true;
 		}
 
-		if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) {
-			/* libobs should handle discontinuities fine. */
-			blog(LOG_DEBUG, "[WASAPISource::ProcessCaptureData]"
-					" Discontinuity flag is set.");
-		}
-
 		if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-			//PRISM/FanZirong/20231121/none/reduce log
-			/*blog(LOG_DEBUG, "[WASAPISource::ProcessCaptureData]"
-					" Silent flag is set.");*/
-
 			//PRISM/FanZirong/20240222/4482/print log silent audio
-			if (silenceNum % 1000 == 0) {
+			if (silenceNum == 0) {
 				blog(LOG_DEBUG, "[WASAPISource::ProcessCaptureData]"
-					" Silent audio number == 1000.");
+					"AUDCLNT_BUFFERFLAGS_SILENT");
 			}
 			silenceNum++;
 
