@@ -525,7 +525,41 @@ bool properties_update_config(OBSAVCapture *capture, obs_properties_t *propertie
                     prop_color_space, [OBSAVCapture stringFromColorspace:color_space].UTF8String, color_space);
                 obs_property_list_item_disable(prop_color_space, index, true);
             }
-        }
+			//PRISM/cao.kewei/20240902/PRISM_PC-1085
+        } else {
+			if (input_format == 0 || !hasFoundInputFormat) {
+				input_format = obs_property_list_item_int(prop_input_format, 0);
+				obs_data_set_int(settings, "input_format", input_format);
+			}
+
+			if (media_frames_per_second_is_valid(fps) == false || !hasFoundFramerate) {
+				for (AVCaptureDeviceFormat *format in device.formats) {
+					FourCharCode subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription);
+					int device_format = [OBSAVCapture formatFromSubtype:subtype];
+
+					if (device_format == input_format) {
+						AVFrameRateRange *range = format.videoSupportedFrameRateRanges.firstObject;
+
+						struct media_frames_per_second default_fps = {
+							.numerator = (uint32_t) clamp_Uint(range.minFrameDuration.timescale, 0, UINT32_MAX),
+							.denominator = (uint32_t) clamp_Uint(range.minFrameDuration.value, 0, UINT32_MAX)};
+						struct media_frames_per_second simple_default_fps;
+						simple_default_fps.numerator = default_fps.numerator / default_fps.denominator;
+						simple_default_fps.denominator = 1;
+
+						if (media_frames_per_second_is_valid(simple_default_fps)) {
+							obs_data_set_frames_per_second(settings, "frame_rate", simple_default_fps, NULL);
+							break;
+						}
+					}
+				}
+			}
+
+			if ((resolution.width == 0 || resolution.height == 0) || !hasFoundResolution) {
+				const char *default_resolution = obs_property_list_item_string(prop_resolution, 0);
+				obs_data_set_string(settings, "resolution", default_resolution);
+			}
+    	}
 
         if (!hasFoundResolution) {
             NSDictionary *resolutionData = @{@"width": @(resolution.width), @"height": @(resolution.height)};

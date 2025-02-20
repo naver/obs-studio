@@ -32,6 +32,12 @@
 #include "obs-internal.h"
 //PRISM//Xiewei//20240226/none/pandatv outro, mute all audio when outro is playing.
 #include "pls/pls-obs-api.h"
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+#include "pls/pls-dual-output.h"
+#include "pls/pls-dual-output-internal.h"
+
+//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+#include <pls/pls-base.h>
 
 #define get_weak(source) ((obs_weak_source_t *)source->context.control)
 
@@ -718,6 +724,9 @@ static void obs_source_destroy_defer(struct obs_source *source)
 {
 	size_t i;
 
+	//PRISM/wangshaohui/20230720/none/add logs
+	blog(LOG_INFO, "%p id=%s to check source list mutex", source, source->info.id);
+
 	/* prevents the destruction of sources if destroy triggered inside of
 	 * a video tick call */
 	obs_context_wait(&source->context);
@@ -733,10 +742,16 @@ static void obs_source_destroy_defer(struct obs_source *source)
 	}
 
 	//PRISM/wangshaohui/20230720/none/add logs
-	blog(LOG_INFO,
-	     "%ssource '%s' destroyed, obs_source_destroy_defer started. source:%p plugin:%p id:%s",
-	     source->context.private ? "private " : "", source->context.name,
-	     source, source->context.data, source->info.id);
+	char source_p[50];
+	snprintf(source_p, sizeof(source_p), "%p", source);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"source", source_p},
+				   {"source_name",
+				    obs_source_get_name(source)}};
+	blogex(false, LOG_INFO, fields, 3,
+	       "%ssource '%s' destroyed, obs_source_destroy_defer started. source:%p plugin:%p id:%s",
+	       source->context.private ? "private " : "", source->context.name,
+	       source, source->context.data, source->info.id);
 
 	audio_monitor_destroy(source->monitor);
 
@@ -1075,6 +1090,10 @@ void obs_source_update_properties(obs_source_t *source)
 {
 	if (!obs_source_valid(source, "obs_source_update_properties"))
 		return;
+	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+	if (!pls_is_alive(source)) {
+		return;
+	}
 
 	obs_source_dosignal(source, NULL, "update_properties");
 }
@@ -1623,7 +1642,15 @@ static void source_output_audio_data(obs_source_t *source,
 	else {
 		uint64_t get_duration = conv_frames_to_time(sample_rate, source->get_audio_frames);
 		if (get_duration == 0 || get_duration > 60000000000 * 2) {
-			blog(LOG_INFO, "[%s]capture audio pts %llu",source->context.name, in.timestamp);
+			//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+			char source_p[50];
+			snprintf(source_p, sizeof(source_p), "%p", source);
+			const char *fields[][2] = {{PTS_LOG_TYPE,
+						    PTS_TYPE_EVENT},
+						   {"source", source_p}};
+			blogex(false, LOG_INFO, fields, 2,
+			       "[%p][%s]capture audio pts %llu", source,
+			       source->context.name, in.timestamp);
 		}
 
 		if (get_duration > 60000000000 * 2) {
@@ -1631,8 +1658,14 @@ static void source_output_audio_data(obs_source_t *source,
 			uint64_t reset_duration = conv_frames_to_time(sample_rate, source->reset_audio_frames);
 			float drop_percentage = (reset_duration + ignore_duration) / (float)get_duration;
 			if (drop_percentage > 0.05f) {
-				blog(LOG_WARNING, "[%s]drop audio %f, maybe audio noise, reset_all_audio = %llu, ignore_all_audio = %llu, get_all_audio = %llu",
-					source->context.name, drop_percentage, reset_duration, ignore_duration, get_duration);
+				//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
+				const char *fields[][2] = {
+					{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+				blogex(false, LOG_WARNING, fields, 1,
+				       "[%s]drop audio %f, maybe audio noise, reset_all_audio = %llu, ignore_all_audio = %llu, get_all_audio = %llu",
+				       source->context.name, drop_percentage,
+				       reset_duration, ignore_duration,
+				       get_duration);
 			}
 
 			source->get_audio_frames = 0;
@@ -1665,15 +1698,15 @@ static void source_output_audio_data(obs_source_t *source,
 				source->timing_adjust = os_time - in.timestamp;
 			in.timestamp = source->next_audio_ts_min;
 		} else {
-			blog(LOG_DEBUG,
+			//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
+			/*blog(LOG_DEBUG,
 			     "Audio timestamp for '%s' exceeded TS_SMOOTHING_THRESHOLD, diff=%" PRIu64
 			     " ns, expected %" PRIu64 ", input %" PRIu64,
 			     source->context.name, diff,
-			     source->next_audio_ts_min, in.timestamp);
+			     source->next_audio_ts_min, in.timestamp);*/
 		}
 	}
 
-	source->last_audio_ts = in.timestamp;
 	source->next_audio_ts_min =
 		in.timestamp + conv_frames_to_time(sample_rate, in.frames);
 
@@ -2978,6 +3011,12 @@ static void source_render(obs_source_t *source, gs_effect_t *effect)
 		}
 
 		gs_texrender_reset(source->color_space_texrender);
+
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (source->info.type == OBS_SOURCE_TYPE_TRANSITION) {
+			obs_transition_recalculate_size(source);
+		}
+
 		const int cx = get_base_width(source);
 		const int cy = get_base_height(source);
 		if (gs_texrender_begin_with_color_space(
@@ -3343,6 +3382,7 @@ void obs_source_filter_add(obs_source_t *source, obs_source_t *filter)
 	calldata_set_ptr(&cd, "source", source);
 	calldata_set_ptr(&cd, "filter", filter);
 
+	signal_handler_signal(obs->signals, "source_filter_add", &cd);
 	signal_handler_signal(source->context.signals, "filter_add", &cd);
 
 	blog(LOG_DEBUG, "- filter '%s' (%s) added to source '%s'",
@@ -3381,6 +3421,7 @@ static bool obs_source_filter_remove_refless(obs_source_t *source,
 	calldata_set_ptr(&cd, "source", source);
 	calldata_set_ptr(&cd, "filter", filter);
 
+	signal_handler_signal(obs->signals, "source_filter_remove", &cd);
 	signal_handler_signal(source->context.signals, "filter_remove", &cd);
 
 	blog(LOG_DEBUG, "- filter '%s' (%s) removed from source '%s'",
@@ -3851,6 +3892,10 @@ obs_source_output_video_internal(obs_source_t *source,
 void obs_source_output_video(obs_source_t *source,
 			     const struct obs_source_frame *frame)
 {
+	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+	if (!pls_is_alive(source)) {
+		return;
+	}
 	if (destroying(source))
 		return;
 	if (!frame) {

@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22...3.25)
 
+# PRISM/WuLongyue/20231123/#3138/Add encoder message
+set(PLS_VERSION $ENV{PLS_VERSION})
+
 legacy_check()
 
 include(cmake/obs-version.cmake)
@@ -21,9 +24,9 @@ find_package(
            swresample
   OPTIONAL_COMPONENTS avcodec)
 # cmake-format: on
-set(PLS_VERSION $ENV{PLS_VERSION})
 
 find_package(ZLIB REQUIRED)
+find_package(Uthash REQUIRED)
 
 if(ENABLE_UI)
   find_package(Qt6 REQUIRED Core)
@@ -32,10 +35,6 @@ endif()
 find_package(jansson REQUIRED)
 if(NOT TARGET OBS::caption)
   add_subdirectory("${CMAKE_SOURCE_DIR}/deps/libcaption" "${CMAKE_BINARY_DIR}/deps/libcaption")
-endif()
-
-if(NOT TARGET OBS::uthash)
-  add_subdirectory("${CMAKE_SOURCE_DIR}/deps/uthash" "${CMAKE_BINARY_DIR}/deps/uthash")
 endif()
 
 add_library(libobs SHARED)
@@ -53,6 +52,7 @@ target_sources(
           obs-av1.h
           obs-avc.c
           obs-avc.h
+          obs-config.h
           obs-data.c
           obs-data.h
           obs-defs.h
@@ -103,6 +103,8 @@ target_sources(
           util/bitstream.h
           util/bmem.c
           util/bmem.h
+          util/buffered-file-serializer.c
+          util/buffered-file-serializer.h
           util/c99defs.h
           util/cf-lexer.c
           util/cf-lexer.h
@@ -122,6 +124,7 @@ target_sources(
           util/file-serializer.h
           util/lexer.c
           util/lexer.h
+          util/pipe.c
           util/pipe.h
           util/platform.c
           util/platform.h
@@ -260,7 +263,6 @@ target_compile_definitions(
 target_link_libraries(
   libobs
   PRIVATE OBS::caption
-          OBS::uthash
           OBS::libobs-version
           FFmpeg::avcodec
           FFmpeg::avformat
@@ -268,6 +270,7 @@ target_link_libraries(
           FFmpeg::swscale
           FFmpeg::swresample
           jansson::jansson
+          Uthash::Uthash
           ZLIB::ZLIB
   PUBLIC Threads::Threads)
 
@@ -342,7 +345,6 @@ set(public_headers
     obs-source.h
     obs.h
     obs.hpp
-    util/apple/cfstring-utils.h
     util/array-serializer.h
     util/base.h
     util/bitstream.h
@@ -382,12 +384,17 @@ set(public_headers
     util/task.h
     util/text-lookup.h
     util/threading-posix.h
-    util/threading-windows.h
     util/threading.h
     util/uthash.h
     util/util.hpp
     util/util_uint128.h
-    util/util_uint64.h
+    util/util_uint64.h)
+
+if(OS_WINDOWS)
+  list(
+    APPEND
+    public_headers
+    util/threading-windows.h
     util/windows/ComPtr.hpp
     util/windows/CoTaskMemPtr.hpp
     util/windows/device-enum.h
@@ -396,6 +403,9 @@ set(public_headers
     util/windows/win-version.h
     util/windows/window-helpers.h
     util/windows/WinHandle.hpp)
+elseif(OS_MACOS)
+  list(APPEND public_headers util/apple/cfstring-utils.h)
+endif()
 
 if(ENABLE_HEVC)
   list(APPEND public_headers obs-hevc.h)
@@ -412,6 +422,3 @@ set_target_properties_obs(
 # cmake-format: on
 
 target_export(libobs)
-
-# PRISM/WuLongyue/20231123/#3138/Add encoder message
-set(PLS_VERSION $ENV{PLS_VERSION})

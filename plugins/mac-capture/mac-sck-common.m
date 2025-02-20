@@ -70,7 +70,11 @@ void screen_capture_build_content_list(struct screen_capture *sc, bool display_c
     };
 
 	os_sem_wait(sc->shareable_content_available);
-    [sc->shareable_content release];
+	//PRISM/cao.kewei/20241205/crash fix for error case
+	if (sc->shareable_content != NULL) {
+        [sc->shareable_content release];
+		sc->shareable_content = NULL;
+	}
     BOOL onScreenWindowsOnly = (display_capture) ? NO : !sc->show_hidden_windows;
     [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:onScreenWindowsOnly
                                                  completionHandler:new_content_received];
@@ -79,6 +83,12 @@ void screen_capture_build_content_list(struct screen_capture *sc, bool display_c
 bool build_display_list(struct screen_capture *sc, obs_properties_t *props)
 {
 	os_sem_wait(sc->shareable_content_available);
+
+	//PRISM/cao.kewei/20241205/crash fix for error case
+	if (sc->shareable_content == NULL) {
+		os_sem_post(sc->shareable_content_available);
+		return false;
+	}
 
     obs_property_t *display_list = obs_properties_get(props, "display_uuid");
     obs_property_list_clear(display_list);
@@ -123,6 +133,12 @@ bool build_display_list(struct screen_capture *sc, obs_properties_t *props)
 bool build_window_list(struct screen_capture *sc, obs_properties_t *props)
 {
 	os_sem_wait(sc->shareable_content_available);
+
+	//PRISM/cao.kewei/20241205/crash fix for error case
+	if (sc->shareable_content == NULL) {
+		os_sem_post(sc->shareable_content_available);
+		return false;
+	}
 
     obs_property_t *window_list = obs_properties_get(props, "window");
     obs_property_list_clear(window_list);
@@ -170,6 +186,12 @@ bool build_application_list(struct screen_capture *sc, obs_properties_t *props)
 {
 	os_sem_wait(sc->shareable_content_available);
 
+	//PRISM/cao.kewei/20241205/crash fix for error case
+	if (sc->shareable_content == NULL) {
+		os_sem_post(sc->shareable_content_available);
+		return false;
+	}
+
     obs_property_t *application_list = obs_properties_get(props, "application");
     obs_property_list_clear(application_list);
 
@@ -198,7 +220,7 @@ bool build_application_list(struct screen_capture *sc, obs_properties_t *props)
 
 #pragma mark - audio/video
 
-void screen_stream_video_update(struct screen_capture *sc, CMSampleBufferRef sample_buffer)
+API_AVAILABLE(macos(12.5)) void screen_stream_video_update(struct screen_capture *sc, CMSampleBufferRef sample_buffer)
 {
     bool frame_detail_errored = false;
     float scale_factor = 1.0f;

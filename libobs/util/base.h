@@ -20,6 +20,11 @@
 
 #include "c99defs.h"
 
+//PRISM/wangshaohui/20241203/none/define field for PTS
+#define PTS_LOG_TYPE "PTSLogType"     // field name for log type
+#define PTS_TYPE_EVENT "event"        // field value for exception or app stats
+#define PTS_TYPE_UISTEP_STEP "uiStep" // field value for UI STEP
+
 /*
  * Just contains logging/crash related stuff
  */

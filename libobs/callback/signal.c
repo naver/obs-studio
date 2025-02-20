@@ -220,9 +220,6 @@ static void signal_handler_connect_internal(signal_handler_t *handler,
 		return;
 	}
 
-	//PRISM/wangshaohui/20240530/none/for debug
-	blog(LOG_INFO, "connect signal to callback [%s] %p", signal, callback);
-
 	/* -------------- */
 
 	pthread_mutex_lock(&sig->mutex);

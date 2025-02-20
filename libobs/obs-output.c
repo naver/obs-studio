@@ -21,6 +21,12 @@
 #include "graphics/math-extra.h"
 #include "obs.h"
 #include "obs-internal.h"
+#include "obs-av1.h"
+
+//PRISM/cao.kewei/20241016/PRISM_PC-1296
+#include "pls/pls-statistics.h"
+#include "pls/pls-base.h"
+#include "media-io/video-io.h"
 
 #include <caption/caption.h>
 #include <caption/mpeg.h>
@@ -173,16 +179,18 @@ obs_output_t *obs_output_create(const char *id, const char *name,
 	int ret;
 
 	output = bzalloc(sizeof(struct obs_output));
+
+	//PRISM/chenguoxi/20241023/PRISM_PC_NELO-17/check output alive
+	if (output != NULL)
+		pls_add_alive(output);
+
 	pthread_mutex_init_value(&output->interleaved_mutex);
 	pthread_mutex_init_value(&output->delay_mutex);
-	pthread_mutex_init_value(&output->caption_mutex);
 	pthread_mutex_init_value(&output->pause.mutex);
 
 	if (pthread_mutex_init(&output->interleaved_mutex, NULL) != 0)
 		goto fail;
 	if (pthread_mutex_init(&output->delay_mutex, NULL) != 0)
-		goto fail;
-	if (pthread_mutex_init(&output->caption_mutex, NULL) != 0)
 		goto fail;
 	if (pthread_mutex_init(&output->pause.mutex, NULL) != 0)
 		goto fail;
@@ -229,6 +237,9 @@ obs_output_t *obs_output_create(const char *id, const char *name,
 			info->create(output->context.settings, output);
 	if (!output->context.data)
 		blog(LOG_ERROR, "Failed to create output '%s'!", name);
+	
+	//PRISM/cao.kewei/20241016/PRISM_PC-1296 PRISM_PC-1390
+	pls_statistics_init(output);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: id=%s, name=%s, data=%p, video=%p", output,
@@ -267,6 +278,18 @@ static inline void clear_raw_audio_buffers(obs_output_t *output)
 			deque_free(&output->audio_buffer[i][j]);
 		}
 	}
+}
+
+static void destroy_caption_track(struct caption_track_data **ctrack_ptr)
+{
+	if (!ctrack_ptr || !*ctrack_ptr) {
+		return;
+	}
+	struct caption_track_data *ctrack = *ctrack_ptr;
+	pthread_mutex_destroy(&ctrack->caption_mutex);
+	deque_free(&ctrack->caption_data);
+	bfree(ctrack);
+	*ctrack_ptr = NULL;
 }
 
 void obs_output_destroy(obs_output_t *output)
@@ -312,6 +335,10 @@ void obs_output_destroy(obs_output_t *output)
 				obs_encoder_remove_output(
 					output->video_encoders[i], output);
 			}
+			if (output->caption_tracks[i]) {
+				destroy_caption_track(
+					&output->caption_tracks[i]);
+			}
 		}
 
 		for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
@@ -321,25 +348,30 @@ void obs_output_destroy(obs_output_t *output)
 			}
 		}
 
-		//PRISM/WuLongyue/20231122/#2212/add logs
-		blog(LOG_INFO, "%p-%s: line=%d", output, __FUNCTION__,
-		     __LINE__);
+		da_free(output->keyframe_group_tracking);
 
-		clear_raw_audio_buffers(output);
+	//PRISM/WuLongyue/20231122/#2212/add logs
+		blog(LOG_INFO, "%p-%s: line=%d", output, __FUNCTION__,
+		     __LINE__);		clear_raw_audio_buffers(output);
 
 		os_event_destroy(output->stopping_event);
 		pthread_mutex_destroy(&output->pause.mutex);
-		pthread_mutex_destroy(&output->caption_mutex);
 		pthread_mutex_destroy(&output->interleaved_mutex);
 		pthread_mutex_destroy(&output->delay_mutex);
 		os_event_destroy(output->reconnect_stop_event);
 		obs_context_data_free(&output->context);
 		deque_free(&output->delay_data);
-		deque_free(&output->caption_data);
 		if (output->owns_info_id)
 			bfree((void *)output->info.id);
 		if (output->last_error_message)
 			bfree(output->last_error_message);
+		
+		//PRISM/cao.kewei/20241016/PRISM_PC-1296 PRISM_PC-1390
+		pls_statistics_destroy(output);
+
+		//PRISM/chenguoxi/20241023/PRISM_PC_NELO-17/check output alive
+		pls_remove_alive(output);
+
 		bfree(output);
 	}
 
@@ -380,32 +412,21 @@ bool obs_output_actual_start(obs_output_t *output)
 	if (os_atomic_load_long(&output->delay_restart_refs))
 		os_atomic_dec_long(&output->delay_restart_refs);
 
-	output->caption_timestamp = 0;
-
-	deque_free(&output->caption_data);
-	deque_init(&output->caption_data);
-
+	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+		struct caption_track_data *ctrack = output->caption_tracks[i];
+		if (!ctrack) {
+			continue;
+		}
+		pthread_mutex_lock(&ctrack->caption_mutex);
+		ctrack->caption_timestamp = 0;
+		deque_free(&ctrack->caption_data);
+		deque_init(&ctrack->caption_data);
+		pthread_mutex_unlock(&ctrack->caption_mutex);
+	}
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: id=%s success=%d [Exit]", output, __FUNCTION__,
 	     output->info.id, success);
 
-	//PRISM/cao.kewei/20240514/#5378/force keyframe
-	//PRISM/wangshaohui/20240628/none/log keyframe
-	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
-		obs_encoder_t *encoder = output->video_encoders[i];
-		if (encoder) {
-			os_atomic_set_bool(&encoder->force_keyframe, true);
-			os_atomic_set_long(&encoder->keyframe_cnt, 0);
-		}
-	}
-	//PRISM/wangshaohui/20240628/none/log keyframe
-	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
-		obs_encoder_t *encoder = output->audio_encoders[i];
-		if (encoder) {
-			os_atomic_set_long(&encoder->keyframe_cnt, 0);
-		}
-	}
-  
 	return success;
 }
 
@@ -417,8 +438,9 @@ bool obs_output_start(obs_output_t *output)
 		return false;
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: id=[%s] [Enter]", output, __FUNCTION__,
-	     output->info.id);
+	const char *name = obs_output_get_name(output);
+	blog(LOG_INFO, "%p-%s: id=[%s] name=[%s] [Enter]", output, __FUNCTION__,
+	     output->info.id, name ? name : "none");
 
 	if (flag_service(output) &&
 	    !(obs_service_can_try_to_connect(output->service) &&
@@ -504,12 +526,15 @@ static void log_frame_info(struct obs_output *output)
 		     "Output '%s': Number of lagged frames due "
 		     "to rendering lag/stalls: %" PRIu32 " (%0.1f%%)",
 		     output->context.name, lagged, percentage_lagged);
-	if (total && dropped)
-		blog(LOG_INFO,
+	if (total && dropped) {
+		//PRISM/Xiewei/20241104/PRISM_PC-1673/Add logs
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+		blogex(false, LOG_INFO, fields, 1,
 		     "Output '%s': Number of dropped frames due "
 		     "to insufficient bandwidth/connection stalls: "
 		     "%d (%0.1f%%)",
 		     output->context.name, dropped, percentage_dropped);
+	}
 }
 
 static inline void signal_stop(struct obs_output *output);
@@ -574,16 +599,21 @@ void obs_output_actual_stop(obs_output_t *output, bool force, uint64_t ts)
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Step] line=%d", output, __FUNCTION__, __LINE__);
-
-	while (output->caption_head) {
-		output->caption_tail = output->caption_head->next;
-		bfree(output->caption_head);
-		output->caption_head = output->caption_tail;
+	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+		struct caption_track_data *ctrack = output->caption_tracks[i];
+		if (!ctrack) {
+			continue;
+		}
+		while (ctrack->caption_head) {
+			ctrack->caption_tail = ctrack->caption_head->next;
+			bfree(ctrack->caption_head);
+			ctrack->caption_head = ctrack->caption_tail;
+		}
 	}
-
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Exit] id=%s", output, __FUNCTION__,
 	     output->info.id);
+	da_clear(output->keyframe_group_tracking);
 }
 
 void obs_output_stop(obs_output_t *output)
@@ -1110,6 +1140,19 @@ void obs_output_remove_encoder(struct obs_output *output,
 	obs_output_remove_encoder_internal(output, encoder);
 }
 
+static struct caption_track_data *create_caption_track()
+{
+	struct caption_track_data *rval =
+		bzalloc(sizeof(struct caption_track_data));
+	pthread_mutex_init_value(&rval->caption_mutex);
+
+	if (pthread_mutex_init(&rval->caption_mutex, NULL) != 0) {
+		bfree(rval);
+		rval = NULL;
+	}
+	return rval;
+}
+
 void obs_output_set_video_encoder2(obs_output_t *output, obs_encoder_t *encoder,
 				   size_t idx)
 {
@@ -1152,6 +1195,13 @@ void obs_output_set_video_encoder2(obs_output_t *output, obs_encoder_t *encoder,
 	obs_encoder_remove_output(output->video_encoders[idx], output);
 	obs_encoder_add_output(encoder, output);
 	output->video_encoders[idx] = encoder;
+
+	destroy_caption_track(&output->caption_tracks[idx]);
+	if (encoder != NULL) {
+		output->caption_tracks[idx] = create_caption_track();
+	} else {
+		output->caption_tracks[idx] = NULL;
+	}
 
 	// Set preferred resolution on the default index to preserve old behavior
 	if (idx == 0) {
@@ -1621,35 +1671,101 @@ static inline bool has_higher_opposing_ts(struct obs_output *output,
 			  output->highest_audio_ts > packet->dts_usec);
 }
 
-static const uint8_t nal_start[4] = {0, 0, 0, 1};
+static size_t extract_itut_t35_buffer_from_sei(sei_t *sei, uint8_t **data_out)
+{
+	if (!sei || !sei->head) {
+		return 0;
+	}
+	/* We should only need to get one payload, because the SEI that was
+	 * generated should only have one message, so no need to iterate. If
+	 * we did iterate, we would need to generate multiple OBUs. */
+	sei_message_t *msg = sei_message_head(sei);
+	int payload_size = (int)sei_message_size(msg);
+	uint8_t *payload_data = sei_message_data(msg);
+	*data_out = bmalloc(payload_size);
+	memcpy(*data_out, payload_data, payload_size);
+	return payload_size;
+}
 
+static const uint8_t nal_start[4] = {0, 0, 0, 1};
 static bool add_caption(struct obs_output *output, struct encoder_packet *out)
 {
 	struct encoder_packet backup = *out;
 	sei_t sei;
-	uint8_t *data;
+	uint8_t *data = NULL;
 	size_t size;
 	long ref = 1;
+	bool avc = false;
+	bool hevc = false;
+	bool av1 = false;
+
+	/* Instead of exiting early for unsupported codecs, we will continue
+	 * processing to allow the freeing of caption data even if the captions
+	 * will not be included in the bitstream due to being unimplemented in
+	 * the given codec. */
+	if (strcmp(out->encoder->info.codec, "h264") == 0) {
+		avc = true;
+	} else if (strcmp(out->encoder->info.codec, "av1") == 0) {
+		av1 = true;
+#ifdef ENABLE_HEVC
+	} else if (strcmp(out->encoder->info.codec, "hevc") == 0) {
+		hevc = true;
+#endif
+	}
 
 	DARRAY(uint8_t) out_data;
 
 	if (out->priority > 1)
 		return false;
 
+	struct caption_track_data *ctrack =
+		output->caption_tracks[out->track_idx];
+	if (!ctrack) {
+		blog(LOG_DEBUG,
+		     "Caption track for index: %lu has not been initialized",
+		     out->track_idx);
+		return false;
+	}
+
+#ifdef ENABLE_HEVC
+	uint8_t hevc_nal_header[2];
+	if (hevc) {
+		size_t nal_header_index_start = 4;
+		// Skip past the annex-b start code
+		if (memcmp(out->data, nal_start + 1, 3) == 0) {
+			nal_header_index_start = 3;
+		} else if (memcmp(out->data, nal_start, 4) == 0) {
+			nal_header_index_start = 4;
+
+		} else {
+			/* We shouldn't ever see this unless we start getting
+			 * packets without annex-b start codes. */
+			blog(LOG_DEBUG,
+			     "Annex-B start code not found. We may not "
+			     "generate a valid HEVC NAL unit header "
+			     "for our caption");
+			return false;
+		}
+		/* We will use the same 2 byte NAL unit header for the CC SEI,
+		 * but swap the NAL types out. */
+		hevc_nal_header[0] = out->data[nal_header_index_start];
+		hevc_nal_header[1] = out->data[nal_header_index_start + 1];
+	}
+#endif
 	sei_init(&sei, 0.0);
 
 	da_init(out_data);
 	da_push_back_array(out_data, (uint8_t *)&ref, sizeof(ref));
 	da_push_back_array(out_data, out->data, out->size);
 
-	if (output->caption_data.size > 0) {
+	if (ctrack->caption_data.size > 0) {
 
 		cea708_t cea708;
 		cea708_init(&cea708, 0); // set up a new popon frame
 		void *caption_buf = bzalloc(3 * sizeof(uint8_t));
 
-		while (output->caption_data.size > 0) {
-			deque_pop_front(&output->caption_data, caption_buf,
+		while (ctrack->caption_data.size > 0) {
+			deque_pop_front(&ctrack->caption_data, caption_buf,
 					3 * sizeof(uint8_t));
 
 			if ((((uint8_t *)caption_buf)[0] & 0x3) != 0) {
@@ -1687,37 +1803,85 @@ static bool add_caption(struct obs_output *output, struct encoder_packet *out)
 		msg->size = cea708_render(&cea708, sei_message_data(msg),
 					  sei_message_size(msg));
 		sei_message_append(&sei, msg);
-	} else if (output->caption_head) {
+	} else if (ctrack->caption_head) {
 		caption_frame_t cf;
 		caption_frame_init(&cf);
-		caption_frame_from_text(&cf, &output->caption_head->text[0]);
+		caption_frame_from_text(&cf, &ctrack->caption_head->text[0]);
 
 		sei_from_caption_frame(&sei, &cf);
 
-		struct caption_text *next = output->caption_head->next;
-		bfree(output->caption_head);
-		output->caption_head = next;
+		struct caption_text *next = ctrack->caption_head->next;
+		bfree(ctrack->caption_head);
+		ctrack->caption_head = next;
 	}
 
-	data = malloc(sei_render_size(&sei));
-	size = sei_render(&sei, data);
-	/* TODO SEI should come after AUD/SPS/PPS, but before any VCL */
-	da_push_back_array(out_data, nal_start, 4);
-	da_push_back_array(out_data, data, size);
-	free(data);
+	if (avc || hevc || av1) {
+		if (avc || hevc) {
+			data = bmalloc(sei_render_size(&sei));
+			size = sei_render(&sei, data);
+		}
+		/* In each of these specs there is an identical structure that
+		 * carries caption information. It is named slightly differently
+		 * in each one. The metadata_itut_t35 in AV1 or the
+		 * user_data_registered_itu_t_t35 in HEVC/AVC. We have an AVC
+		 * SEI wrapped version of that here. We will strip it out and
+		 * repackage it slightly to fit the different codec carrying
+		 * mechanisms. A slightly modified SEI for HEVC and a metadata
+		 * OBU for AV1. */
+		if (avc) {
+			/* TODO: SEI should come after AUD/SPS/PPS,
+			 * but before any VCL */
+			da_push_back_array(out_data, nal_start, 4);
+			da_push_back_array(out_data, data, size);
+#ifdef ENABLE_HEVC
+		} else if (hevc) {
+			/* Only first NAL (VPS/PPS/SPS) should use the 4 byte
+			 * start code. SEIs use 3 byte version */
+			da_push_back_array(out_data, nal_start + 1, 3);
+			/* nal_unit_header( ) {
+			 * forbidden_zero_bit       f(1)
+			 * nal_unit_type            u(6)
+			 * nuh_layer_id             u(6)
+			 * nuh_temporal_id_plus1    u(3)
+			 * }
+			 */
+			const uint8_t prefix_sei_nal_type = 39;
+			/* The first bit is always 0, so we just need to
+			 * save the last bit off the original header and
+			 * add the SEI NAL type. */
+			uint8_t first_byte = (prefix_sei_nal_type << 1) |
+					     (0x01 & hevc_nal_header[0]);
+			hevc_nal_header[0] = first_byte;
+			/* The HEVC NAL unit header is 2 byte instead of
+			 * one, otherwise everything else is the
+			 * same. */
+			da_push_back_array(out_data, hevc_nal_header, 2);
+			da_push_back_array(out_data, &data[1], size - 1);
+#endif
+		} else if (av1) {
+			uint8_t *obu_buffer = NULL;
+			size_t obu_buffer_size = 0;
+			size = extract_itut_t35_buffer_from_sei(&sei, &data);
+			metadata_obu_itu_t35(data, size, &obu_buffer,
+					     &obu_buffer_size);
+			if (obu_buffer) {
+				da_push_back_array(out_data, obu_buffer,
+						   obu_buffer_size);
+				bfree(obu_buffer);
+			}
+		}
+		if (data) {
+			bfree(data);
+		}
+		obs_encoder_packet_release(out);
 
-	obs_encoder_packet_release(out);
-
-	*out = backup;
-	out->data = (uint8_t *)out_data.array + sizeof(ref);
-	out->size = out_data.num - sizeof(ref);
-
+		*out = backup;
+		out->data = (uint8_t *)out_data.array + sizeof(ref);
+		out->size = out_data.num - sizeof(ref);
+	}
 	sei_free(&sei);
-
-	return true;
+	return avc || hevc || av1;
 }
-
-double last_caption_timestamp = 0;
 
 static inline void send_interleaved(struct obs_output *output)
 {
@@ -1728,13 +1892,13 @@ static inline void send_interleaved(struct obs_output *output)
 	 * this ensures that the timestamps are monotonic */
 	if (!has_higher_opposing_ts(output, &out))
 		return;
-	
+
 	//PRISM/cao.kewei/20240429/#5272/add logs
 	bool first_video_packet = out.type == OBS_ENCODER_VIDEO && output->total_frames == 0;
 	if (first_video_packet) {
 		blog(LOG_INFO, "%p-%s: output received first video packet", output, __FUNCTION__);
 	}
-	if (stopping(output)) {
+	if (stopping(output) && out.dts % 1000 == 0) {
 		blog(LOG_INFO, "%p-%s: stopping %s", output, __FUNCTION__, obs_output_get_id(output));
 	}
 
@@ -1743,33 +1907,37 @@ static inline void send_interleaved(struct obs_output *output)
 	if (out.type == OBS_ENCODER_VIDEO) {
 		output->total_frames++;
 
-		pthread_mutex_lock(&output->caption_mutex);
+		pthread_mutex_lock(
+			&output->caption_tracks[out.track_idx]->caption_mutex);
 
 		double frame_timestamp =
 			(out.pts * out.timebase_num) / (double)out.timebase_den;
 
-		if (output->caption_head &&
-		    output->caption_timestamp <= frame_timestamp) {
+		struct caption_track_data *ctrack =
+			output->caption_tracks[out.track_idx];
+
+		if (ctrack->caption_head &&
+		    ctrack->caption_timestamp <= frame_timestamp) {
 			blog(LOG_DEBUG, "Sending caption: %f \"%s\"",
-			     frame_timestamp, &output->caption_head->text[0]);
+			     frame_timestamp, &ctrack->caption_head->text[0]);
 
 			double display_duration =
-				output->caption_head->display_duration;
+				ctrack->caption_head->display_duration;
 
 			if (add_caption(output, &out)) {
-				output->caption_timestamp =
+				ctrack->caption_timestamp =
 					frame_timestamp + display_duration;
 			}
 		}
 
-		if (output->caption_data.size > 0) {
-			if (last_caption_timestamp < frame_timestamp) {
-				last_caption_timestamp = frame_timestamp;
+		if (ctrack->caption_data.size > 0) {
+			if (ctrack->last_caption_timestamp < frame_timestamp) {
+				ctrack->last_caption_timestamp =
+					frame_timestamp;
 				add_caption(output, &out);
 			}
 		}
-
-		pthread_mutex_unlock(&output->caption_mutex);
+		pthread_mutex_unlock(&ctrack->caption_mutex);
 	}
 
 	output->info.encoded_packet(output->context.data, &out);
@@ -2064,7 +2232,7 @@ static bool initialize_interleaved_packets(struct obs_output *output)
 		}
 	}
 	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
-		if (output->audio_encoders[i]) {
+		if (output->audio_encoders[i] && audio[i]->dts > 0) {
 			output->audio_offsets[i] = audio[i]->dts;
 		}
 	}
@@ -2081,11 +2249,6 @@ static bool initialize_interleaved_packets(struct obs_output *output)
 
 	/* subtract offsets from highest TS offset variables */
 	output->highest_audio_ts -= audio[first_audio_idx]->dts_usec;
-
-	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
-		if (video[i])
-			output->highest_video_ts[i] -= video[i]->dts_usec;
-	}
 
 	/* apply new offsets to all existing packet DTS/PTS values */
 	for (size_t i = 0; i < output->interleaved_packets.num; i++) {
@@ -2133,8 +2296,11 @@ static void resort_interleaved_packets(struct obs_output *output)
 	memset(&output->interleaved_packets, 0,
 	       sizeof(output->interleaved_packets));
 
-	for (size_t i = 0; i < old_array.num; i++)
+	for (size_t i = 0; i < old_array.num; i++) {
+		set_higher_ts(output, &old_array.array[i]);
+
 		insert_interleaved_packet(output, &old_array.array[i]);
+	}
 
 	da_free(old_array);
 }
@@ -2156,6 +2322,85 @@ static void discard_unused_audio_packets(struct obs_output *output,
 		discard_to_idx(output, idx);
 }
 
+static bool purge_encoder_group_keyframe_data(obs_output_t *output, size_t idx)
+{
+	struct keyframe_group_data *data =
+		&output->keyframe_group_tracking.array[idx];
+	uint32_t modified_count = 0;
+	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+		if (data->seen_on_track[i] != KEYFRAME_TRACK_STATUS_NOT_SEEN)
+			modified_count += 1;
+	}
+
+	if (modified_count == data->required_tracks) {
+		da_erase(output->keyframe_group_tracking, idx);
+		return true;
+	}
+	return false;
+}
+
+/* Check whether keyframes are emitted from all grouped encoders, and log
+ * if keyframes haven't been emitted from all grouped encoders. */
+static void
+check_encoder_group_keyframe_alignment(obs_output_t *output,
+				       struct encoder_packet *packet)
+{
+	size_t idx = 0;
+	struct keyframe_group_data insert_data = {0};
+
+	if (!packet->keyframe || packet->type != OBS_ENCODER_VIDEO ||
+	    !packet->encoder->encoder_group)
+		return;
+
+	for (; idx < output->keyframe_group_tracking.num;) {
+		struct keyframe_group_data *data =
+			&output->keyframe_group_tracking.array[idx];
+		if (data->pts > packet->pts)
+			break;
+		if (data->group_id !=
+		    (uintptr_t)packet->encoder->encoder_group) {
+			idx += 1;
+			continue;
+		}
+
+		if (data->pts < packet->pts) {
+			if (data->seen_on_track[packet->track_idx] ==
+			    KEYFRAME_TRACK_STATUS_NOT_SEEN) {
+				blog(LOG_WARNING,
+				     "obs-output '%s': Missing keyframe with pts %" PRIi64
+				     " for encoder '%s' (track: %zu)",
+				     obs_output_get_name(output), data->pts,
+				     obs_encoder_get_name(packet->encoder),
+				     packet->track_idx);
+			}
+
+			data->seen_on_track[packet->track_idx] =
+				KEYFRAME_TRACK_STATUS_SKIPPED;
+
+			if (!purge_encoder_group_keyframe_data(output, idx))
+				idx += 1;
+			continue;
+		}
+
+		data->seen_on_track[packet->track_idx] =
+			KEYFRAME_TRACK_STATUS_SEEN;
+		purge_encoder_group_keyframe_data(output, idx);
+		return;
+	}
+
+	insert_data.group_id = (uintptr_t)packet->encoder->encoder_group;
+	insert_data.pts = packet->pts;
+	insert_data.seen_on_track[packet->track_idx] =
+		KEYFRAME_TRACK_STATUS_SEEN;
+
+	pthread_mutex_lock(&packet->encoder->encoder_group->mutex);
+	insert_data.required_tracks =
+		packet->encoder->encoder_group->num_encoders_started;
+	pthread_mutex_unlock(&packet->encoder->encoder_group->mutex);
+
+	da_insert(output->keyframe_group_tracking, idx, &insert_data);
+}
+
 static void interleave_packets(void *data, struct encoder_packet *packet)
 {
 	struct obs_output *output = data;
@@ -2165,6 +2410,12 @@ static void interleave_packets(void *data, struct encoder_packet *packet)
 
 	if (!active(output))
 		return;
+	
+	//PRISM/cao.kewei/20241016/PRISM_PC-1296
+	pls_statistics_log_pts(output, (struct pls_statistics_item) {
+		.packet_pts = packet->pts,
+		.encoding_end_ts = os_gettime_ns()
+	});
 
 	packet->track_idx = get_encoder_index(output, packet);
 
@@ -2175,7 +2426,7 @@ static void interleave_packets(void *data, struct encoder_packet *packet)
 	    !output->received_video[packet->track_idx] && !packet->keyframe) {
 		discard_unused_audio_packets(output, packet->dts_usec);
 		pthread_mutex_unlock(&output->interleaved_mutex);
-		
+
 		//PRISM/cao.kewei/20240429/#5272/add logs
 		if (stopping(output)) {
 			if (packet->dts % 50 == 0) {
@@ -2196,6 +2447,8 @@ static void interleave_packets(void *data, struct encoder_packet *packet)
 					 output->received_video[i];
 	}
 
+	check_encoder_group_keyframe_alignment(output, packet);
+
 	was_started = output->received_audio && received_video;
 
 	if (output->active_delay_ns)
@@ -2203,13 +2456,17 @@ static void interleave_packets(void *data, struct encoder_packet *packet)
 	else
 		obs_encoder_packet_create_instance(&out, packet);
 
-	if (was_started)
+	//PRISM/cao.kewei/20241212/PRISM_PC-1563/pts offset
+	if (was_started) {
+		int64_t original_pts = packet->pts;
 		apply_interleaved_packet_offset(output, &out);
-	else
+		int64_t adjusted_pts = out.pts;
+		pls_statistics_apply_offset(output, original_pts, adjusted_pts);
+	} else {
 		check_received(output, packet);
+	}
 
 	insert_interleaved_packet(output, &out);
-	set_higher_ts(output, &out);
 
 	received_video = true;
 	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
@@ -2229,6 +2486,8 @@ static void interleave_packets(void *data, struct encoder_packet *packet)
 				}
 			}
 		} else {
+			set_higher_ts(output, &out);
+
 			send_interleaved(output);
 		}
 	} else {
@@ -2423,7 +2682,7 @@ static void reset_packet_data(obs_output_t *output)
 	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
 		output->received_video[i] = false;
 		output->video_offsets[i] = 0;
-		output->highest_video_ts[i] = 0;
+		output->highest_video_ts[i] = INT64_MIN;
 	}
 	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++)
 		output->audio_offsets[i] = 0;
@@ -2492,7 +2751,12 @@ static inline void signal_start(struct obs_output *output)
 static inline void signal_reconnect(struct obs_output *output)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: id=%s output_signal is called", output, __FUNCTION__,
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"output_id", output->info.id},
+				   {"output_name",
+				    obs_output_get_name(output)}};
+	blogex(false, LOG_INFO, fields, 3,
+	       "%p-%s: id=%s output_signal is called", output, __FUNCTION__,
 	     output->info.id);
 
 	struct calldata params;
@@ -2514,10 +2778,16 @@ void pls_remove_active_output(const char *name);
 static inline void signal_stop(struct obs_output *output)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO,
-	     "%p-%s: data=%p, video=%p, encoder=%p id=%s output_signal is called",
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"output_id", output->info.id},
+				   {"output_name",
+				    obs_output_get_name(output)}};
+	const char *error = obs_output_get_last_error(output);
+	blogex(false, LOG_INFO, fields, 3,
+	     "%p-%s: data=%p, video=%p, encoder=%p id=%s output_signal is called, stopCode=%d, lastError=%s",
 	     output, __FUNCTION__, output->context.data, output->video,
-	     output->video_encoders[0], output->info.id);
+	     output->video_encoders[0], output->info.id, output->stop_code,
+	     error ? error : "none");
 
 	struct calldata params;
 
@@ -2558,17 +2828,28 @@ bool obs_output_can_begin_data_capture(const obs_output_t *output,
 void log_output_encoder(const char *func, obs_output_t *output,
 			obs_encoder_t *encoder)
 {
-	blog(LOG_INFO,
-	     "%s, successed to init encoder for output %p [%s]. \n"
-	     "\t encoder = %p \n"
-	     "\t type = %s \n"
-	     "\t orig_id = %s \n"
-	     "\t real_id = %s \n",
-	     func, output, output->info.id ? output->info.id : "null", encoder,
-	     encoder->orig_info.type == OBS_ENCODER_VIDEO ? "video_encoder"
-							  : "audio_encoder",
-	     encoder->orig_info.id ? encoder->orig_info.id : "null",
-	     encoder->info.id ? encoder->info.id : "null");
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"output_id", output->info.id},
+				   {"output_name",
+				    obs_output_get_name(output)}};
+
+	obs_data_t *sts = obs_encoder_get_settings(encoder);
+	const char *json = pls_data_get_json(sts);
+
+	blogex(false, LOG_INFO, fields, 3,
+	       "%s, successed to init encoder for output %p [%s]. \n"
+	       "\t encoder = %p \n"
+	       "\t type = %s \n"
+	       "\t orig_id = %s \n"
+	       "\t real_id = %s \n"
+	       "\t encoder_settings = %s \n",
+	       func, output, output->info.id ? output->info.id : "null",
+	       encoder,
+	       encoder->orig_info.type == OBS_ENCODER_VIDEO ? "video_encoder"
+							    : "audio_encoder",
+	       encoder->orig_info.id ? encoder->orig_info.id : "null",
+	       encoder->info.id ? encoder->info.id : "null",
+	       json ? json : "null");
 }
 
 static inline bool initialize_audio_encoders(obs_output_t *output)
@@ -2752,10 +3033,53 @@ bool obs_output_begin_data_capture(obs_output_t *output, uint32_t flags)
 		pair_encoders(output);
 
 	os_atomic_set_bool(&output->data_active, true);
+	
+	//PRISM/cao.kewei/20241016/PRISM_PC-1296
+	pls_statistics_start(output);
 	hook_data_capture(output);
+
+	//PRISM/cao.kewei/20240514/#5378/force keyframe
+	//PRISM/wangshaohui/20240628/none/log keyframe
+	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+		obs_encoder_t *encoder = output->video_encoders[i];
+		if (encoder) {
+			os_atomic_set_bool(&encoder->force_keyframe, true);
+			os_atomic_set_long(&encoder->keyframe_cnt, 0);
+		}
+	}
+	//PRISM/wangshaohui/20240628/none/log keyframe
+	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
+		obs_encoder_t *encoder = output->audio_encoders[i];
+		if (encoder) {
+			os_atomic_set_long(&encoder->keyframe_cnt, 0);
+		}
+	}
 
 	if (flag_service(output))
 		obs_service_activate(output->service);
+
+	//PRISM/wangshaohui/20241206/none/add logs
+	if (flag_encoded(output)) {
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+					   {"output_id", output->info.id},
+					   {"output_name",
+					    obs_output_get_name(output)}};
+
+		video_t *v = (video_t *)output->video_encoders[0]->media;
+		const struct video_output_info *voi = video_output_get_info(v);
+
+		blogex(false, LOG_INFO, fields, 3,
+		       "%p id=%s output video settings: \n"
+		       "\t resolution: %dx%d \n"
+		       "\t format: %s \n"
+		       "\t fps: %d/%d \n"
+		       "\t colorspace: %s \n"
+		       "\t range: %s \n",
+		       output, output->info.id, voi->width, voi->height,
+		       get_video_format_name(voi->format), voi->fps_num,
+		       voi->fps_den, get_video_colorspace_name(voi->colorspace),
+		       get_video_range_name(voi->format, voi->range));
+	}
 
 	do_output_signal(output, "activate");
 	os_atomic_set_bool(&output->active, true);
@@ -2868,6 +3192,9 @@ static void *end_data_capture_thread(void *data)
 	os_atomic_set_bool(&output->active, false);
 	os_event_signal(output->stopping_event);
 	os_atomic_set_bool(&output->end_data_capture_thread_active, false);
+	
+	//PRISM/cao.kewei/20241016/PRISM_PC-1296 PRISM_PC-1390
+	pls_statistics_stop(output);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Exit]", output, __FUNCTION__);
@@ -2882,7 +3209,7 @@ static void obs_output_end_data_capture_internal(obs_output_t *output,
 
 	if (!obs_output_valid(output, "obs_output_end_data_capture"))
 		return;
-
+	
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Enter] data=%p, video=%p, encoder=%p", output,
 	     __FUNCTION__, output->context.data, output->video,
@@ -3043,10 +3370,18 @@ void obs_output_signal_stop(obs_output_t *output, int code)
 		return;
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(OBS_OUTPUT_SUCCESS == code ? LOG_INFO : LOG_WARNING,
-	     "%p-%s: output_signal [Enter] id:%s data=%p, video=%p, encoder=%p code=%d",
-	     output, __FUNCTION__, output->info.id, output->context.data,
-	     output->video, output->video_encoders[0], code);
+	char pointer_buf[50] = {0};
+	snprintf(pointer_buf, sizeof(pointer_buf), "%p", output);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"output", pointer_buf},
+				   {"output_id", output->info.id},
+				   {"output_name",
+				    obs_output_get_name(output)}};
+	blogex(false, OBS_OUTPUT_SUCCESS == code ? LOG_INFO : LOG_WARNING,
+	       fields, 4,
+	       "%p-%s: output_signal [Enter] id:%s data=%p, video=%p, encoder=%p code=%d",
+	       output, __FUNCTION__, output->info.id, output->context.data,
+	       output->video, output->video_encoders[0], code);
 
 	output->stop_code = code;
 
@@ -3079,6 +3414,15 @@ void obs_output_release(obs_output_t *output)
 	if (!output)
 		return;
 
+	//PRISM/chenguoxi/20241023/PRISM_PC_NELO-17/check output alive
+	if (!pls_is_alive(output)) {
+		blog(LOG_WARNING,
+		     "%s you are using destroyed output (%p), this may cause a crash",
+		     __FUNCTION__, output);
+		assert(false);
+		return;
+	}
+
 	obs_weak_output_t *control = get_weak(output);
 	if (obs_ref_release(&control->ref)) {
 		// The order of operations is important here since
@@ -3110,6 +3454,15 @@ obs_output_t *obs_output_get_ref(obs_output_t *output)
 {
 	if (!output)
 		return NULL;
+
+	//PRISM/chenguoxi/20241023/PRISM_PC_NELO-17/check output alive
+	if (!pls_is_alive(output)) {
+		blog(LOG_WARNING,
+		     "%s you are using destroyed output (%p), this may cause a crash",
+		     __FUNCTION__, output);
+		assert(false);
+		return NULL;
+	}
 
 	return obs_weak_output_get_output(get_weak(output));
 }
@@ -3157,12 +3510,19 @@ const char *obs_output_get_id(const obs_output_t *output)
 void obs_output_caption(obs_output_t *output,
 			const struct obs_source_cea_708 *captions)
 {
-	pthread_mutex_lock(&output->caption_mutex);
-	for (size_t i = 0; i < captions->packets; i++) {
-		deque_push_back(&output->caption_data, captions->data + (i * 3),
-				3 * sizeof(uint8_t));
+	for (int i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+		struct caption_track_data *ctrack = output->caption_tracks[i];
+		if (!ctrack) {
+			continue;
+		}
+		pthread_mutex_lock(&ctrack->caption_mutex);
+		for (size_t i = 0; i < captions->packets; i++) {
+			deque_push_back(&ctrack->caption_data,
+					captions->data + (i * 3),
+					3 * sizeof(uint8_t));
+		}
+		pthread_mutex_unlock(&ctrack->caption_mutex);
 	}
-	pthread_mutex_unlock(&output->caption_mutex);
 }
 
 static struct caption_text *caption_text_new(const char *text, size_t bytes,
@@ -3203,13 +3563,20 @@ void obs_output_output_caption_text2(obs_output_t *output, const char *text,
 	int size = (int)strlen(text);
 	blog(LOG_DEBUG, "Caption text: %s", text);
 
-	pthread_mutex_lock(&output->caption_mutex);
+	for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+		struct caption_track_data *ctrack = output->caption_tracks[i];
+		if (!ctrack) {
+			continue;
+		}
+		pthread_mutex_lock(&ctrack->caption_mutex);
 
-	output->caption_tail =
-		caption_text_new(text, size, output->caption_tail,
-				 &output->caption_head, display_duration);
+		ctrack->caption_tail = caption_text_new(text, size,
+							ctrack->caption_tail,
+							&ctrack->caption_head,
+							display_duration);
 
-	pthread_mutex_unlock(&output->caption_mutex);
+		pthread_mutex_unlock(&ctrack->caption_mutex);
+	}
 }
 
 float obs_output_get_congestion(obs_output_t *output)

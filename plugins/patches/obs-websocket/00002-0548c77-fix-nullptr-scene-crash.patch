@@ -1,0 +1,17 @@
+ src/eventhandler/EventHandler_Scenes.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/eventhandler/EventHandler_Scenes.cpp b/src/eventhandler/EventHandler_Scenes.cpp
+index 9dc2211..09fb563 100644
+--- a/src/eventhandler/EventHandler_Scenes.cpp
++++ b/src/eventhandler/EventHandler_Scenes.cpp
+@@ -108,6 +108,9 @@ void EventHandler::HandleSceneNameChanged(obs_source_t *source, std::string oldS
+ void EventHandler::HandleCurrentProgramSceneChanged()
+ {
+ 	OBSSourceAutoRelease currentScene = obs_frontend_get_current_scene();
++	//PRISM/Xiewei/20241125/PRISM_PC_NELO-93/Fix a crash where accessing the null pointer scene
++	if (!currentScene)
++		return;
+ 
+ 	json eventData;
+ 	eventData["sceneName"] = obs_source_get_name(currentScene);

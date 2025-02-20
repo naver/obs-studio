@@ -29,6 +29,10 @@
 #include <windows.h>
 #endif
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+#include <pls/pls-dual-output.h>
+#include <pls/pls-dual-output-internal.h>
+
 static uint64_t tick_sources(uint64_t cur_time, uint64_t last_time)
 {
 	struct obs_core_data *data = &obs->data;
@@ -116,11 +120,19 @@ static inline void render_displays(void)
 	/* render extra displays/swaps */
 	pthread_mutex_lock(&obs->data.displays_mutex);
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//WARN: default render landscape!!!
+	obs_set_video_rendering_canvas(
+		obs_get_canvas_by_index(LANDSCAPE_CANVAS_INDEX)->ovi);
+
 	display = obs->data.first_display;
 	while (display) {
 		render_display(display);
 		display = display->next;
 	}
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_set_video_rendering_canvas(NULL);
 
 	pthread_mutex_unlock(&obs->data.displays_mutex);
 
@@ -158,8 +170,9 @@ static inline bool can_reuse_mix_texture(const struct obs_core_video_mix *mix,
 			continue;
 		if (other->render_space != mix->render_space)
 			continue;
-		if (other->ovi.base_width != mix->ovi.base_width ||
-		    other->ovi.base_height != mix->ovi.base_height)
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (other->ovi->base_width != mix->ovi->base_width ||
+		    other->ovi->base_height != mix->ovi->base_height)
 			continue;
 		if (!other->texture_rendered)
 			continue;
@@ -187,8 +200,9 @@ static inline void draw_mix_texture(const size_t mix_idx)
 static const char *render_main_texture_name = "render_main_texture";
 static inline void render_main_texture(struct obs_core_video_mix *video)
 {
-	uint32_t base_width = video->ovi.base_width;
-	uint32_t base_height = video->ovi.base_height;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	uint32_t base_width = video->ovi->base_width;
+	uint32_t base_height = video->ovi->base_height;
 
 	profile_start(render_main_texture_name);
 	GS_DEBUG_MARKER_BEGIN(GS_DEBUG_COLOR_MAIN_TEXTURE,
@@ -246,12 +260,14 @@ get_scale_effect_internal(struct obs_core_video_mix *mix)
 	/* if the dimension is under half the size of the original image,
 	 * bicubic/lanczos can't sample enough pixels to create an accurate
 	 * image, so use the bilinear low resolution effect instead */
-	if (info->width < (mix->ovi.base_width / 2) &&
-	    info->height < (mix->ovi.base_height / 2)) {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (info->width < (mix->ovi->base_width / 2) &&
+	    info->height < (mix->ovi->base_height / 2)) {
 		return video->bilinear_lowres_effect;
 	}
 
-	switch (mix->ovi.scale_type) {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	switch (mix->ovi->scale_type) {
 	case OBS_SCALE_BILINEAR:
 		return video->default_effect;
 	case OBS_SCALE_LANCZOS:
@@ -268,8 +284,9 @@ get_scale_effect_internal(struct obs_core_video_mix *mix)
 static inline bool resolution_close(struct obs_core_video_mix *mix,
 				    uint32_t width, uint32_t height)
 {
-	long width_cmp = (long)mix->ovi.base_width - (long)width;
-	long height_cmp = (long)mix->ovi.base_height - (long)height;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	long width_cmp = (long)mix->ovi->base_width - (long)width;
+	long height_cmp = (long)mix->ovi->base_height - (long)height;
 
 	return labs(width_cmp) <= 16 && labs(height_cmp) <= 16;
 }
@@ -297,7 +314,8 @@ static const char *render_output_texture_name = "render_output_texture";
 static inline gs_texture_t *
 render_output_texture(struct obs_core_video_mix *mix)
 {
-	struct obs_video_info *const ovi = &mix->ovi;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info *const ovi = mix->ovi;
 	gs_texture_t *texture = mix->render_texture;
 	gs_texture_t *target = mix->output_texture;
 	const uint32_t width = gs_texture_get_width(target);
@@ -322,15 +340,17 @@ render_output_texture(struct obs_core_video_mix *mix)
 
 	if (bres) {
 		struct vec2 base;
-		vec2_set(&base, (float)mix->ovi.base_width,
-			 (float)mix->ovi.base_height);
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		vec2_set(&base, (float)mix->ovi->base_width,
+			 (float)mix->ovi->base_height);
 		gs_effect_set_vec2(bres, &base);
 	}
 
 	if (bres_i) {
 		struct vec2 base_i;
-		vec2_set(&base_i, 1.0f / (float)mix->ovi.base_width,
-			 1.0f / (float)mix->ovi.base_height);
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		vec2_set(&base_i, 1.0f / (float)mix->ovi->base_width,
+			 1.0f / (float)mix->ovi->base_height);
 		gs_effect_set_vec2(bres_i, &base_i);
 	}
 
@@ -904,6 +924,14 @@ static inline void output_video_data(struct obs_core_video_mix *video,
 	}
 }
 
+void add_ready_encoder_group(obs_encoder_t *encoder)
+{
+	obs_weak_encoder_t *weak = obs_encoder_get_weak_encoder(encoder);
+	pthread_mutex_lock(&obs->video.encoder_group_mutex);
+	da_push_back(obs->video.ready_encoder_groups, &weak);
+	pthread_mutex_unlock(&obs->video.encoder_group_mutex);
+}
+
 static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time,
 			       uint64_t interval_ns)
 {
@@ -932,6 +960,29 @@ static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time,
 	vframe_info.timestamp = cur_time;
 	vframe_info.count = count;
 
+	pthread_mutex_lock(&video->encoder_group_mutex);
+	for (size_t i = 0; i < video->ready_encoder_groups.num; i++) {
+		obs_encoder_t *encoder = obs_weak_encoder_get_encoder(
+			video->ready_encoder_groups.array[i]);
+		obs_weak_encoder_release(video->ready_encoder_groups.array[i]);
+		if (!encoder)
+			continue;
+
+		if (encoder->encoder_group) {
+			struct obs_encoder_group *group =
+				encoder->encoder_group;
+			pthread_mutex_lock(&group->mutex);
+			if (group->num_encoders_started >=
+				    group->encoders.num &&
+			    !group->start_timestamp)
+				group->start_timestamp = *p_time;
+			pthread_mutex_unlock(&group->mutex);
+		}
+		obs_encoder_release(encoder);
+	}
+	da_clear(video->ready_encoder_groups);
+	pthread_mutex_unlock(&video->encoder_group_mutex);
+
 	pthread_mutex_lock(&obs->video.mixes_mutex);
 	for (size_t i = 0, num = obs->video.mixes.num; i < num; i++) {
 		struct obs_core_video_mix *video = obs->video.mixes.array[i];
@@ -955,6 +1006,9 @@ static const char *output_frame_gs_flush_name = "gs_flush";
 static const char *output_frame_output_video_data_name = "output_video_data";
 static inline void output_frame(struct obs_core_video_mix *video)
 {
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_set_video_rendering_canvas(video->ovi);
+
 	const bool raw_active = video->raw_was_active;
 	const bool gpu_active = video->gpu_was_active;
 
@@ -1002,6 +1056,9 @@ static inline void output_frame(struct obs_core_video_mix *video)
 
 	if (++video->cur_texture == NUM_TEXTURES)
 		video->cur_texture = 0;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_set_video_rendering_canvas(NULL);
 }
 
 static inline void output_frames(void)
@@ -1220,7 +1277,11 @@ bool obs_graphics_thread_loop(struct obs_graphics_context *context)
 #endif
 
 	profile_start(output_frame_name);
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	is_rendering = true;
 	output_frames();
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	is_rendering = false;
 	profile_end(output_frame_name);
 
 	profile_start(render_displays_name);

@@ -1,5 +1,7 @@
 #ifdef _WIN32
 #include "rtmp-stream.h"
+//PRISM/Xiewei/20241125/None/Add log to trace the sent first packet.
+#include "pls/pls-output.h"
 
 static void fatal_sock_shutdown(struct rtmp_stream *stream)
 {
@@ -141,6 +143,9 @@ static void ideal_send_backlog_event(struct rtmp_stream *stream,
 
 enum data_ret { RET_BREAK, RET_FATAL, RET_CONTINUE };
 
+//PRISM/Xiewei/20241125/None/Add log to trace the sent first packet.
+static THREAD_LOCAL bool sent_first_packet = true;
+
 static enum data_ret write_data(struct rtmp_stream *stream, bool *can_write,
 				uint64_t *last_send_time,
 				size_t latency_packet_size, int delay_time)
@@ -183,6 +188,14 @@ static enum data_ret write_data(struct rtmp_stream *stream, bool *can_write,
 		*last_send_time = os_gettime_ns() / 1000000;
 
 		os_event_signal(stream->buffer_space_available_event);
+		//PRISM/Xiewei/20241125/None/Add log to trace the sent first packet.
+		if (sent_first_packet) {
+			sent_first_packet = false;
+			char buffer[64] = {0};
+			sprintf(buffer, "sent first packet (socket_thread_windows)");
+			pls_rtmp_log_event_time_gap(stream, stream->output,
+						    buffer);
+		}
 	} else {
 		int err_code;
 		bool fatal_err = false;

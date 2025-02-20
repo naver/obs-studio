@@ -770,7 +770,8 @@ static void check_to_drop_frames(struct ftl_stream *stream, bool pframes)
 	}
 
 	if (buffer_duration_usec > drop_threshold) {
-		debug("buffer_duration_usec: %" PRId64, buffer_duration_usec);
+		//PRISM/Xiewei/20240826/PRISM_PC-1043/remove frequent logs
+		//debug("buffer_duration_usec: %" PRId64, buffer_duration_usec);
 		drop_frames(stream, name, priority, pframes);
 	}
 }

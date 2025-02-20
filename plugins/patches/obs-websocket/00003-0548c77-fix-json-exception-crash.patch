@@ -1,0 +1,20 @@
+diff --git "a/src/WebSocketApi.cpp" "b/src/WebSocketApi.cpp"
+index 6546992..d2e2ad1 100644
+--- "a/src/WebSocketApi.cpp"
++++ "b/src/WebSocketApi.cpp"
+@@ -96,7 +96,14 @@ void WebSocketApi::BroadcastEvent(uint64_t requiredIntent, const std::string &ev
+ 	if (rpcVersion && rpcVersion != CURRENT_RPC_VERSION)
+ 		return;
+ 
+-	std::string eventDataString = eventData.dump();
++	//PRISM/Xiewei/20241128/PRISM_PC_NELO-105/Fix a crash caused by uncatched exception
++	std::string eventDataString{};
++	try {
++		eventDataString = eventData.dump();
++	} catch (...) {
++		blog(LOG_INFO, "[WebSocketApi: BroadcastEvent] An exception occurred while dumping the eventData.");
++		return;
++	}
+ 
+ 	std::shared_lock l(_mutex);
+ 

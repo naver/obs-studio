@@ -223,7 +223,8 @@ static void *audio_thread(void *param)
 	uint64_t prev_time = start_time;
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: [Enter]", audio, __FUNCTION__);
+	blog(LOG_INFO, "%p-%s(%s): [Enter]", audio, __FUNCTION__,
+	     audio->info.name ? audio->info.name : "null");
 
 	os_set_thread_name("audio-io: audio thread");
 
@@ -443,7 +444,8 @@ EXPORT void stop_audio_thread(audio_t *audio)
 
 void audio_output_close(audio_t *audio)
 {
-	void *thread_ret;
+	//PRISM/fanzirong/20240704/none/separate stop and free
+	//void *thread_ret;
 
 	if (!audio)
 		return;
@@ -452,12 +454,12 @@ void audio_output_close(audio_t *audio)
 	stop_audio_thread(audio);
 	os_event_destroy(audio->stop_event);
 	pthread_mutex_destroy(&audio->input_mutex);
-	if (false && audio->initialized) {
+	/*if (audio->initialized) {
 		os_event_signal(audio->stop_event);
 		pthread_join(audio->thread, &thread_ret);
 		os_event_destroy(audio->stop_event);
 		pthread_mutex_destroy(&audio->input_mutex);
-	}
+	}*/ 
 	//PRISM/fanzirong/20240704/none/separate stop and free--------- end
 
 	for (size_t mix_idx = 0; mix_idx < MAX_AUDIO_MIXES; mix_idx++) {

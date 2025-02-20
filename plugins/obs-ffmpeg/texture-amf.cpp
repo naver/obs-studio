@@ -700,19 +700,33 @@ static void amf_encode_base(amf_base *enc, AMFSurface *amf_surf,
 		/* submit frame                        */
 
 		//PRISM/cao.kewei/20240514/#5378/force keyframe
-		wchar_t *key_name =
+		wchar_t *force_key_name =
 			(wchar_t *)AMF_VIDEO_ENCODER_FORCE_PICTURE_TYPE;
-		if (enc->codec == amf_codec_type::HEVC) {
-			key_name = (wchar_t *)AMF_VIDEO_ENCODER_HEVC_FORCE_PICTURE_TYPE;
+		amf_int64 force_value_name = AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR;
+
+		switch (enc->codec) {
+		case amf_codec_type::AV1: {
+			force_key_name = (wchar_t *)
+				AMF_VIDEO_ENCODER_AV1_FORCE_FRAME_TYPE;
+			force_value_name =
+				AMF_VIDEO_ENCODER_AV1_FORCE_FRAME_TYPE_KEY;
+			break;
+		}
+		case amf_codec_type::HEVC: {
+			force_key_name = (wchar_t *)
+				AMF_VIDEO_ENCODER_HEVC_FORCE_PICTURE_TYPE;
+			force_value_name =
+				AMF_VIDEO_ENCODER_HEVC_PICTURE_TYPE_IDR;
+			break;
+		}
+		default:
+			break;
 		}
 
 		if (obs_encoder_request_keyframe(enc->encoder)) {
 			info("[amf encoder] request keyframe");
-			set_amf_property(enc, key_name,
-					 AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR);
-		} else {
-			set_amf_property(enc, key_name,
-					 AMF_VIDEO_ENCODER_PICTURE_TYPE_NONE);
+
+			amf_surf->SetProperty(force_key_name, force_value_name);
 		}
 
 		res = enc->amf_encoder->SubmitInput(amf_surf);
@@ -763,9 +777,9 @@ static void amf_encode_base(amf_base *enc, AMFSurface *amf_surf,
 		//PRISM/cao.kewei/20240514/#5378/force keyframe
 		if (obs_encoder_request_keyframe(enc->encoder)) {
 			bool is_keyframe = packet->keyframe;
-			info("[amf encoder] is keyframe: %s",
-			     is_keyframe ? "true" : "false");
 			if (is_keyframe) {
+				info("[amf encoder] is keyframe: %s",
+				     is_keyframe ? "true" : "false");
 				obs_encoder_set_request_keyframe(enc->encoder,
 								 false);
 			}
@@ -1021,13 +1035,12 @@ try {
 	/* ------------------------------------ */
 	/* get video info                       */
 
-	struct obs_video_info ovi;
-	obs_get_video_info(&ovi);
-
 	struct video_scale_info info;
-	info.format = ovi.output_format;
-	info.colorspace = ovi.colorspace;
-	info.range = ovi.range;
+	video_t *video = obs_encoder_video(enc->encoder);
+	const struct video_output_info *voi = video_output_get_info(video);
+	info.format = voi->format;
+	info.colorspace = voi->colorspace;
+	info.range = voi->range;
 
 	if (enc->fallback) {
 		if (enc->codec == amf_codec_type::AVC)
@@ -1040,9 +1053,9 @@ try {
 
 	enc->cx = obs_encoder_get_width(enc->encoder);
 	enc->cy = obs_encoder_get_height(enc->encoder);
-	enc->amf_frame_rate = AMFConstructRate(ovi.fps_num, ovi.fps_den);
-	enc->fps_num = (int)ovi.fps_num;
-	enc->fps_den = (int)ovi.fps_den;
+	enc->amf_frame_rate = AMFConstructRate(voi->fps_num, voi->fps_den);
+	enc->fps_num = (int)voi->fps_num;
+	enc->fps_den = (int)voi->fps_den;
 	enc->full_range = info.range == VIDEO_RANGE_FULL;
 
 	switch (info.colorspace) {

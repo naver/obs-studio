@@ -140,8 +140,13 @@ void process_delay(void *data, struct encoder_packet *packet)
 void obs_output_signal_delay(obs_output_t *output, const char *signal)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: output_signal is called, signal=%s id=%s", output,
-	     __FUNCTION__, signal, output->info.id);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"output_id", output->info.id},
+				   {"output_name",
+				    obs_output_get_name(output)}};
+	blogex(false, LOG_INFO, fields, 3,
+	       "%p-%s: output_signal is called, signal=%s id=%s", output,
+	       __FUNCTION__, signal, output->info.id);
 
 	struct calldata params;
 	uint8_t stack[128];

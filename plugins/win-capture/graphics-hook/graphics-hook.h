@@ -269,6 +269,9 @@ static inline bool should_passthrough()
 #endif
 }
 
+//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+void send_game_render_type(const char *type);
+
 #ifdef __cplusplus
 }
 #endif

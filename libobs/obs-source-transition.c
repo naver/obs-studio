@@ -205,10 +205,17 @@ static void recalculate_transition_size(obs_source_t *transition)
 	transition->transition_actual_cy = cy;
 }
 
-void obs_transition_tick(obs_source_t *transition, float t)
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+void obs_transition_recalculate_size(obs_source_t *transition)
 {
 	recalculate_transition_size(transition);
-	recalculate_transition_matrices(transition);
+}
+
+void obs_transition_tick(obs_source_t *transition, float t)
+{
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//recalculate_transition_size(transition);
+	//recalculate_transition_matrices(transition);
 
 	if (transition->transition_mode == OBS_TRANSITION_MODE_MANUAL) {
 		if (transition->transition_manual_torque == 0.0f) {
@@ -763,6 +770,16 @@ void obs_transition_video_render2(
 	if (!transition_valid(transition, "obs_transition_video_render"))
 		return;
 
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_transition_recalculate_size(transition);
+	recalculate_transition_matrices(transition);
+
+	if (trylock_textures(transition) == 0) {
+		gs_texrender_reset(transition->transition_texrender[0]);
+		gs_texrender_reset(transition->transition_texrender[1]);
+		unlock_textures(transition);
+	}
+
 	t = get_video_time(transition);
 
 	lock_transition(transition);
@@ -902,6 +919,10 @@ bool obs_transition_video_render_direct(obs_source_t *transition,
 
 	if (!transition_valid(transition, "obs_transition_video_render"))
 		return false;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	obs_transition_recalculate_size(transition);
+	recalculate_transition_matrices(transition);
 
 	t = get_video_time(transition);
 

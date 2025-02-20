@@ -12,11 +12,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-	
+
 //PRISM/Zhongling/20230809/#/lens and mobile plugin
 #define TEXT_PRISM_LENS_NAME "main.prism.lens.name"
 #define TEXT_PRISM_LENS_MOBILE_NAME "main.prism.lens.mobile.name"
-	
+
 #define TEXT_PRISM_LENS_TIPS "main.property.lens.tips"
 #define TEXT_PRISM_LENS_MOBILE_TIPS "main.property.mobile.tips"
 
@@ -29,10 +29,10 @@ extern "C" {
 
 #define TEXT_PRISM_LENS_OPEN_KEY "openPrismLens"
 #define TEXT_PRISM_LENS_OPEN_TEXT "main.property.prism.lens.open"
-	
+
 #define TEXT_PRISM_LENS_ID "prism_lens"
 #define TEXT_PRISM_LENS_MOBILE_ID "prism_lens_mobile"
-	
+
 #define TEXT_PRISM_LENS_1 "PRISM Lens 1"
 #define TEXT_PRISM_LENS_2 "PRISM Lens 2"
 #define TEXT_PRISM_LENS_3 "PRISM Lens 3"
@@ -68,7 +68,8 @@ enum pls_icon_type {
 	PLS_ICON_TYPE_PRISM_LENS,
 	PLS_ICON_TYPE_SPOUT2,
 	PLS_ICON_TYPE_CHAT_TEMPLATE,
-	PLS_ICON_TYPE_CHZZK_SPONSOR
+	PLS_ICON_TYPE_CHZZK_SPONSOR,
+	PLS_ICON_TYPE_CAPTURE_CARD
 };
 
 struct pls_source_info {

@@ -13,8 +13,12 @@ if(NOT DEFINED OBS_VERSION_OVERRIDE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git
   #  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
   #  RESULT_VARIABLE _obs_version_result
   #  OUTPUT_STRIP_TRAILING_WHITESPACE)
-  set(_obs_version "30.1.2")
+  set(_obs_version "30.2.3")
   set(_obs_version_result 0)
+
+  if(_git_describe_err)
+    message(FATAL_ERROR "Could not fetch OBS version tag from git.\n" ${_git_describe_err})
+  endif()
 
   if(_obs_version_result EQUAL 0)
     string(REGEX REPLACE "([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\1;\\2;\\3" _obs_version_canonical ${_obs_version})

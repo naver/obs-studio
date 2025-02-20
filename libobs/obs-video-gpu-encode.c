@@ -83,10 +83,13 @@ static void *gpu_encode_thread(void *data)
 			uint32_t skip = 0;
 
 			//PRISM/Wangshaohui/20240517/#5383/for reading value in release dump
-			volatile obs_encoder_t *encoder_read = encoders.array[i]; 
+			volatile obs_encoder_t *encoder_read = encoders.array[i];
 			UNUSED_PARAMETER(encoder_read);
 
 			obs_encoder_t *encoder = encoders.array[i];
+			//PRISM/Xiewei/20240806/#5901/trace encoders' lifetime
+			if (!encoder_alive(encoder))
+				continue;
 			struct obs_encoder **paired =
 				encoder->paired_encoders.array;
 			size_t num_paired = encoder->paired_encoders.num;
@@ -96,10 +99,24 @@ static void *gpu_encode_thread(void *data)
 			pkt.timebase_den = encoder->timebase_den;
 			pkt.encoder = encoder;
 
+			if (encoder->encoder_group && !encoder->start_ts) {
+				struct obs_encoder_group *group =
+					encoder->encoder_group;
+				bool ready = false;
+				pthread_mutex_lock(&group->mutex);
+				ready = group->start_timestamp == timestamp;
+				pthread_mutex_unlock(&group->mutex);
+				if (!ready)
+					continue;
+			}
+
 			if (!encoder->first_received && num_paired) {
 				bool wait_for_audio = false;
 
 				for (size_t idx = 0; idx < num_paired; idx++) {
+					//PRISM/Xiewei/20240806/#5901/trace encoders' lifetime
+					if (!encoder_alive(paired[idx]))
+						continue;
 					if (!paired[idx]->first_received ||
 					    paired[idx]->first_raw_ts >
 						    timestamp) {
@@ -139,7 +156,28 @@ static void *gpu_encode_thread(void *data)
 			else
 				next_key++;
 
-			profile_start(gpu_encode_frame_name);
+			//PRISM/wangshaohui/20240929/none/log encode time
+			if (!encoder->profile_encoder_encode_name) {
+				encoder->profile_encoder_encode_name =
+					profile_store_name(
+						obs_get_profiler_name_store(),
+						"%s (%s)(%p)(%s)",
+						gpu_encode_frame_name,
+						encoder->context.name, encoder, encoder->info.id);
+			}
+
+			int64_t encode_pts = encoder->cur_pts;
+			pls_statistics_log_encoder_pts(
+				encoder,
+				(struct pls_statistics_item){
+					.packet_pts = encode_pts,
+					.encoding_start_ts = os_gettime_ns()});
+
+			//PRISM/wangshaohui/20240929/none/log encode time
+			//profile_start(gpu_encode_frame_name);
+
+			profile_start(encoder->profile_encoder_encode_name);
+
 			if (encoder->info.encode_texture2) {
 				struct encoder_texture tex = {0};
 
@@ -157,7 +195,23 @@ static void *gpu_encode_thread(void *data)
 					encoder->cur_pts, lock_key, &next_key,
 					&pkt, &received);
 			}
-			profile_end(gpu_encode_frame_name);
+			//PRISM/wangshaohui/20240929/none/log encode time
+			//profile_end(gpu_encode_frame_name);
+			profile_end(encoder->profile_encoder_encode_name);
+
+			pls_statistics_log_encoder_pts(
+				encoder,
+				(struct pls_statistics_item){
+					.packet_pts = encode_pts,
+					.encoding_end_ts = os_gettime_ns()});
+
+			//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
+			if (success && received &&
+			    encoder->info.type == OBS_ENCODER_VIDEO) {
+				record_pts_stats(&encoder->pts_stats,
+					(double)encoder->cur_pts * encoder->timebase_num * 1000 / encoder->timebase_den,
+					(double)pkt.pts * pkt.timebase_num * 1000.0 / pkt.timebase_den);
+			}
 
 			//PRISM/wangshaohui/20240628/none/log keyframe
 			if (success) {
