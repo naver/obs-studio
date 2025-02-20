@@ -32,6 +32,13 @@ static void *decklink_output_create(obs_data_t *settings, obs_output_t *output)
 		DeckLinkDeviceMode *mode =
 			device->FindOutputMode(decklinkOutput->modeID);
 
+		//PRISM/chenguoxi/20241206/PRISM_PC_NELO-117/check null pointer
+		if (!mode) {
+			LOG(LOG_ERROR, "%s: mode is NULL. modeID=%lld",
+			    __FUNCTION__, decklinkOutput->modeID);
+			return NULL;
+		}
+
 		struct video_scale_info to = {};
 		to.format = VIDEO_FORMAT_BGRA;
 		to.width = mode->GetWidth();

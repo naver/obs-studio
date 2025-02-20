@@ -154,7 +154,9 @@ void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
 
 void ffmpeg_video_encoder_free(struct ffmpeg_video_encoder *enc)
 {
-	if (enc->initialized) {
+	//PRISM/chenguoxi/20240805/PRISM_PC-859/avoid to send NULL to none received context
+	/* if (enc->initialized) { */
+	if (enc->initialized && enc->frame_received) {
 		AVPacket pkt = {0};
 		int r_pkt = 1;
 
@@ -191,6 +193,9 @@ bool ffmpeg_video_encoder_init(struct ffmpeg_video_encoder *enc, void *parent,
 	enc->on_init_error = on_init_error;
 	enc->on_first_packet = on_first_packet;
 	enc->first_packet = true;
+
+	//PRISM/chenguoxi/20240805/PRISM_PC-859/avoid to send NULL to none received context
+	enc->frame_received = false;
 
 	blog(LOG_INFO, "---------------------------------");
 
@@ -282,8 +287,13 @@ bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
 	}
 
 	ret = avcodec_send_frame(enc->context, enc->vframe);
-	if (ret == 0)
+	//PRISM/chenguoxi/20240805/PRISM_PC-859/avoid to send NULL to none received context
+	//if (ret == 0)
+	//	ret = avcodec_receive_packet(enc->context, &av_pkt);
+	if (ret == 0) {
+		enc->frame_received = true;
 		ret = avcodec_receive_packet(enc->context, &av_pkt);
+	}
 
 	got_packet = (ret == 0);
 

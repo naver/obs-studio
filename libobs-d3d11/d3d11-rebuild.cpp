@@ -16,6 +16,8 @@
 ******************************************************************************/
 
 #include "d3d11-subsystem.hpp"
+//PRISM/ZengQin/20241205/1676/add enhance Logs.
+#include "pls/pls-base.h"
 
 void gs_vertex_buffer::Rebuild()
 {
@@ -404,7 +406,10 @@ try {
 	ID3D11Device *dev = nullptr;
 	HRESULT hr;
 
-	blog(LOG_WARNING, "Device Remove/Reset!  Rebuilding all assets...");
+	//PRISM/ZengQin/20241205/1676/add enhance Logs.
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"DeviceRebuildStatus","rebuildStart"}};
+	blogex(false, LOG_WARNING, fields, 2, "Device Remove/Reset!  Rebuilding all assets...");
 
 	/* ----------------------------------------------------------------- */
 
@@ -573,7 +578,6 @@ try {
 
 	for (gs_device_loss &callback : loss_callbacks)
 		callback.device_loss_rebuild(device.Get(), callback.data);
-
 } catch (const char *error) {
 	bcrash("Failed to recreate D3D11: %s", error);
 

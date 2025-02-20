@@ -1,6 +1,7 @@
 #include "pls-obs-api.h"
 #include "util/platform.h"
 #include "signal.h"
+#include "pls-encoder.h"
 #include <set>
 #include <string>
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <array>
 #include <vector>
 #include <deque>
+#include <limits>
 #if defined(_WIN32)
 #include <Windows.h>
 #include <Shlwapi.h>
@@ -27,6 +29,9 @@ struct GLobalVariable {
 #endif
 	static std::atomic_bool g_all_mute;
 	static std::atomic_bool g_design_mode;
+
+	static std::recursive_mutex g_encoder_mutex;
+	static std::set<void *> g_encoder_set;
 };
 #if defined(_WIN32)
 Gdiplus::PrivateFontCollection *GLobalVariable::g_privateFontCollection =
@@ -36,12 +41,17 @@ std::atomic_bool GLobalVariable::g_locked = false;
 #endif
 std::atomic_bool GLobalVariable::g_all_mute = false;
 std::atomic_bool GLobalVariable::g_design_mode = false;
+
+std::recursive_mutex GLobalVariable::g_encoder_mutex;
+std::set<void *> GLobalVariable::g_encoder_set;
 } // namespace
 
 std::set<std::string> g_loaded_dll;
 static signal_handler_t *g_freetype_handler = NULL;
 static std::atomic_bool g_freetype_needs_reload = false;
 static std::deque<std::string>g_freetype_paths;
+
+static std::vector<std::string> g_third_party_plugins;
 
 static std::string str_tolower(std::string s)
 {
@@ -68,6 +78,45 @@ void pls_remember_dll_name(const char *dllName)
 	g_loaded_dll.insert(std::string(dllName));
 #endif
 }
+
+#ifdef _WIN32
+typedef void (*record_third_party_plugin)(const char *dllName);
+static void *record_third_party_plugin_lib = NULL;
+static record_third_party_plugin record_third_party_plugin_func = NULL;
+
+void pls_start_recording_third_party_plugin() {
+	char *libdump_path = os_get_executable_path_ptr("libdump-analyzer.dll");
+	void *lib = NULL;
+	if (!libdump_path) {
+		return;
+	}
+	lib = os_dlopen(libdump_path);
+	bfree(libdump_path);
+	if (!lib) {
+		return;
+	}
+	record_third_party_plugin_lib = lib;
+	record_third_party_plugin func = (record_third_party_plugin)os_dlsym(lib, "record_third_party_plugin");
+	if (!func) {
+		return;
+	}
+	record_third_party_plugin_func = func;
+}
+
+void pls_record_third_party_plugin(const char *dllName) {
+	if (record_third_party_plugin_func) {
+		record_third_party_plugin_func(dllName);
+	}
+}
+
+void pls_finish_recording_third_party_plugin() {
+	if (record_third_party_plugin_lib) {
+		os_dlclose(record_third_party_plugin_lib);
+		record_third_party_plugin_lib = NULL;
+	}
+	record_third_party_plugin_func = NULL;
+}
+#endif
 
 bool pls_is_plugin_in_black_list(const char *dllName)
 {
@@ -195,7 +244,7 @@ const char* pls_freetype_pop_font_path() {
 	}
 	std::string path = g_freetype_paths.front();
 	g_freetype_paths.pop_front();
-	
+
 	const char* cString = new char[path.size() + 1];
 	std::strcpy(const_cast<char*>(cString), path.c_str());
 	return cString;
@@ -266,4 +315,95 @@ void pls_set_design_mode(bool enable)
 bool pls_design_mode()
 {
 	return GLobalVariable::g_design_mode;
+}
+
+bool encoder_alive_func(obs_encoder_t *encoder, const char *func_name, int line)
+{
+	lock_guard guard(GLobalVariable::g_encoder_mutex);
+	auto result = GLobalVariable::g_encoder_set.find(encoder) !=
+		 GLobalVariable::g_encoder_set.end();
+	if (!result) {
+		blog(LOG_WARNING,
+		     "[%s:%d] Try to access a destroyed encoder: %p", func_name,
+		     line, (void *)encoder);
+	}
+
+	return result;
+}
+
+void on_encoder_created(obs_encoder_t *encoder)
+{
+	if (!encoder)
+		return;
+
+	lock_guard guard(GLobalVariable::g_encoder_mutex);
+	if (GLobalVariable::g_encoder_set.find(encoder) ==
+	    GLobalVariable::g_encoder_set.end()) {
+		GLobalVariable::g_encoder_set.insert(encoder);
+	} else {
+		assert(false && "Create repeated encoder.");
+	}
+}
+
+void on_encoder_destoryed(obs_encoder_t *encoder)
+{
+	lock_guard guard(GLobalVariable::g_encoder_mutex);
+	if (auto iter = GLobalVariable::g_encoder_set.find(encoder);
+	    iter != GLobalVariable::g_encoder_set.end()) {
+		GLobalVariable::g_encoder_set.erase(iter);
+	} else {
+		assert(false && "Free a destroyed encoder.");
+	}
+}
+
+#define PTS_STATS_INTERVAL (1000000000LL * 60) // 1min
+//#define PTS_STATS_INTERVAL (1000000000LL * 10) // 10s
+
+void init_pts_stats(PtsStats *stats, const obs_encoder_t *encoder,
+		    const char *encoder_context_name, const char* encode_info_id)
+{
+	stats->sum = 0;
+	stats->count = 0;
+	stats->min = (double)LLONG_MAX;
+	stats->max = 0;
+	stats->start_time = 0;
+	stats->encoder = encoder;
+	stats->encoder_context_name = encoder_context_name != NULL
+		? encoder_context_name : "unknown";
+	stats->encode_info_id = encode_info_id != NULL ? encode_info_id : "unknown";
+}
+
+
+void record_pts_stats(PtsStats *stats, double frame_pts_ms, double pkt_pts_ms)
+{
+	double diff = frame_pts_ms - pkt_pts_ms;
+	uint64_t current = os_gettime_ns();
+
+	if (stats->start_time == 0) {
+		stats->start_time = current;
+	}
+
+	int64_t elapsed = current - stats->start_time;
+
+	if (elapsed >= PTS_STATS_INTERVAL) {
+		double avg = (stats->count == 0
+				      ? 0
+				      : (double)stats->sum / stats->count);
+
+		blog(LOG_INFO,
+		     "Pts stats [encode(%s)(%p)(%s)]: avg=[%.2fms], min=[%.2fms], max=[%.2fms]",
+		     stats->encoder_context_name, stats->encoder,
+		     stats->encode_info_id, avg, stats->min,
+		     stats->max);
+		stats->sum = diff;
+		stats->count = 1;
+		stats->min = diff;
+		stats->max = diff;
+		stats->start_time = current;
+	} else {
+		stats->sum += diff;
+		stats->count += 1;
+		stats->min = min(stats->min, diff);
+		stats->max = max(stats->max, diff);
+	}
 }

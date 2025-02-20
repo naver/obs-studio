@@ -36,6 +36,9 @@ struct ffmpeg_video_encoder {
 	void *parent;
 	init_error_cb on_init_error;
 	first_packet_cb on_first_packet;
+
+	//PRISM/chenguoxi/20240805/PRISM_PC-859/avoid to send NULL to none received context
+	bool frame_received;
 };
 
 extern bool ffmpeg_video_encoder_init(struct ffmpeg_video_encoder *enc,

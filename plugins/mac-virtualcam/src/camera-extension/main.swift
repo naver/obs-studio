@@ -9,6 +9,7 @@
 import CoreMediaIO
 import Foundation
 import os.log
+import dnssd
 
 let OBSCameraDeviceUUID = Bundle.main.object(forInfoDictionaryKey: "OBSCameraDeviceUUID") as? String
 let OBSCameraSourceUUID = Bundle.main.object(forInfoDictionaryKey: "OBSCameraSourceUUID") as? String
@@ -29,4 +30,22 @@ else {
 let providerSource = OBSCameraProviderSource(
     clientQueue: nil, deviceUUID: deviceUUID, sourceUUID: sourceUUID, sinkUUID: sinkUUID)
 CMIOExtensionProvider.startService(provider: providerSource.provider)
+
+//PRISM/Zhongling/20240725/#/Analog for vcam start
+var dnsServiceRef = DNSServiceRef(bitPattern: 0)
+defer {
+	DNSServiceRefDeallocate(dnsServiceRef)
+}
+if let server = SwiftWebSocketServer.singleton {
+	let type = "_prismvcam._tcp."
+	let suffix = "prism-vcam-info"
+	let domain = "local"
+	let interface = UInt32(kDNSServiceInterfaceIndexAny)
+	let port = CFSwapInt16HostToBig(server.port.rawValue)
+	let name = Host.current().name != nil ? Host.current().name! + "." + suffix : suffix
+	
+	_ = DNSServiceRegister(&dnsServiceRef, 0, interface, name, type, domain, nil, port, 0, nil, nil, nil)
+}
+//PRISM/Zhongling/20240725/#/Analog for vcam end
+
 CFRunLoopRun()

@@ -319,6 +319,14 @@ static void load_all_callback(void *param, const struct obs_module_info2 *info)
 
 	get_plugin_info(info->bin_path, &is_obs_plugin, &can_load_obs_plugin);
 
+	//PRISM/cao.kewei/20241206/PRISM_PC-1613/record third party plugins
+#if _WIN32
+	bool internal_module = os_is_pls_plugin(info->bin_path);
+	if (!internal_module) {
+		pls_record_third_party_plugin(info->name);
+	}
+#endif
+
 	if (!is_obs_plugin) {
 		blog(LOG_DEBUG, "Skipping module '%s', not an OBS plugin",
 		     info->bin_path);

@@ -18,6 +18,9 @@
 #include "obs.h"
 #include "obs-internal.h"
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+#include "pls/pls-dual-output-internal.h"
+
 bool obs_view_init(struct obs_view *view)
 {
 	if (!view)
@@ -185,7 +188,9 @@ video_t *obs_view_add(obs_view_t *view)
 {
 	if (!obs->video.main_mix)
 		return NULL;
-	return obs_view_add2(view, &obs->video.main_mix->ovi);
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	//default landscape
+	return obs_view_add2(view, NULL);
 }
 
 video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
@@ -193,8 +198,29 @@ video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Enter] ovi=%p", view, __FUNCTION__, ovi);
 
-	if (!view || !ovi)
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	if (!view)
 		return NULL;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info_v2 *ovi_v2 = NULL;
+	if (ovi == NULL) {
+		if (obs->video.canvases.num == 0)
+			return NULL;
+		ovi_v2 = obs->video.canvases.array[0];
+	} else {
+		ovi_v2 = obs_find_ovi_v2_by_ovi(ovi);
+		if (ovi_v2 == NULL) {
+			blog(LOG_WARNING,"%s: ovi=%p not in canvases. Create new ovi!!!", __FUNCTION__, ovi);
+			if (obs->video.canvases.num == 0)
+				return NULL;
+			ovi_v2 = obs_create_3dr_ovi(ovi);
+			if (ovi_v2 == NULL)
+				return NULL;
+			ovi_v2->parent = obs->video.canvases.array[0];
+			blog(LOG_WARNING,"%s: ovi=%p not in canvases. Create new ovi: ovi_v2=%p!!!", __FUNCTION__, ovi, ovi_v2);
+		}
+	}
 
 	struct obs_core_video_mix *mix = obs_create_video_mix(ovi);
 	if (!mix) {
@@ -208,7 +234,7 @@ video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
 	pthread_mutex_unlock(&obs->video.mixes_mutex);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: [Exit] mix=%p, video=%p", view, __FUNCTION__,
+	blog(LOG_INFO, "%p-%s: [Exit] in_ovi=%p, ovi=%p, ovi_v2=%p, mix=%p, video=%p", view, __FUNCTION__, ovi, ovi_v2->ovi, ovi_v2,
 	     mix, mix->video);
 
 	return mix->video;
@@ -244,7 +270,8 @@ bool obs_view_get_video_info(obs_view_t *view, struct obs_video_info *ovi)
 
 	size_t idx = find_mix_for_view(view);
 	if (idx != DARRAY_INVALID) {
-		*ovi = obs->video.mixes.array[idx]->ovi;
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		*ovi = *(obs->video.mixes.array[idx]->ovi);
 		pthread_mutex_unlock(&obs->video.mixes_mutex);
 		return true;
 	}
@@ -265,7 +292,8 @@ void obs_view_enum_video_info(obs_view_t *view,
 		struct obs_core_video_mix *mix = obs->video.mixes.array[i];
 		if (mix->view != view)
 			continue;
-		if (!enum_proc(param, &mix->ovi))
+		//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+		if (!enum_proc(param, mix->ovi))
 			break;
 	}
 

@@ -6,6 +6,7 @@
 //
 
 #import "plugin-main.h"
+#include "pls/pls-source.h"
 
 #pragma mark av-capture API
 
@@ -125,7 +126,12 @@ static void av_capture_update(void *av_capture, obs_data_t *settings)
     OBSAVCapture *capture = (__bridge OBSAVCapture *) (av_capture);
     capture.captureInfo->settings = settings;
 
-    [capture updateSessionwithError:NULL];
+	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+	obs_source_t *strong_source = obs_source_get_ref(capture.captureInfo->source);
+	if (strong_source) {
+		[capture updateSessionwithError:NULL];
+		obs_source_release(strong_source);
+	}
 }
 
 static void av_fast_capture_tick(void *av_capture, float seconds __unused)
@@ -284,23 +290,23 @@ bool obs_module_load(void)
 
     obs_register_source(&av_capture_info);
 
-    struct obs_source_info av_capture_sync_info = {.id = "macos-avcapture-fast",
-                                                   .type = OBS_SOURCE_TYPE_INPUT,
-                                                   .output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-                                                                   OBS_SOURCE_AUDIO | OBS_SOURCE_SRGB |
-                                                                   OBS_SOURCE_DO_NOT_DUPLICATE,
-                                                   .create = av_fast_capture_create,
-                                                   .get_name = av_fast_capture_get_name,
-                                                   .get_defaults = av_fast_capture_set_defaults,
-                                                   .get_properties = av_capture_properties,
-                                                   .update = av_capture_update,
-                                                   .destroy = av_capture_destroy,
-                                                   .video_tick = av_fast_capture_tick,
-                                                   .video_render = av_fast_capture_render,
-                                                   .get_width = av_fast_capture_get_width,
-                                                   .get_height = av_fast_capture_get_height,
-                                                   .icon_type = OBS_ICON_TYPE_CAMERA
-
+    struct obs_source_info av_capture_sync_info = {
+        .id = "macos-avcapture-fast",
+        .type = OBS_SOURCE_TYPE_INPUT,
+        .output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_AUDIO | OBS_SOURCE_SRGB |
+                        OBS_SOURCE_DO_NOT_DUPLICATE,
+        .create = av_fast_capture_create,
+        .get_name = av_fast_capture_get_name,
+        .get_defaults = av_fast_capture_set_defaults,
+        .get_properties = av_capture_properties,
+        .update = av_capture_update,
+        .destroy = av_capture_destroy,
+        .video_tick = av_fast_capture_tick,
+        .video_render = av_fast_capture_render,
+        .get_width = av_fast_capture_get_width,
+        .get_height = av_fast_capture_get_height,
+        //PRISM/cao.kewei/20240902/capture card source icon
+        .icon_type = (enum obs_icon_type)PLS_ICON_TYPE_CAPTURE_CARD,
     };
 
     obs_register_source(&av_capture_sync_info);

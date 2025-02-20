@@ -250,6 +250,9 @@ static void d3d8_capture(IDirect3DDevice8 *device,
 	}
 	if (capture_ready()) {
 		d3d8_shmem_capture(device, backbuffer);
+
+		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+		send_game_render_type("d3d8");
 	}
 }
 

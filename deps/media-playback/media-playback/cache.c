@@ -152,7 +152,7 @@ static void seek_to(mp_cache_t *c, int64_t pos)
 	}
 
 	if (c->has_video) {
-		struct obs_source_frame *v;
+		struct obs_source_frame *v = NULL;
 
 		for (size_t i = 0; i < c->video_frames.num; i++) {
 			v = &c->video_frames.array[i];
@@ -163,9 +163,14 @@ static void seek_to(mp_cache_t *c, int64_t pos)
 		}
 
 		size_t next_idx = new_v_idx + 1;
-		if (next_idx == c->video_frames.num) {
-			c->next_v_ts =
-				(int64_t)v->timestamp + c->final_v_duration;
+		if (next_idx >= c->video_frames.num) {
+			// PRISM/zhongling/20241108/#1483/stinger crash start
+			if (v) {
+				c->next_v_ts = (int64_t)v->timestamp + c->final_v_duration;
+			} else {
+				c->next_v_ts = c->final_v_duration;
+			}
+			// PRISM/zhongling/20241108/#1483/stinger crash end
 		} else {
 			struct obs_source_frame *next =
 				&c->video_frames.array[next_idx];
@@ -173,7 +178,7 @@ static void seek_to(mp_cache_t *c, int64_t pos)
 		}
 	}
 	if (c->has_audio) {
-		struct obs_source_audio *a;
+		struct obs_source_audio *a = NULL;
 		for (size_t i = 0; i < c->audio_segments.num; i++) {
 			a = &c->audio_segments.array[i];
 			new_a_idx = i;
@@ -183,9 +188,14 @@ static void seek_to(mp_cache_t *c, int64_t pos)
 		}
 
 		size_t next_idx = new_a_idx + 1;
-		if (next_idx == c->audio_segments.num) {
-			c->next_a_ts =
-				(int64_t)a->timestamp + c->final_a_duration;
+		if (next_idx >= c->audio_segments.num) {
+			// PRISM/zhongling/20241108/#1483/stinger crash start
+			if (a) {
+				c->next_a_ts = (int64_t)a->timestamp + c->final_a_duration;
+			} else {
+				c->next_a_ts = c->final_a_duration;
+			}
+			// PRISM/zhongling/20241108/#1483/stinger crash end
 		} else {
 			// PRISM/cao.kewei/20240412/#5037/bounds checking
 			if (next_idx < c->audio_segments.num) {
@@ -336,7 +346,13 @@ static bool mp_cache_reset(mp_cache_t *c)
 	if (c->has_video) {
 		size_t next_idx = c->video_frames.num > 1 ? 1 : 0;
 		c->cur_v_idx = c->next_v_idx = 0;
-		c->next_v_ts = c->video_frames.array[next_idx].timestamp;
+		// PRISM/zhongling/20241108/#1483/stinger crash start
+		if (next_idx < c->video_frames.num) {
+			c->next_v_ts = c->video_frames.array[next_idx].timestamp;
+		} else {
+			c->next_v_ts = c->final_v_duration;
+		}
+		// PRISM/zhongling/20241108/#1483/stinger crash end
 	}
 	if (c->has_audio) {
 		size_t next_idx = c->audio_segments.num > 1 ? 1 : 0;

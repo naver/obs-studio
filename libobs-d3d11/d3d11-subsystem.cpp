@@ -29,6 +29,9 @@
 #include <shellscalingapi.h>
 #include <d3dkmthk.h>
 
+//PRISM/chenguoxi/20241212/PRISM_PC-1672/Add logs
+#include "pls/pls-base.h"
+
 struct UnsupportedHWError : HRError {
 	inline UnsupportedHWError(const char *str, HRESULT hr)
 		: HRError(str, hr)
@@ -1484,7 +1487,11 @@ static inline void LogD3DAdapters()
 			continue;
 
 		os_wcs_to_utf8(desc.Description, 0, name, sizeof(name));
-		blog(LOG_INFO, "\tAdapter %u: %s", i, name);
+		//PRISM/chenguoxi/20241212/PRISM_PC-1672/Add logs
+		//blog(LOG_INFO, "\tAdapter %u: %s", i, name);
+		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+		blogex(false, LOG_INFO, fields, 1, "\tAdapter %u: %s", i, name);
+
 		blog(LOG_INFO, "\t  Dedicated VRAM: %" PRIu64 " (%.01f GiB)",
 		     desc.DedicatedVideoMemory,
 		     to_GiB(desc.DedicatedVideoMemory));

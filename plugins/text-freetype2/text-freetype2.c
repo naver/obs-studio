@@ -82,6 +82,9 @@ static struct obs_source_info freetype2_source_info_v2 = {
 //PRISM/cao.kewei/20240524/custom font path
 static void load_queued_font_paths() {
 #if defined(__APPLE__)
+	if (ft2_lib == NULL) {
+		return;
+	}
 	char *path;
 	while ((path = (char *)pls_freetype_pop_font_path())) {
 		load_custom_font(path);
@@ -275,8 +278,6 @@ static void ft2_source_destroy(void *data)
 		bfree(srcdata->text);
 	if (srcdata->texbuf != NULL)
 		bfree(srcdata->texbuf);
-	if (srcdata->colorbuf != NULL)
-		bfree(srcdata->colorbuf);
 	if (srcdata->text_file != NULL)
 		bfree(srcdata->text_file);
 
@@ -318,7 +319,7 @@ static void ft2_source_render(void *data, gs_effect_t *effect)
 		draw_drop_shadow(srcdata);
 
 	draw_uv_vbuffer(srcdata->vbuf, srcdata->tex, srcdata->draw_effect,
-			(uint32_t)wcslen(srcdata->text) * 6);
+			(uint32_t)wcslen(srcdata->text) * 6, true);
 
 	UNUSED_PARAMETER(effect);
 }

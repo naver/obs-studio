@@ -38,9 +38,16 @@
 
 //PRISM/wangshaohui/20230724/#2093/check source alive
 #include "pls/pls-source.h"
+#include "pls/pls-base.h"
 
 //PRISM/fanzirong/20240704/none/separate stop and free
 #include "pls/pls-obs-api.h"
+
+//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
+#include "pls/pls-encoder.h"
+
+//PRISM/cao.kewei/20241017/output statistics
+#include "pls/pls-statistics.h"
 
 #include "obs.h"
 
@@ -168,6 +175,9 @@ struct obs_hotkey {
 	obs_hotkey_id pair_partner_id;
 
 	UT_hash_handle hh;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	bool is_vertical;
 };
 
 struct obs_hotkey_pair {
@@ -207,6 +217,8 @@ struct obs_hotkey_binding {
 
 	obs_hotkey_id hotkey_id;
 	obs_hotkey_t *hotkey;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	bool is_vertical;
 };
 
 struct obs_hotkey_name_map_item;
@@ -311,7 +323,8 @@ struct obs_core_video_mix {
 	volatile bool gpu_encode_stop;
 
 	video_t *video;
-	struct obs_video_info ovi;
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info* ovi;
 
 	bool gpu_conversion;
 	const char *conversion_techs[NUM_CHANNELS];
@@ -371,13 +384,27 @@ struct obs_core_video {
 	pthread_mutex_t task_mutex;
 	struct deque tasks;
 
+	pthread_mutex_t encoder_group_mutex;
+	DARRAY(obs_weak_encoder_t *) ready_encoder_groups;
+
 	pthread_mutex_t mixes_mutex;
 	DARRAY(struct obs_core_video_mix *) mixes;
 	struct obs_core_video_mix *main_mix;
 
 	//PRISM/WuLongyue/20231212/#2212
 	volatile long additional_active;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	pthread_mutex_t canvases_mutex;
+	DARRAY(struct obs_video_info_v2 *) canvases;
+	pthread_mutex_t thirdpart_ovi_mutex;
+	DARRAY(struct obs_video_info_v2 *) thirdpart_ovi_pool;
+	volatile bool dual_output_on;
+	volatile bool dual_output_initialized;
+
 };
+
+extern void add_ready_encoder_group(obs_encoder_t *encoder);
 
 struct audio_monitor;
 
@@ -507,6 +534,9 @@ struct obs_core {
 	os_task_queue_t *destruction_task_thread;
 
 	obs_task_handler_t ui_task_handler;
+
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	struct obs_video_info *video_rendering_canvas;
 };
 
 extern struct obs_core *obs;
@@ -618,7 +648,6 @@ extern void obs_context_data_setname(struct obs_context_data *context,
 				     const char *name);
 extern void obs_context_data_setname_ht(struct obs_context_data *context,
 					const char *name, void *phead);
-
 /* ------------------------------------------------------------------------- */
 /* ref-counting  */
 
@@ -764,7 +793,6 @@ struct obs_source {
 	volatile bool timing_set;
 	volatile uint64_t timing_adjust;
 	uint64_t resample_offset;
-	uint64_t last_audio_ts;
 	uint64_t next_audio_ts_min;
 	uint64_t next_audio_sys_ts_min;
 	uint64_t last_frame_ts;
@@ -1103,6 +1131,15 @@ struct caption_text {
 	struct caption_text *next;
 };
 
+struct caption_track_data {
+	struct caption_text *caption_head;
+	struct caption_text *caption_tail;
+	pthread_mutex_t caption_mutex;
+	double caption_timestamp;
+	double last_caption_timestamp;
+	struct deque caption_data;
+};
+
 struct pause_data {
 	pthread_mutex_t mutex;
 	uint64_t last_video_ts;
@@ -1116,6 +1153,20 @@ extern bool audio_pause_check(struct pause_data *pause, struct audio_data *data,
 			      size_t sample_rate);
 extern void pause_reset(struct pause_data *pause);
 
+enum keyframe_group_track_status {
+	KEYFRAME_TRACK_STATUS_NOT_SEEN = 0,
+	KEYFRAME_TRACK_STATUS_SEEN = 1,
+	KEYFRAME_TRACK_STATUS_SKIPPED = 2,
+};
+
+struct keyframe_group_data {
+	uintptr_t group_id;
+	int64_t pts;
+	uint32_t required_tracks;
+	enum keyframe_group_track_status
+		seen_on_track[MAX_OUTPUT_VIDEO_ENCODERS];
+};
+
 struct obs_output {
 	struct obs_context_data context;
 	struct obs_output_info info;
@@ -1124,6 +1175,7 @@ struct obs_output {
 	bool owns_info_id;
 
 	bool received_video[MAX_OUTPUT_VIDEO_ENCODERS];
+	DARRAY(struct keyframe_group_data) keyframe_group_tracking;
 	bool received_audio;
 	volatile bool data_active;
 	volatile bool end_data_capture_thread_active;
@@ -1179,12 +1231,8 @@ struct obs_output {
 	struct video_scale_info video_conversion;
 	struct audio_convert_info audio_conversion;
 
-	pthread_mutex_t caption_mutex;
-	double caption_timestamp;
-	struct caption_text *caption_head;
-	struct caption_text *caption_tail;
-
-	struct deque caption_data;
+	// captions are output per track
+	struct caption_track_data *caption_tracks[MAX_OUTPUT_VIDEO_ENCODERS];
 
 	bool valid;
 
@@ -1205,14 +1253,23 @@ struct obs_output {
 
 	//PRISM/WuLongyue/20231116/None/support NAVERShopping HEVC
 	bool is_naver_shopping;
+	
+	//PRISM/cao.kewei/20241017/output statistics
+	pls_output_statistics_t *statistics;
+	pthread_mutex_t statistics_mutex;
 };
 
 static inline void do_output_signal(struct obs_output *output,
 				    const char *signal)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: output_signal is called, signal=%s id=%s", output,
-	     __FUNCTION__, signal, output->info.id);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+				   {"output_id", output->info.id},
+				   {"output_name",
+				    obs_output_get_name(output)}};
+	blogex(false, LOG_INFO, fields, 3,
+	       "%p-%s: output_signal is called, signal=%s id=%s", output,
+	       __FUNCTION__, signal, output->info.id);
 
 	struct calldata params = {0};
 	calldata_set_ptr(&params, "output", output);
@@ -1250,6 +1307,18 @@ struct encoder_callback {
 	bool sent_first_packet;
 	void (*new_packet)(void *param, struct encoder_packet *packet);
 	void *param;
+};
+
+struct obs_encoder_group {
+	pthread_mutex_t mutex;
+	/* allows group to be destroyed even if some encoders are active */
+	bool destroy_on_stop;
+
+	/* holds strong references to all encoders */
+	DARRAY(struct obs_encoder *) encoders;
+
+	uint32_t num_encoders_started;
+	uint64_t start_timestamp;
 };
 
 struct obs_encoder {
@@ -1316,6 +1385,9 @@ struct obs_encoder {
 	uint64_t first_raw_ts;
 	uint64_t start_ts;
 
+	/* track encoders that are part of a gop-aligned multi track group */
+	struct obs_encoder_group *encoder_group;
+
 	pthread_mutex_t outputs_mutex;
 	DARRAY(obs_output_t *) outputs;
 
@@ -1342,6 +1414,9 @@ struct obs_encoder {
 	bool force_keyframe;
 	//PRISM/wangshaohui/20240628/none/log keyframe
 	long keyframe_cnt;
+
+	//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
+	PtsStats pts_stats;
 };
 
 extern struct obs_encoder_info *find_encoder(const char *id);

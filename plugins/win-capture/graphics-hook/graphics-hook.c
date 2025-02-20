@@ -60,6 +60,40 @@ static struct thread_data thread_data = {0};
 volatile bool active = false;
 struct hook_info *global_hook_info = NULL;
 
+//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type ---------------- start
+struct game_render_info {
+	char type[MAX_PATH];
+};
+CRITICAL_SECTION render_type_mutex;
+struct game_render_info info_list[MAX_PATH];
+const char *render_type_key = "pls_game_render_type";
+void send_game_render_type(const char *type)
+{
+	EnterCriticalSection(&render_type_mutex);
+
+	static bool inited = false;
+	if (!inited) {
+		inited = true;
+		memset(&info_list, 0, sizeof(info_list));
+	}
+
+	for (int i = 0; i < MAX_PATH; i++) {
+		char *var = info_list[i].type;
+		if (var[0] == 0) { // idle index
+			snprintf(var, MAX_PATH, "%s", type);
+			hlog("%s=%s", render_type_key, type);
+			break;
+		} else {
+			if (0 == strcmp(type, var)) {
+				break; // already notified
+			}
+		}
+	}
+
+	LeaveCriticalSection(&render_type_mutex);
+}
+//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type ---------------- end
+
 static inline void wait_for_dll_main_finish(HANDLE thread_handle)
 {
 	if (thread_handle) {
@@ -896,6 +930,9 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID unused1)
 			return false;
 		}
 
+		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+		InitializeCriticalSection(&render_type_mutex);
+
 		/* this prevents the library from being automatically unloaded
 		 * by the next FreeLibrary call */
 		GetModuleFileNameW(hinst, name, MAX_PATH);
@@ -921,6 +958,9 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID unused1)
 		}
 
 		free_hook();
+
+		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+		DeleteCriticalSection(&render_type_mutex);
 	}
 
 	(void)unused1;
