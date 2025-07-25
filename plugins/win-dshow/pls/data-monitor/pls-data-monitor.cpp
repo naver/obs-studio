@@ -66,7 +66,8 @@ void DataMonitor::Resum()
 	m_reset = false;
 }
 
-void DataMonitor::Stop() {
+void DataMonitor::Stop()
+{
 	m_stop = true;
 	if (m_thread.joinable())
 		m_thread.join();

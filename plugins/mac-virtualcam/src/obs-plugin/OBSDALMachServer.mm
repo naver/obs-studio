@@ -133,7 +133,7 @@
         IOSurfaceLock(surface, 0, NULL);
 #endif
 #ifndef __aarch64__
-		IOSurfaceLock(surface, 0, NULL);
+        IOSurfaceLock(surface, 0, NULL);
 #endif
 
         if (!surface) {

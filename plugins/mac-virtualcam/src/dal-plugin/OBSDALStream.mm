@@ -425,11 +425,12 @@
 {
     switch (address.mSelector) {
         case kCMIOObjectPropertyName:
-            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio"); //PRISM/Zhongling/20231123/#/VCAM
+            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio");  //PRISM/Zhongling/20231123/#/VCAM
             *dataUsed = sizeof(CFStringRef);
             break;
         case kCMIOObjectPropertyElementName:
-            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio Stream Element"); //PRISM/Zhongling/20231123/#/VCAM
+            *static_cast<CFStringRef *>(data) =
+                CFSTR("PRISM Live Studio Stream Element");  //PRISM/Zhongling/20231123/#/VCAM
             *dataUsed = sizeof(CFStringRef);
             break;
         case kCMIOObjectPropertyManufacturer:

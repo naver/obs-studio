@@ -113,20 +113,13 @@ enum obs_vst_verify_state {
 #define OBS_SOURCE_FLAG_LABORATORY (1 << 2)
 
 /*obs source apis*/
-EXPORT void pls_vst_state_changed(const obs_source_t *source, const char *vst,
-				  enum obs_vst_verify_state state);
+EXPORT void pls_vst_state_changed(const obs_source_t *source, const char *vst, enum obs_vst_verify_state state);
 EXPORT void pls_set_wgc_borderless_enable(bool enable);
 EXPORT bool pls_get_wgc_borderless_enable();
-EXPORT void pls_source_send_notify(const obs_source_t *source,
-				   enum obs_source_event_type type,
-				   int sub_code);
-EXPORT void pls_source_send_message(const obs_source_t *source,
-				    enum obs_source_event_type type,
-				    obs_data_t *data);
-EXPORT void pls_source_property_update_notify(const obs_source_t *source,
-					      const char *name);
-EXPORT void pls_source_cef_received_web_msg(const obs_source_t *source,
-					    const char *msg);
+EXPORT void pls_source_send_notify(const obs_source_t *source, enum obs_source_event_type type, int sub_code);
+EXPORT void pls_source_send_message(const obs_source_t *source, enum obs_source_event_type type, obs_data_t *data);
+EXPORT void pls_source_property_update_notify(const obs_source_t *source, const char *name);
+EXPORT void pls_source_cef_received_web_msg(const obs_source_t *source, const char *msg);
 EXPORT void pls_audio_output_get_info(uint32_t *samples_per_sec, int *speakers);
 /*
 * DO NOT forget to free the memory
@@ -136,13 +129,12 @@ EXPORT char *pls_get_module_file_name_ptr(const char *module_name);
 typedef bool (*pls_load_module_filter_t)(const char *bin_path);
 EXPORT void pls_load_all_modules(pls_load_module_filter_t filter);
 //PRISM/Zhangdewen/20230117/#/load with filter
-EXPORT void pls_load_all_modules2(struct obs_module_failure_info *mfi,
-				  pls_load_module_filter_t filter);
+EXPORT void pls_load_all_modules2(struct obs_module_failure_info *mfi, pls_load_module_filter_t filter);
 
 //PRISM/Liuying/20230131/#/add load sources callback
 typedef bool (*obs_load_pld_cb)(void *private_data, obs_source_t *source);
-EXPORT void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
-			     obs_load_pld_cb pldCb, void *private_data, void *pld_private_data);
+EXPORT void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb, obs_load_pld_cb pldCb, void *private_data,
+			     void *pld_private_data);
 
 //PRISM/Wangshaohui/20220422/#none/load plugin
 /*
@@ -153,8 +145,7 @@ data_path: "data/prism-plugins/afreecatv-login"
 EXPORT bool pls_load_plugin(const char *bin_path, const char *data_path);
 
 //PRISM/Zengqin/20220311/#none/for DrawPen feature
-EXPORT void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture,
-				    bool save);
+EXPORT void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture, bool save);
 //PRISM/Zengqin/20220422/#none/for DrawPen feature
 EXPORT gs_texture_t *pls_scene_get_canvas(obs_scene_t *scene);
 //PRISM/Zengqin/20230201/#none/for DrawPen feature
@@ -165,16 +156,14 @@ EXPORT void pls_duplicate_scene_canvas(obs_scene_t *dst, obs_scene_t *src);
 EXPORT uint64_t pls_texture_get_max_size();
 
 //PRISM/RenJinbo/20200623/#None/add properties view ok button enable.
-EXPORT void pls_source_properties_view_ok_button_enable(obs_source_t *source,
-							bool enable);
+EXPORT void pls_source_properties_view_ok_button_enable(obs_source_t *source, bool enable);
 typedef void (*log_callback)(const char *module_name, bool internal_module);
 EXPORT void pls_log_loaded_modules(log_callback callback);
 //PRISM/Zhongling/20230602/#none/for Draw pne
 EXPORT gs_effect_t *pls_get_prism_effect();
 
 //PRISM/WuLongyue/20230727/None/codec analog
-EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode,
-				    bool hw);
+EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode, bool hw);
 
 //PRISM/Xiewei/20230712/#1881 filter repeated obs plugins start
 EXPORT bool pls_is_dll_already_loaded(const char *dllName);
@@ -198,8 +187,7 @@ EXPORT void pls_set_obs_shutdowning(bool shutdowning);
 EXPORT bool pls_get_obs_shutdowning();
 
 //PRISM/Chengbing/20231108/#/prism version
-EXPORT void pls_update_prism_version(int major, int minor, int patch,
-				     int build);
+EXPORT void pls_update_prism_version(int major, int minor, int patch, int build);
 EXPORT int pls_prism_version_major();
 EXPORT int pls_prism_version_minor();
 EXPORT int pls_prism_version_patch();
@@ -218,7 +206,7 @@ EXPORT void *pls_get_private_font_collection();
 EXPORT bool pls_add_font_to_private_collection(const char *font_path);
 #endif
 
-EXPORT signal_handler_t* pls_freetype_get_signal();
+EXPORT signal_handler_t *pls_freetype_get_signal();
 EXPORT void pls_freetype_add_font(const char *font_path);
 EXPORT const char *pls_freetype_pop_font_path();
 EXPORT bool pls_freetype_needs_reload();
@@ -240,8 +228,15 @@ EXPORT void stop_audio_thread(audio_t *audio);
 EXPORT obs_scene_t *pls_create_vertical_scene(const char *name);
 
 /** Enum scenes list (except scenes for dual output)**/
-EXPORT void pls_enum_all_scenes(bool (*enum_proc)(void *, obs_source_t *),
-				void *param);
+EXPORT void pls_enum_all_scenes(bool (*enum_proc)(void *, obs_source_t *), void *param);
+
+EXPORT void pls_set_dev_mode(bool dev);
+EXPORT bool pls_is_dev_mode();
+
+EXPORT void pls_set_local_log(bool local_log);
+EXPORT bool pls_is_local_log();
+
+EXPORT void pls_on_game_render_type(const char *game_title, const char *render_type);
 
 #ifdef __cplusplus
 }

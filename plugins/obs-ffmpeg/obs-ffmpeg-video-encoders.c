@@ -3,9 +3,8 @@
 // PRISM/chenguoxi/20240514/#5378/force keyframe
 #include "pls/pls-encoder.h"
 
-#define do_log(level, format, ...)                               \
-	blog(level, "[%s encoder: '%s'] " format, enc->enc_name, \
-	     obs_encoder_get_name(enc->encoder), ##__VA_ARGS__)
+#define do_log(level, format, ...) \
+	blog(level, "[%s encoder: '%s'] " format, enc->enc_name, obs_encoder_get_name(enc->encoder), ##__VA_ARGS__)
 
 #define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
 #define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
@@ -23,16 +22,12 @@ bool ffmpeg_video_encoder_init_codec(struct ffmpeg_video_encoder *enc)
 			} else {
 				struct dstr error_message = {0};
 
-				dstr_copy(&error_message,
-					  obs_module_text("Encoder.Error"));
-				dstr_replace(&error_message, "%1",
-					     enc->enc_name);
-				dstr_replace(&error_message, "%2",
-					     av_err2str(ret));
+				dstr_copy(&error_message, obs_module_text("Encoder.Error"));
+				dstr_replace(&error_message, "%1", enc->enc_name);
+				dstr_replace(&error_message, "%2", av_err2str(ret));
 				dstr_cat(&error_message, "<br><br>");
 
-				obs_encoder_set_last_error(enc->encoder,
-							   error_message.array);
+				obs_encoder_set_last_error(enc->encoder, error_message.array);
 				dstr_free(&error_message);
 			}
 		}
@@ -64,15 +59,12 @@ bool ffmpeg_video_encoder_init_codec(struct ffmpeg_video_encoder *enc)
 	return true;
 }
 
-void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
-				 int keyint_sec,
-				 const struct video_output_info *voi,
-				 const struct video_scale_info *info,
+void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate, int keyint_sec,
+				 const struct video_output_info *voi, const struct video_scale_info *info,
 				 const char *ffmpeg_opts)
 {
 	const int rate = bitrate * 1000;
-	const enum AVPixelFormat pix_fmt =
-		obs_to_ffmpeg_video_format(info->format);
+	const enum AVPixelFormat pix_fmt = obs_to_ffmpeg_video_format(info->format);
 	enc->context->bit_rate = rate;
 	enc->context->rc_buffer_size = rate;
 	enc->context->width = obs_encoder_get_width(enc->encoder);
@@ -80,9 +72,7 @@ void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
 	enc->context->time_base = (AVRational){voi->fps_den, voi->fps_num};
 	enc->context->framerate = (AVRational){voi->fps_num, voi->fps_den};
 	enc->context->pix_fmt = pix_fmt;
-	enc->context->color_range = info->range == VIDEO_RANGE_FULL
-					    ? AVCOL_RANGE_JPEG
-					    : AVCOL_RANGE_MPEG;
+	enc->context->color_range = info->range == VIDEO_RANGE_FULL ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
 
 	enum AVColorSpace colorspace = AVCOL_SPC_UNSPECIFIED;
 	switch (info->colorspace) {
@@ -114,12 +104,10 @@ void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
 	}
 
 	enc->context->colorspace = colorspace;
-	enc->context->chroma_sample_location =
-		determine_chroma_location(pix_fmt, colorspace);
+	enc->context->chroma_sample_location = determine_chroma_location(pix_fmt, colorspace);
 
 	if (keyint_sec)
-		enc->context->gop_size =
-			keyint_sec * voi->fps_num / voi->fps_den;
+		enc->context->gop_size = keyint_sec * voi->fps_num / voi->fps_den;
 
 	enc->height = enc->context->height;
 
@@ -127,11 +115,9 @@ void ffmpeg_video_encoder_update(struct ffmpeg_video_encoder *enc, int bitrate,
 
 	//PRISM/chenguoxi/20240628/#64/solve ffmpeg nvenc force i frame is invalid
 	if (enc != NULL) {
-		const char *source_id = obs_source_get_id((const obs_source_t*)enc->encoder);
+		const char *source_id = obs_source_get_id((const obs_source_t *)enc->encoder);
 		if (source_id != NULL &&
-		    ((strcmp(source_id, "ffmpeg_nvenc") == 0) ||
-		     (strcmp(source_id, "ffmpeg_hevc_nvenc") == 0)))
-		{
+		    ((strcmp(source_id, "ffmpeg_nvenc") == 0) || (strcmp(source_id, "ffmpeg_hevc_nvenc") == 0))) {
 			av_opt_set(enc->context->priv_data, "forced-idr", "1", 0);
 		}
 	}
@@ -178,11 +164,9 @@ void ffmpeg_video_encoder_free(struct ffmpeg_video_encoder *enc)
 	da_free(enc->buffer);
 }
 
-bool ffmpeg_video_encoder_init(struct ffmpeg_video_encoder *enc, void *parent,
-			       obs_encoder_t *encoder, const char *enc_lib,
-			       const char *enc_lib2, const char *enc_name,
-			       init_error_cb on_init_error,
-			       first_packet_cb on_first_packet)
+bool ffmpeg_video_encoder_init(struct ffmpeg_video_encoder *enc, void *parent, obs_encoder_t *encoder,
+			       const char *enc_lib, const char *enc_lib2, const char *enc_name,
+			       init_error_cb on_init_error, first_packet_cb on_first_packet)
 {
 	enc->encoder = encoder;
 	enc->parent = parent;
@@ -201,8 +185,7 @@ bool ffmpeg_video_encoder_init(struct ffmpeg_video_encoder *enc, void *parent,
 
 	if (!enc->avcodec) {
 		struct dstr error_message;
-		dstr_printf(&error_message, "Couldn't find encoder: %s",
-			    enc_lib);
+		dstr_printf(&error_message, "Couldn't find encoder: %s", enc_lib);
 		obs_encoder_set_last_error(encoder, error_message.array);
 		dstr_free(&error_message);
 
@@ -219,28 +202,24 @@ bool ffmpeg_video_encoder_init(struct ffmpeg_video_encoder *enc, void *parent,
 	return true;
 }
 
-static inline void copy_data(AVFrame *pic, const struct encoder_frame *frame,
-			     int height, enum AVPixelFormat format)
+static inline void copy_data(AVFrame *pic, const struct encoder_frame *frame, int height, enum AVPixelFormat format)
 {
 	int h_chroma_shift, v_chroma_shift;
-	av_pix_fmt_get_chroma_sub_sample(format, &h_chroma_shift,
-					 &v_chroma_shift);
+	av_pix_fmt_get_chroma_sub_sample(format, &h_chroma_shift, &v_chroma_shift);
 	for (int plane = 0; plane < MAX_AV_PLANES; plane++) {
 		if (!frame->data[plane])
 			continue;
 
 		int frame_rowsize = (int)frame->linesize[plane];
 		int pic_rowsize = pic->linesize[plane];
-		int bytes = frame_rowsize < pic_rowsize ? frame_rowsize
-							: pic_rowsize;
+		int bytes = frame_rowsize < pic_rowsize ? frame_rowsize : pic_rowsize;
 		int plane_height = height >> (plane ? v_chroma_shift : 0);
 
 		for (int y = 0; y < plane_height; y++) {
 			int pos_frame = y * frame_rowsize;
 			int pos_pic = y * pic_rowsize;
 
-			memcpy(pic->data[plane] + pos_pic,
-			       frame->data[plane] + pos_frame, bytes);
+			memcpy(pic->data[plane] + pos_pic, frame->data[plane] + pos_frame, bytes);
 		}
 	}
 }
@@ -259,15 +238,13 @@ static bool is_force_keyframe(struct ffmpeg_video_encoder *enc)
 	return obs_encoder_request_keyframe_and_clean(enc->encoder);
 }
 
-bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
-			 struct encoder_frame *frame,
-			 struct encoder_packet *packet, bool *received_packet)
+bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc, struct encoder_frame *frame, struct encoder_packet *packet,
+			 bool *received_packet)
 {
 	AVPacket av_pkt = {0};
 	bool timeout = false;
 	const int64_t cur_ts = (int64_t)os_gettime_ns();
-	const int64_t pause_offset =
-		(int64_t)obs_encoder_get_pause_offset(enc->encoder);
+	const int64_t pause_offset = (int64_t)obs_encoder_get_pause_offset(enc->encoder);
 	int got_packet;
 	int ret;
 
@@ -306,8 +283,7 @@ bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
 
 	if (got_packet && av_pkt.size) {
 		if (enc->on_first_packet && enc->first_packet) {
-			enc->on_first_packet(enc->parent, &av_pkt,
-					     &enc->buffer.da);
+			enc->on_first_packet(enc->parent, &av_pkt, &enc->buffer.da);
 			enc->first_packet = false;
 		} else {
 			da_copy_array(enc->buffer, av_pkt.data, av_pkt.size);
@@ -321,11 +297,9 @@ bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
 		packet->keyframe = !!(av_pkt.flags & AV_PKT_FLAG_KEY);
 		*received_packet = true;
 
-		const int64_t recv_ts_nsec =
-			(int64_t)util_mul_div64(
-				(uint64_t)av_pkt.pts, (uint64_t)SEC_TO_NSEC,
-				(uint64_t)enc->context->time_base.den) +
-			enc->start_ts;
+		const int64_t recv_ts_nsec = (int64_t)util_mul_div64((uint64_t)av_pkt.pts, (uint64_t)SEC_TO_NSEC,
+								     (uint64_t)enc->context->time_base.den) +
+					     enc->start_ts;
 
 #if 0
 		debug("cur: %lld, packet: %lld, diff: %lld", cur_ts,
@@ -333,16 +307,13 @@ bool ffmpeg_video_encode(struct ffmpeg_video_encoder *enc,
 #endif
 		if ((cur_ts - recv_ts_nsec - pause_offset) > TIMEOUT_MAX_NSEC) {
 			char timeout_str[16];
-			snprintf(timeout_str, sizeof(timeout_str), "%d",
-				 TIMEOUT_MAX_SEC);
+			snprintf(timeout_str, sizeof(timeout_str), "%d", TIMEOUT_MAX_SEC);
 
 			struct dstr error_text = {0};
-			dstr_copy(&error_text,
-				  obs_module_text("Encoder.Timeout"));
+			dstr_copy(&error_text, obs_module_text("Encoder.Timeout"));
 			dstr_replace(&error_text, "%1", enc->enc_name);
 			dstr_replace(&error_text, "%2", timeout_str);
-			obs_encoder_set_last_error(enc->encoder,
-						   error_text.array);
+			obs_encoder_set_last_error(enc->encoder, error_text.array);
 			dstr_free(&error_text);
 
 			error("Encoding queue duration surpassed %d "

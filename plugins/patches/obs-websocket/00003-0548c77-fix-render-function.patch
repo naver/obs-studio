@@ -1,0 +1,25 @@
+diff --git "a/src/requesthandler/RequestHandler_Sources.cpp" "b/src/requesthandler/RequestHandler_Sources.cpp"
+index bc246a8..6d7df16 100644
+--- "a/src/requesthandler/RequestHandler_Sources.cpp"
++++ "b/src/requesthandler/RequestHandler_Sources.cpp"
+@@ -24,6 +24,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
+ #include <QDir>
+ 
+ #include "RequestHandler.h"
++//PRISM/Xiewei/20241224/PRISM_PC-1923/modify the render function for dual output
++#include "pls/pls-dual-output.h"
+ 
+ QImage TakeSourceScreenshot(obs_source_t *source, bool &success, uint32_t requestedWidth = 0, uint32_t requestedHeight = 0)
+ {
+@@ -78,7 +80,10 @@ QImage TakeSourceScreenshot(obs_source_t *source, bool &success, uint32_t reques
+ 		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+ 
+ 		obs_source_inc_showing(source);
+-		obs_source_video_render(source);
++		//PRISM/Xiewei/20241224/PRISM_PC-1923/modify the render function for dual output
++		pls_set_dual_output_current_check_off();
++		pls_source_video_render_landscape(source);
++		pls_set_dual_output_current_check_on();
+ 		obs_source_dec_showing(source);
+ 
+ 		gs_blend_state_pop();

@@ -144,15 +144,12 @@ struct text_content_data {
 	char *content;
 };
 
-#define pls_property_xx_item_xx(name, key, type)                        \
-	const char *pls_property_##name##_item_##key(obs_property_t *p, \
-						     size_t idx)        \
-	{                                                               \
-		struct name##_data *data = get_pls_type_data(p, type);  \
-                                                                        \
-		return (data && idx < data->items.num)                  \
-			       ? data->items.array[idx].key             \
-			       : NULL;                                  \
+#define pls_property_xx_item_xx(name, key, type)                                            \
+	const char *pls_property_##name##_item_##key(obs_property_t *p, size_t idx)         \
+	{                                                                                   \
+		struct name##_data *data = get_pls_type_data(p, type);                      \
+                                                                                            \
+		return (data && idx < data->items.num) ? data->items.array[idx].key : NULL; \
 	}
 
 static inline size_t get_pls_property_size(enum pls_property_type type)
@@ -193,15 +190,12 @@ static inline size_t get_pls_property_size(enum pls_property_type type)
 	}
 }
 
-static inline void *get_pls_type_data(struct obs_property *prop,
-				      enum pls_property_type type)
+static inline void *get_pls_type_data(struct obs_property *prop, enum pls_property_type type)
 {
 	return get_type_data(prop, (enum obs_property_type)type);
 }
 
-static inline struct obs_property *new_pls_prop(struct obs_properties *props,
-						const char *name,
-						const char *desc,
+static inline struct obs_property *new_pls_prop(struct obs_properties *props, const char *name, const char *desc,
 						enum pls_property_type type)
 {
 	size_t data_size = get_pls_property_size(type);
@@ -248,31 +242,27 @@ static void pls_property_destroy(struct obs_property *property)
 		pls_property_custom_group_clear(property);
 		break;
 	case PLS_PROPERTY_MOBILE_HELP:
-		data_mobile_help =
-			get_pls_type_data(property, PLS_PROPERTY_MOBILE_HELP);
+		data_mobile_help = get_pls_type_data(property, PLS_PROPERTY_MOBILE_HELP);
 		if (data_mobile_help) {
 			bfree(data_mobile_help->image_url);
 		}
 		break;
 	case PLS_PROPERTY_MOBILE_NAME:
-		data_mobile_name =
-			get_pls_type_data(property, PLS_PROPERTY_MOBILE_NAME);
+		data_mobile_name = get_pls_type_data(property, PLS_PROPERTY_MOBILE_NAME);
 		if (data_mobile_name) {
 			bfree(data_mobile_name->value);
 			bfree(data_mobile_name->button_desc);
 		}
 		break;
 	case PLS_PROPERTY_MOBILE_STATE:
-		data_mobile_state =
-			get_pls_type_data(property, PLS_PROPERTY_MOBILE_STATE);
+		data_mobile_state = get_pls_type_data(property, PLS_PROPERTY_MOBILE_STATE);
 		if (data_mobile_state) {
 			bfree(data_mobile_state->value);
 			bfree(data_mobile_state->image_url);
 		}
 		break;
 	case PLS_PROPERTY_TEXT_CONTENT:
-		data_text_content =
-			get_pls_type_data(property, PLS_PROPERTY_TEXT_CONTENT);
+		data_text_content = get_pls_type_data(property, PLS_PROPERTY_TEXT_CONTENT);
 		if (data_text_content) {
 			bfree(data_text_content->content);
 		}
@@ -299,27 +289,23 @@ void pls_properties_destroy(obs_properties_t *props)
 
 		HASH_ITER (hh, props->properties, p, tmp) {
 			pls_property_destroy(p);
-		}		
+		}
 	}
 }
 
 #pragma region common
-obs_property_t *pls_properties_add_tips(obs_properties_t *props,
-					const char *name, const char *desc)
+obs_property_t *pls_properties_add_tips(obs_properties_t *props, const char *name, const char *desc)
 
 {
 	return pls_properties_add_tips_ex(props, name, desc, false);
 }
 
-obs_property_t *pls_properties_add_tips_ex(obs_properties_t *props,
-					   const char *name, const char *desc,
-					   bool whole_row)
+obs_property_t *pls_properties_add_tips_ex(obs_properties_t *props, const char *name, const char *desc, bool whole_row)
 {
 	if (!props)
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_TIPS);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_TIPS);
 
 	struct tips_data *data = get_property_data(p);
 	data->whole_row = whole_row;
@@ -334,21 +320,18 @@ bool pls_property_tips_whole_row(obs_property_t *p)
 	return data ? data->whole_row : false;
 }
 
-obs_property_t *pls_properties_add_line(obs_properties_t *props,
-					const char *name, const char *desc)
+obs_property_t *pls_properties_add_line(obs_properties_t *props, const char *name, const char *desc)
 {
-    UNUSED_PARAMETER(desc);
+	UNUSED_PARAMETER(desc);
 	return pls_properties_add_line_ex(props, name, true);
 }
 
-obs_property_t *pls_properties_add_line_ex(obs_properties_t *props,
-					   const char *name, bool whole_row)
+obs_property_t *pls_properties_add_line_ex(obs_properties_t *props, const char *name, bool whole_row)
 {
 	if (!props)
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, NULL, PLS_PROPERTY_LINE);
+	struct obs_property *p = new_pls_prop(props, name, NULL, PLS_PROPERTY_LINE);
 
 	struct line_data *data = get_property_data(p);
 	data->whole_row = whole_row;
@@ -365,9 +348,7 @@ bool pls_property_line_whole_row(obs_property_t *p)
 #pragma endregion
 
 #pragma region bool_group
-obs_property_t *pls_properties_add_bool_group(obs_properties_t *props,
-					      const char *name,
-					      const char *desc)
+obs_property_t *pls_properties_add_bool_group(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -377,8 +358,7 @@ obs_property_t *pls_properties_add_bool_group(obs_properties_t *props,
 
 void pls_property_bool_group_clear(obs_property_t *p)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
 	if (data) {
 		for (size_t i = 0; i < data->items.num; ++i) {
@@ -391,11 +371,9 @@ void pls_property_bool_group_clear(obs_property_t *p)
 	}
 }
 
-bool pls_property_bool_group_clicked(obs_property_t *p, void *context,
-				     size_t idx)
+bool pls_property_bool_group_clicked(obs_property_t *p, void *context, size_t idx)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
 	if (!data) {
 		return false;
@@ -410,11 +388,7 @@ bool pls_property_bool_group_clicked(obs_property_t *p, void *context,
 		obs_properties_t *top = get_topmost_parent(p->parent);
 		if (p->priv)
 			return item->callback(top, p, p->priv);
-		return item->callback(
-			top, p,
-			context != NULL
-				? ((struct obs_context_data *)context)->data
-				: NULL);
+		return item->callback(top, p, context != NULL ? ((struct obs_context_data *)context)->data : NULL);
 	}
 
 	return false;
@@ -422,28 +396,21 @@ bool pls_property_bool_group_clicked(obs_property_t *p, void *context,
 
 size_t pls_property_bool_group_item_count(obs_property_t *p)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
 	return data ? data->items.num : 0;
 }
 
-size_t pls_property_bool_group_add_item(obs_property_t *p, const char *name,
-					const char *desc, const char *tooltip,
+size_t pls_property_bool_group_add_item(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
 					obs_property_clicked_t callback)
 {
-	return pls_property_bool_group_add_item_ex(p, name, desc, tooltip, true,
-						   true, callback);
+	return pls_property_bool_group_add_item_ex(p, name, desc, tooltip, true, true, callback);
 }
 
-size_t pls_property_bool_group_add_item_ex(obs_property_t *p, const char *name,
-					   const char *desc,
-					   const char *tooltip, bool enabled,
-					   bool visible,
-					   obs_property_clicked_t callback)
+size_t pls_property_bool_group_add_item_ex(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
+					   bool enabled, bool visible, obs_property_clicked_t callback)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
 	if (data) {
 		struct bool_group_item item = {NULL};
@@ -468,18 +435,14 @@ pls_property_xx_item_xx(bool_group, tooltip, PLS_PROPERTY_BOOL_GROUP);
 
 bool pls_property_bool_group_item_enabled(obs_property_t *p, size_t idx)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].enabled
-					       : false;
+	return (data && idx < data->items.num) ? data->items.array[idx].enabled : false;
 }
 
-void pls_property_bool_group_set_item_enabled(obs_property_t *p, size_t idx,
-					      bool enabled)
+void pls_property_bool_group_set_item_enabled(obs_property_t *p, size_t idx, bool enabled)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
 	if (data && idx < data->items.num) {
 		data->items.array[idx].enabled = enabled;
@@ -488,18 +451,14 @@ void pls_property_bool_group_set_item_enabled(obs_property_t *p, size_t idx,
 
 bool pls_property_bool_group_item_visible(obs_property_t *p, size_t idx)
 {
-	struct bool_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
+	struct bool_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BOOL_GROUP);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].visible
-					       : false;
+	return (data && idx < data->items.num) ? data->items.array[idx].visible : false;
 }
 #pragma endregion
 
 #pragma region button_group
-obs_property_t *pls_properties_add_button_group(obs_properties_t *props,
-						const char *name,
-						const char *desc)
+obs_property_t *pls_properties_add_button_group(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -509,8 +468,7 @@ obs_property_t *pls_properties_add_button_group(obs_properties_t *props,
 
 void pls_property_button_group_clear(obs_property_t *p)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (data) {
 		for (size_t i = 0; i < data->items.num; ++i) {
@@ -523,11 +481,9 @@ void pls_property_button_group_clear(obs_property_t *p)
 	}
 }
 
-bool pls_property_button_group_clicked(obs_property_t *p, void *context,
-				       size_t idx)
+bool pls_property_button_group_clicked(obs_property_t *p, void *context, size_t idx)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (!data) {
 		return false;
@@ -542,11 +498,7 @@ bool pls_property_button_group_clicked(obs_property_t *p, void *context,
 		obs_properties_t *top = get_topmost_parent(p->parent);
 		if (p->priv)
 			return item->callback(top, p, p->priv);
-		return item->callback(
-			top, p,
-			context != NULL
-				? ((struct obs_context_data *)context)->data
-				: NULL);
+		return item->callback(top, p, context != NULL ? ((struct obs_context_data *)context)->data : NULL);
 	}
 
 	return false;
@@ -554,28 +506,22 @@ bool pls_property_button_group_clicked(obs_property_t *p, void *context,
 
 size_t pls_property_button_group_item_count(obs_property_t *p)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	return data ? data->items.num : 0;
 }
 
-size_t pls_property_button_group_add_item(obs_property_t *p, const char *name,
-					  const char *desc, bool enabled,
+size_t pls_property_button_group_add_item(obs_property_t *p, const char *name, const char *desc, bool enabled,
 					  obs_property_clicked_t callback)
 {
-	return pls_property_button_group_add_item_ex(
-		p, name, desc, NULL, enabled, true, false, callback);
+	return pls_property_button_group_add_item_ex(p, name, desc, NULL, enabled, true, false, callback);
 }
 
-size_t pls_property_button_group_add_item_ex(obs_property_t *p,
-					     const char *name, const char *desc,
-					     const char *tooltip, bool enabled,
-					     bool visible, bool highlight,
+size_t pls_property_button_group_add_item_ex(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
+					     bool enabled, bool visible, bool highlight,
 					     obs_property_clicked_t callback)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (data) {
 		struct button_group_item item = {NULL};
@@ -599,11 +545,9 @@ pls_property_xx_item_xx(button_group, desc, PLS_PROPERTY_BUTTON_GROUP);
 ;
 pls_property_xx_item_xx(button_group, tooltip, PLS_PROPERTY_BUTTON_GROUP);
 
-void pls_property_button_group_set_item_desc(obs_property_t *p, size_t idx,
-					     const char *desc)
+void pls_property_button_group_set_item_desc(obs_property_t *p, size_t idx, const char *desc)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (data && idx < data->items.num) {
 		if (NULL != data->items.array[idx].desc) {
@@ -615,29 +559,23 @@ void pls_property_button_group_set_item_desc(obs_property_t *p, size_t idx,
 
 bool pls_property_button_group_item_enabled(obs_property_t *p, size_t idx)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].enabled
-					       : false;
+	return (data && idx < data->items.num) ? data->items.array[idx].enabled : false;
 }
 
-void pls_property_button_group_set_item_enabled(obs_property_t *p, size_t idx,
-						bool enabled)
+void pls_property_button_group_set_item_enabled(obs_property_t *p, size_t idx, bool enabled)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (data && idx < data->items.num) {
 		data->items.array[idx].enabled = enabled;
 	}
 }
 
-void pls_property_button_group_set_item_visible(obs_property_t *p, size_t idx,
-						bool visible)
+void pls_property_button_group_set_item_visible(obs_property_t *p, size_t idx, bool visible)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (data && idx < data->items.num) {
 		data->items.array[idx].visible = visible;
@@ -646,18 +584,14 @@ void pls_property_button_group_set_item_visible(obs_property_t *p, size_t idx,
 
 bool pls_property_button_group_item_visible(obs_property_t *p, size_t idx)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].visible
-					       : false;
+	return (data && idx < data->items.num) ? data->items.array[idx].visible : false;
 }
 
-void pls_property_button_group_set_item_highlight(obs_property_t *p, size_t idx,
-						  bool highlight)
+void pls_property_button_group_set_item_highlight(obs_property_t *p, size_t idx, bool highlight)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
 	if (data && idx < data->items.num) {
 		data->items.array[idx].highlight = highlight;
@@ -666,18 +600,14 @@ void pls_property_button_group_set_item_highlight(obs_property_t *p, size_t idx,
 
 bool pls_property_button_group_item_highlight(obs_property_t *p, size_t idx)
 {
-	struct button_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
+	struct button_group_data *data = get_pls_type_data(p, PLS_PROPERTY_BUTTON_GROUP);
 
-	return (data && idx < data->items.num)
-		       ? data->items.array[idx].highlight
-		       : false;
+	return (data && idx < data->items.num) ? data->items.array[idx].highlight : false;
 }
 #pragma endregion
 
 #pragma region int_group
-obs_property_t *pls_properties_add_int_group(obs_properties_t *props,
-					     const char *name, const char *desc)
+obs_property_t *pls_properties_add_int_group(obs_properties_t *props, const char *name, const char *desc)
 {
 	return pls_properties_add_custom_group(props, name, desc);
 }
@@ -687,31 +617,25 @@ size_t pls_property_int_group_item_count(obs_property_t *p)
 	return pls_property_custom_group_item_count(p);
 }
 
-size_t pls_property_int_group_add_item(obs_property_t *p, const char *name,
-				       const char *desc, int min, int max,
+size_t pls_property_int_group_add_item(obs_property_t *p, const char *name, const char *desc, int min, int max,
 				       int step)
 {
-	return pls_property_custom_group_add_int(p, name, desc, NULL, true,
-						 true, min, max, step, NULL,
+	return pls_property_custom_group_add_int(p, name, desc, NULL, true, true, min, max, step, NULL,
 						 OBS_NUMBER_SCROLLER);
 }
 
-bool pls_property_int_group_item_params(obs_property_t *p, char **name,
-					char **desc, int *min, int *max,
-					int *step, size_t idx)
+bool pls_property_int_group_item_params(obs_property_t *p, char **name, char **desc, int *min, int *max, int *step,
+					size_t idx)
 {
-	return pls_property_custom_group_item_params(p, idx, (const char**)name, (const char**)desc, NULL,
-						     NULL, NULL) &&
-	       pls_property_custom_group_item_int_params(p, idx, min, max, step,
-							 NULL, NULL);
+	return pls_property_custom_group_item_params(p, idx, (const char **)name, (const char **)desc, NULL, NULL,
+						     NULL) &&
+	       pls_property_custom_group_item_int_params(p, idx, min, max, step, NULL, NULL);
 }
 
 #pragma endregion
 
 #pragma region custom group
-obs_property_t *pls_properties_add_custom_group(obs_properties_t *props,
-						const char *name,
-						const char *desc)
+obs_property_t *pls_properties_add_custom_group(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -721,8 +645,7 @@ obs_property_t *pls_properties_add_custom_group(obs_properties_t *props,
 
 void pls_property_custom_group_clear(obs_property_t *p)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data) {
 		for (size_t i = 0; i < data->items.num; ++i) {
@@ -747,11 +670,9 @@ void pls_property_custom_group_clear(obs_property_t *p)
 	}
 }
 
-bool pls_property_custom_group_button_clicked(obs_property_t *p, size_t idx,
-					      void *context)
+bool pls_property_custom_group_button_clicked(obs_property_t *p, size_t idx, void *context)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (!data) {
 		return false;
@@ -777,11 +698,9 @@ bool pls_property_custom_group_button_clicked(obs_property_t *p, size_t idx,
 	return item->button_item.callback(top, p, context);
 }
 
-bool pls_property_custom_group_bool_clicked(obs_property_t *p, size_t idx,
-					    void *context)
+bool pls_property_custom_group_bool_clicked(obs_property_t *p, size_t idx, void *context)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (!data) {
 		return false;
@@ -807,11 +726,9 @@ bool pls_property_custom_group_bool_clicked(obs_property_t *p, size_t idx,
 	return item->bool_item.callback(top, p, context);
 }
 
-bool pls_property_custom_group_checkbox_clicked(obs_property_t *p, size_t idx,
-						bool checked, void *context)
+bool pls_property_custom_group_checkbox_clicked(obs_property_t *p, size_t idx, bool checked, void *context)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (!data) {
 		return false;
@@ -839,17 +756,13 @@ bool pls_property_custom_group_checkbox_clicked(obs_property_t *p, size_t idx,
 
 size_t pls_property_custom_group_item_count(obs_property_t *p)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	return data ? data->items.num : 0;
 }
 
-static void pls_property_custom_group_add_item(struct custom_group_item *item,
-					       const char *name,
-					       const char *desc,
-					       const char *tooltip,
-					       bool enabled, bool visible,
+static void pls_property_custom_group_add_item(struct custom_group_item *item, const char *name, const char *desc,
+					       const char *tooltip, bool enabled, bool visible,
 					       enum pls_custom_group_type type)
 {
 	item->name = bstrdup(name);
@@ -860,20 +773,15 @@ static void pls_property_custom_group_add_item(struct custom_group_item *item,
 	item->type = type;
 }
 
-size_t pls_property_custom_group_add_button(obs_property_t *p, const char *name,
-					    const char *desc,
-					    const char *tooltip, bool enabled,
-					    bool visible, bool highlight,
-					    obs_property_clicked_t callback)
+size_t pls_property_custom_group_add_button(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
+					    bool enabled, bool visible, bool highlight, obs_property_clicked_t callback)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data) {
 		struct custom_group_item item = {NULL};
 
-		pls_property_custom_group_add_item(&item, name, desc, tooltip,
-						   enabled, visible,
+		pls_property_custom_group_add_item(&item, name, desc, tooltip, enabled, visible,
 						   PLS_CUSTOM_GROUP_BUTTON);
 
 		item.button_item.highlight = highlight;
@@ -884,20 +792,15 @@ size_t pls_property_custom_group_add_button(obs_property_t *p, const char *name,
 	return 0;
 }
 
-size_t pls_property_custom_group_add_bool(obs_property_t *p, const char *name,
-					  const char *desc, const char *tooltip,
-					  bool enabled, bool visible,
-					  obs_property_clicked_t callback)
+size_t pls_property_custom_group_add_bool(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
+					  bool enabled, bool visible, obs_property_clicked_t callback)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data) {
 		struct custom_group_item item = {NULL};
 
-		pls_property_custom_group_add_item(&item, name, desc, tooltip,
-						   enabled, visible,
-						   PLS_CUSTOM_GROUP_BOOL);
+		pls_property_custom_group_add_item(&item, name, desc, tooltip, enabled, visible, PLS_CUSTOM_GROUP_BOOL);
 
 		item.bool_item.callback = callback;
 
@@ -906,20 +809,16 @@ size_t pls_property_custom_group_add_bool(obs_property_t *p, const char *name,
 	return 0;
 }
 
-size_t
-pls_property_custom_group_add_checkbox(obs_property_t *p, const char *name,
-				       const char *desc, const char *tooltip,
-				       bool enabled, bool visible,
-				       pls_property_checkbox_clicked_t callback)
+size_t pls_property_custom_group_add_checkbox(obs_property_t *p, const char *name, const char *desc,
+					      const char *tooltip, bool enabled, bool visible,
+					      pls_property_checkbox_clicked_t callback)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data) {
 		struct custom_group_item item = {NULL};
 
-		pls_property_custom_group_add_item(&item, name, desc, tooltip,
-						   enabled, visible,
+		pls_property_custom_group_add_item(&item, name, desc, tooltip, enabled, visible,
 						   PLS_CUSTOM_GROUP_CHECKBOX);
 
 		item.checkbox_item.callback = callback;
@@ -929,21 +828,16 @@ pls_property_custom_group_add_checkbox(obs_property_t *p, const char *name,
 	return 0;
 }
 
-size_t pls_property_custom_group_add_int(obs_property_t *p, const char *name,
-					 const char *desc, const char *tooltip,
-					 bool enabled, bool visible, int min,
-					 int max, int step, const char *suffix,
+size_t pls_property_custom_group_add_int(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
+					 bool enabled, bool visible, int min, int max, int step, const char *suffix,
 					 enum obs_number_type type)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data) {
 		struct custom_group_item item = {NULL};
 
-		pls_property_custom_group_add_item(&item, name, desc, tooltip,
-						   enabled, visible,
-						   PLS_CUSTOM_GROUP_INT);
+		pls_property_custom_group_add_item(&item, name, desc, tooltip, enabled, visible, PLS_CUSTOM_GROUP_INT);
 
 		item.int_item.min = min;
 		item.int_item.max = max;
@@ -956,21 +850,16 @@ size_t pls_property_custom_group_add_int(obs_property_t *p, const char *name,
 	return 0;
 }
 
-size_t pls_property_custom_group_add_float(obs_property_t *p, const char *name,
-					   const char *desc,
-					   const char *tooltip, bool enabled,
-					   bool visible, double min, double max,
-					   double step, const char *suffix,
-					   enum obs_number_type type)
+size_t pls_property_custom_group_add_float(obs_property_t *p, const char *name, const char *desc, const char *tooltip,
+					   bool enabled, bool visible, double min, double max, double step,
+					   const char *suffix, enum obs_number_type type)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data) {
 		struct custom_group_item item = {NULL};
 
-		pls_property_custom_group_add_item(&item, name, desc, tooltip,
-						   enabled, visible,
+		pls_property_custom_group_add_item(&item, name, desc, tooltip, enabled, visible,
 						   PLS_CUSTOM_GROUP_FLOAT);
 
 		item.float_item.min = min;
@@ -984,23 +873,17 @@ size_t pls_property_custom_group_add_float(obs_property_t *p, const char *name,
 	return 0;
 }
 
-enum pls_custom_group_type
-pls_property_custom_group_item_type(obs_property_t *p, size_t idx)
+enum pls_custom_group_type pls_property_custom_group_item_type(obs_property_t *p, size_t idx)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].type
-					       : PLS_CUSTOM_GROUP_UNKNOWN;
+	return (data && idx < data->items.num) ? data->items.array[idx].type : PLS_CUSTOM_GROUP_UNKNOWN;
 }
 
-bool pls_property_custom_group_item_params(obs_property_t *p, size_t idx,
-					   const char **name, const char **desc,
-					   const char **tooltip, bool *enabled,
-					   bool *visible)
+bool pls_property_custom_group_item_params(obs_property_t *p, size_t idx, const char **name, const char **desc,
+					   const char **tooltip, bool *enabled, bool *visible)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
 		struct custom_group_item *item = &data->items.array[idx];
@@ -1022,11 +905,9 @@ bool pls_property_custom_group_item_params(obs_property_t *p, size_t idx,
 	return false;
 }
 
-bool pls_property_custom_group_item_button_params(obs_property_t *p, size_t idx,
-						  bool *highlight)
+bool pls_property_custom_group_item_button_params(obs_property_t *p, size_t idx, bool *highlight)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
 		struct custom_group_item *item = &data->items.array[idx];
@@ -1042,13 +923,10 @@ bool pls_property_custom_group_item_button_params(obs_property_t *p, size_t idx,
 	return false;
 }
 
-bool pls_property_custom_group_item_int_params(obs_property_t *p, size_t idx,
-					       int *min, int *max, int *step,
-					       const char **suffix,
-					       enum obs_number_type *type)
+bool pls_property_custom_group_item_int_params(obs_property_t *p, size_t idx, int *min, int *max, int *step,
+					       const char **suffix, enum obs_number_type *type)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
 		struct custom_group_item *item = &data->items.array[idx];
@@ -1072,14 +950,10 @@ bool pls_property_custom_group_item_int_params(obs_property_t *p, size_t idx,
 	return false;
 }
 
-bool pls_property_custom_group_item_float_params(obs_property_t *p, size_t idx,
-						 double *min, double *max,
-						 double *step,
-						 const char **suffix,
-						 enum obs_number_type *type)
+bool pls_property_custom_group_item_float_params(obs_property_t *p, size_t idx, double *min, double *max, double *step,
+						 const char **suffix, enum obs_number_type *type)
 {
-	struct custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
+	struct custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
 		struct custom_group_item *item = &data->items.array[idx];
@@ -1105,8 +979,7 @@ bool pls_property_custom_group_item_float_params(obs_property_t *p, size_t idx,
 #pragma endregion
 
 #pragma region bgm
-obs_property_t *pls_properties_bgm_add_list(obs_properties_t *props,
-					    const char *name, const char *desc)
+obs_property_t *pls_properties_bgm_add_list(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1116,8 +989,7 @@ obs_property_t *pls_properties_bgm_add_list(obs_properties_t *props,
 
 void pls_property_bgm_list_clear(obs_property_t *p)
 {
-	struct bgm_list_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
+	struct bgm_list_data *data = get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
 
 	if (data) {
 		for (size_t i = 0; i < data->items.num; ++i) {
@@ -1132,8 +1004,7 @@ void pls_property_bgm_list_clear(obs_property_t *p)
 
 bool pls_property_bgm_list_clicked(obs_property_t *p, void *context, size_t idx)
 {
-	struct bgm_list_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
+	struct bgm_list_data *data = get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
 
 	if (!data) {
 		return false;
@@ -1148,11 +1019,7 @@ bool pls_property_bgm_list_clicked(obs_property_t *p, void *context, size_t idx)
 		obs_properties_t *top = get_topmost_parent(p->parent);
 		if (p->priv)
 			return item->callback(top, p, p->priv);
-		return item->callback(
-			top, p,
-			context != NULL
-				? ((struct obs_context_data *)context)->data
-				: NULL);
+		return item->callback(top, p, context != NULL ? ((struct obs_context_data *)context)->data : NULL);
 	}
 
 	return false;
@@ -1160,19 +1027,15 @@ bool pls_property_bgm_list_clicked(obs_property_t *p, void *context, size_t idx)
 
 size_t pls_property_bgm_list_item_count(obs_property_t *p)
 {
-	struct bgm_list_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
+	struct bgm_list_data *data = get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
 
 	return data ? data->items.num : 0;
 }
 
-size_t pls_property_bgm_list_add_item(obs_property_t *p, const char *name,
-				      const char *producer, const char *url,
-				      int duration, int duration_type,
-				      obs_property_clicked_t callback)
+size_t pls_property_bgm_list_add_item(obs_property_t *p, const char *name, const char *producer, const char *url,
+				      int duration, int duration_type, obs_property_clicked_t callback)
 {
-	struct bgm_list_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
+	struct bgm_list_data *data = get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
 
 	if (data) {
 		struct bgm_list_item item = {NULL};
@@ -1197,25 +1060,19 @@ pls_property_xx_item_xx(bgm_list, url, PLS_PROPERTY_BGM_LIST);
 
 int pls_property_bgm_list_item_duration(obs_property_t *p, size_t idx)
 {
-	struct bgm_list_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
+	struct bgm_list_data *data = get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].duration
-					       : 0;
+	return (data && idx < data->items.num) ? data->items.array[idx].duration : 0;
 }
 
 int pls_property_bgm_list_item_duration_type(obs_property_t *p, size_t idx)
 {
-	struct bgm_list_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
+	struct bgm_list_data *data = get_pls_type_data(p, PLS_PROPERTY_BGM_LIST);
 
-	return (data && idx < data->items.num)
-		       ? data->items.array[idx].duration_type
-		       : -1;
+	return (data && idx < data->items.num) ? data->items.array[idx].duration_type : -1;
 }
 
-obs_property_t *pls_properties_bgm_add_tips(obs_properties_t *props,
-					    const char *name, const char *desc)
+obs_property_t *pls_properties_bgm_add_tips(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1225,9 +1082,7 @@ obs_property_t *pls_properties_bgm_add_tips(obs_properties_t *props,
 #pragma endregion
 
 #pragma region
-obs_property_t *pls_properties_chat_add_template_list(obs_properties_t *props,
-						      const char *name,
-						      const char *desc)
+obs_property_t *pls_properties_chat_add_template_list(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1235,16 +1090,13 @@ obs_property_t *pls_properties_chat_add_template_list(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CHAT_TEMPLATE_LIST);
 }
 
-obs_property_t *pls_properties_chat_add_font_size(obs_properties_t *props,
-						  const char *name,
-						  const char *desc, int min,
+obs_property_t *pls_properties_chat_add_font_size(obs_properties_t *props, const char *name, const char *desc, int min,
 						  int max, int step)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_CHAT_FONT_SIZE);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_CHAT_FONT_SIZE);
 
 	struct chat_font_size_data *data = get_property_data(p);
 	data->min = min;
@@ -1256,32 +1108,28 @@ obs_property_t *pls_properties_chat_add_font_size(obs_properties_t *props,
 
 int pls_property_chat_font_size_min(obs_property_t *p)
 {
-	struct chat_font_size_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CHAT_FONT_SIZE);
+	struct chat_font_size_data *data = get_pls_type_data(p, PLS_PROPERTY_CHAT_FONT_SIZE);
 
 	return data ? data->min : 0;
 }
 
 int pls_property_chat_font_size_max(obs_property_t *p)
 {
-	struct chat_font_size_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CHAT_FONT_SIZE);
+	struct chat_font_size_data *data = get_pls_type_data(p, PLS_PROPERTY_CHAT_FONT_SIZE);
 
 	return data ? data->max : 0;
 }
 
 int pls_property_chat_font_size_step(obs_property_t *p)
 {
-	struct chat_font_size_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_CHAT_FONT_SIZE);
+	struct chat_font_size_data *data = get_pls_type_data(p, PLS_PROPERTY_CHAT_FONT_SIZE);
 
 	return data ? data->step : 0;
 }
 #pragma endregion
 
 #pragma region
-obs_property_t *pls_properties_tm_add_tab(obs_properties_t *props,
-					  const char *name)
+obs_property_t *pls_properties_tm_add_tab(obs_properties_t *props, const char *name)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1289,8 +1137,7 @@ obs_property_t *pls_properties_tm_add_tab(obs_properties_t *props,
 	return new_pls_prop(props, name, NULL, PLS_PROPERTY_TM_TAB);
 }
 
-obs_property_t *pls_properties_tm_add_template_tab(obs_properties_t *props,
-						   const char *name)
+obs_property_t *pls_properties_tm_add_template_tab(obs_properties_t *props, const char *name)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1298,8 +1145,7 @@ obs_property_t *pls_properties_tm_add_template_tab(obs_properties_t *props,
 	return new_pls_prop(props, name, NULL, PLS_PROPERTY_TM_TEMPLATE_TAB);
 }
 
-obs_property_t *pls_properties_tm_add_template_list(obs_properties_t *props,
-						    const char *name)
+obs_property_t *pls_properties_tm_add_template_list(obs_properties_t *props, const char *name)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1307,9 +1153,7 @@ obs_property_t *pls_properties_tm_add_template_list(obs_properties_t *props,
 	return new_pls_prop(props, name, NULL, PLS_PROPERTY_TM_TEMPLATE_LIST);
 }
 
-obs_property_t *
-pls_properties_tm_add_template_default_text(obs_properties_t *props,
-					    const char *name, const char *desc)
+obs_property_t *pls_properties_tm_add_template_default_text(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1317,9 +1161,7 @@ pls_properties_tm_add_template_default_text(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_TM_DEFAULT_TEXT);
 }
 
-obs_property_t *pls_properties_tm_add_content(obs_properties_t *props,
-					      const char *name,
-					      const char *desc)
+obs_property_t *pls_properties_tm_add_content(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1327,15 +1169,13 @@ obs_property_t *pls_properties_tm_add_content(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_TM_TEXT_CONTENT);
 }
 
-obs_property_t *pls_properties_tm_add_text(obs_properties_t *props,
-					   const char *name, const char *desc,
-					   int min, int max, int step)
+obs_property_t *pls_properties_tm_add_text(obs_properties_t *props, const char *name, const char *desc, int min,
+					   int max, int step)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_TM_TEXT);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_TM_TEXT);
 
 	struct tm_text_data *data = get_property_data(p);
 	data->min = min;
@@ -1345,15 +1185,13 @@ obs_property_t *pls_properties_tm_add_text(obs_properties_t *props,
 	return p;
 }
 
-obs_property_t *pls_properties_tm_add_color(obs_properties_t *props,
-					    const char *name, const char *desc,
-					    int min, int max, int step)
+obs_property_t *pls_properties_tm_add_color(obs_properties_t *props, const char *name, const char *desc, int min,
+					    int max, int step)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_TM_COLOR);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_TM_COLOR);
 
 	struct tm_text_data *data = get_property_data(p);
 	data->min = min;
@@ -1363,15 +1201,13 @@ obs_property_t *pls_properties_tm_add_color(obs_properties_t *props,
 	return p;
 }
 
-obs_property_t *pls_properties_tm_add_motion(obs_properties_t *props,
-					     const char *name, const char *desc,
-					     int min, int max, int step)
+obs_property_t *pls_properties_tm_add_motion(obs_properties_t *props, const char *name, const char *desc, int min,
+					     int max, int step)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_TM_MOTION);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_TM_MOTION);
 
 	struct tm_text_data *data = get_property_data(p);
 	data->min = min;
@@ -1400,9 +1236,7 @@ int pls_property_tm_text_step(obs_property_t *p, enum pls_property_type type)
 }
 #pragma endregion
 
-obs_property_t *pls_properties_add_region_select(obs_properties_t *props,
-						 const char *name,
-						 const char *desc)
+obs_property_t *pls_properties_add_region_select(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1410,8 +1244,7 @@ obs_property_t *pls_properties_add_region_select(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_REGION_SELECT);
 }
 
-obs_property_t *pls_properties_add_display(obs_properties_t *props,
-					   const char *name, const char *desc)
+obs_property_t *pls_properties_add_display(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1419,8 +1252,7 @@ obs_property_t *pls_properties_add_display(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_DISPLAY);
 }
 
-obs_property_t *pls_properties_add_options(obs_properties_t *props,
-					   const char *name, const char *desc)
+obs_property_t *pls_properties_add_options(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1428,8 +1260,7 @@ obs_property_t *pls_properties_add_options(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_OPTIONS);
 }
 
-obs_property_t *pls_properties_add_motion(obs_properties_t *props,
-					  const char *name, const char *desc)
+obs_property_t *pls_properties_add_motion(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1437,8 +1268,7 @@ obs_property_t *pls_properties_add_motion(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_MOTION);
 }
 
-obs_property_t *pls_properties_add_font(obs_properties_t *props,
-					const char *name, const char *desc)
+obs_property_t *pls_properties_add_font(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1446,9 +1276,7 @@ obs_property_t *pls_properties_add_font(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_FONT);
 }
 
-obs_property_t *pls_properties_add_text_color(obs_properties_t *props,
-					      const char *name,
-					      const char *desc)
+obs_property_t *pls_properties_add_text_color(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1456,27 +1284,35 @@ obs_property_t *pls_properties_add_text_color(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_TEXT_COLOR);
 }
 
-obs_property_t *pls_properties_add_bk_color(obs_properties_t *props,
-					    const char *name, const char *desc)
+obs_property_t *pls_properties_add_bk_color(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_BK_COLOR);
 }
-
-#pragma region image_group
-obs_property_t *pls_properties_add_image_group(obs_properties_t *props,
-					       const char *name,
-					       const char *desc, int row,
-					       int column,
-					       enum pls_image_style_type type)
+obs_property_t *pls_properties_add_bk_template_list(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_IMAGE_GROUP);
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_CT_BK_TEMPLATE_LIST);
+}
+obs_property_t *pls_properties_add_color_toolbtn(obs_properties_t *props, const char *name, const char *desc)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_COLOR_TOOL_BUTTON);
+}
+#pragma region image_group
+obs_property_t *pls_properties_add_image_group(obs_properties_t *props, const char *name, const char *desc, int row,
+					       int column, enum pls_image_style_type type)
+{
+	if (!props || has_prop(props, name))
+		return NULL;
+
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_IMAGE_GROUP);
 
 	struct image_group_data *data = get_property_data(p);
 	data->row = row;
@@ -1488,8 +1324,7 @@ obs_property_t *pls_properties_add_image_group(obs_properties_t *props,
 
 void pls_property_image_group_clear(obs_property_t *p)
 {
-	struct image_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
+	struct image_group_data *data = get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
 
 	if (data) {
 		for (size_t i = 0; i < data->items.num; ++i) {
@@ -1502,11 +1337,9 @@ void pls_property_image_group_clear(obs_property_t *p)
 	}
 }
 
-bool pls_property_image_group_clicked(obs_property_t *p, void *context,
-				      size_t idx)
+bool pls_property_image_group_clicked(obs_property_t *p, void *context, size_t idx)
 {
-	struct image_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
+	struct image_group_data *data = get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
 
 	if (!data) {
 		return false;
@@ -1521,11 +1354,7 @@ bool pls_property_image_group_clicked(obs_property_t *p, void *context,
 		obs_properties_t *top = get_topmost_parent(p->parent);
 		if (p->priv)
 			return item->callback(top, p, p->priv);
-		return item->callback(
-			top, p,
-			context != NULL
-				? ((struct obs_context_data *)context)->data
-				: NULL);
+		return item->callback(top, p, context != NULL ? ((struct obs_context_data *)context)->data : NULL);
 	}
 
 	return false;
@@ -1533,22 +1362,19 @@ bool pls_property_image_group_clicked(obs_property_t *p, void *context,
 
 size_t pls_property_image_group_item_count(obs_property_t *p)
 {
-	struct image_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
+	struct image_group_data *data = get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
 
 	return data ? data->items.num : 0;
 }
 
-size_t pls_property_image_group_add_item(obs_property_t *p, const char *name,
-					 const char *url, long long val,
+size_t pls_property_image_group_add_item(obs_property_t *p, const char *name, const char *url, long long val,
 					 obs_property_clicked_t callback)
 {
-	struct image_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
+	struct image_group_data *data = get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
 
 	if (data) {
-		struct image_group_item item = { NULL };
-			
+		struct image_group_item item = {NULL};
+
 		item.name = bstrdup(name);
 		item.url = bstrdup(url);
 		item.val = val;
@@ -1559,11 +1385,9 @@ size_t pls_property_image_group_add_item(obs_property_t *p, const char *name,
 	return 0;
 }
 
-bool pls_property_image_group_params(obs_property_t *p, int *row, int *colum,
-				     enum pls_image_style_type *type)
+bool pls_property_image_group_params(obs_property_t *p, int *row, int *colum, enum pls_image_style_type *type)
 {
-	struct image_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
+	struct image_group_data *data = get_pls_type_data(p, PLS_PROPERTY_IMAGE_GROUP);
 
 	if (data) {
 		if (row)
@@ -1585,16 +1409,13 @@ pls_property_xx_item_xx(image_group, url, PLS_PROPERTY_IMAGE_GROUP);
 #pragma endregion
 
 #pragma region visualizer custom group
-obs_property_t *
-pls_properties_visualizer_add_custom_group(obs_properties_t *props,
-					   const char *name, const char *desc,
-					   int row, int column)
+obs_property_t *pls_properties_visualizer_add_custom_group(obs_properties_t *props, const char *name, const char *desc,
+							   int row, int column)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	struct obs_property *p = new_pls_prop(
-		props, name, desc, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	struct visualizer_custom_group_data *data = get_property_data(p);
 	data->row = row;
@@ -1605,13 +1426,11 @@ pls_properties_visualizer_add_custom_group(obs_properties_t *props,
 
 void pls_property_visualizer_custom_group_clear(obs_property_t *p)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data) {
 		for (size_t i = 0; i < data->items.num; ++i) {
-			struct visualizer_custom_group_item *item =
-				data->items.array + i;
+			struct visualizer_custom_group_item *item = data->items.array + i;
 
 			bfree(item->name);
 			bfree(item->desc);
@@ -1633,28 +1452,22 @@ void pls_property_visualizer_custom_group_clear(obs_property_t *p)
 
 size_t pls_property_visualizer_custom_group_item_count(obs_property_t *p)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	return data ? data->items.num : 0;
 }
 
-size_t pls_property_visualizer_custom_group_add_int(obs_property_t *p,
-						    const char *name,
-						    const char *desc, int min,
-						    int max, int step,
-						    const char *suffix)
+size_t pls_property_visualizer_custom_group_add_int(obs_property_t *p, const char *name, const char *desc, int min,
+						    int max, int step, const char *suffix)
 {
-	return pls_property_visualizer_custom_group_add_int_ex(
-		p, name, desc, min, max, step, suffix, OBS_NUMBER_SCROLLER);
+	return pls_property_visualizer_custom_group_add_int_ex(p, name, desc, min, max, step, suffix,
+							       OBS_NUMBER_SCROLLER);
 }
 
-size_t pls_property_visualizer_custom_group_add_int_ex(
-	obs_property_t *p, const char *name, const char *desc, int min, int max,
-	int step, const char *suffix, enum obs_number_type type)
+size_t pls_property_visualizer_custom_group_add_int_ex(obs_property_t *p, const char *name, const char *desc, int min,
+						       int max, int step, const char *suffix, enum obs_number_type type)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data) {
 		struct visualizer_custom_group_item item = {NULL};
@@ -1674,12 +1487,11 @@ size_t pls_property_visualizer_custom_group_add_int_ex(
 	return 0;
 }
 
-size_t pls_property_visualizer_custom_group_add_float(
-	obs_property_t *p, const char *name, const char *desc, double min,
-	double max, double step, const char *suffix, enum obs_number_type type)
+size_t pls_property_visualizer_custom_group_add_float(obs_property_t *p, const char *name, const char *desc, double min,
+						      double max, double step, const char *suffix,
+						      enum obs_number_type type)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data) {
 		struct visualizer_custom_group_item item = {NULL};
@@ -1699,11 +1511,9 @@ size_t pls_property_visualizer_custom_group_add_float(
 	return 0;
 }
 
-bool pls_property_visualizer_custom_group_params(obs_property_t *p, int *row,
-						 int *colum)
+bool pls_property_visualizer_custom_group_params(obs_property_t *p, int *row, int *colum)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data) {
 		if (row)
@@ -1717,27 +1527,20 @@ bool pls_property_visualizer_custom_group_params(obs_property_t *p, int *row,
 	return false;
 }
 
-enum pls_custom_group_type
-pls_property_visualizer_custom_group_item_type(obs_property_t *p, size_t idx)
+enum pls_custom_group_type pls_property_visualizer_custom_group_item_type(obs_property_t *p, size_t idx)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
-	return (data && idx < data->items.num) ? data->items.array[idx].type
-					       : PLS_CUSTOM_GROUP_UNKNOWN;
+	return (data && idx < data->items.num) ? data->items.array[idx].type : PLS_CUSTOM_GROUP_UNKNOWN;
 }
 
-bool pls_property_visualizer_custom_group_item_params(obs_property_t *p,
-						      size_t idx,
-						      const char **name,
+bool pls_property_visualizer_custom_group_item_params(obs_property_t *p, size_t idx, const char **name,
 						      const char **desc)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
-		struct visualizer_custom_group_item *item =
-			&data->items.array[idx];
+		struct visualizer_custom_group_item *item = &data->items.array[idx];
 
 		if (name)
 			*name = item->name;
@@ -1750,33 +1553,24 @@ bool pls_property_visualizer_custom_group_item_params(obs_property_t *p,
 	return false;
 }
 
-const char *
-pls_property_visualizer_custom_group_item_int_suffix(obs_property_t *p,
-						     size_t idx)
+const char *pls_property_visualizer_custom_group_item_int_suffix(obs_property_t *p, size_t idx)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
-		struct visualizer_custom_group_item *item =
-			&data->items.array[idx];
+		struct visualizer_custom_group_item *item = &data->items.array[idx];
 		return item->id.suffix;
 	}
 
 	return NULL;
 }
 
-bool pls_property_visualizer_custom_group_item_set_int_params(obs_property_t *p,
-							      int min, int max,
-							      int step,
-							      size_t idx)
+bool pls_property_visualizer_custom_group_item_set_int_params(obs_property_t *p, int min, int max, int step, size_t idx)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
-		struct visualizer_custom_group_item *item =
-			&data->items.array[idx];
+		struct visualizer_custom_group_item *item = &data->items.array[idx];
 
 		if (PLS_CUSTOM_GROUP_INT == item->type) {
 			item->id.min = min;
@@ -1790,23 +1584,19 @@ bool pls_property_visualizer_custom_group_item_set_int_params(obs_property_t *p,
 	return false;
 }
 
-EXPORT bool pls_property_visualizer_custom_group_item_int_params(
-	obs_property_t *p, int *min, int *max, int *step, size_t idx)
+EXPORT bool pls_property_visualizer_custom_group_item_int_params(obs_property_t *p, int *min, int *max, int *step,
+								 size_t idx)
 {
-	return pls_property_visualizer_custom_group_item_int_params_ex(
-		p, idx, min, max, step, NULL, NULL);
+	return pls_property_visualizer_custom_group_item_int_params_ex(p, idx, min, max, step, NULL, NULL);
 }
 
-bool pls_property_visualizer_custom_group_item_int_params_ex(
-	obs_property_t *p, size_t idx, int *min, int *max, int *step,
-	const char **suffix, enum obs_number_type *type)
+bool pls_property_visualizer_custom_group_item_int_params_ex(obs_property_t *p, size_t idx, int *min, int *max,
+							     int *step, const char **suffix, enum obs_number_type *type)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
-		struct visualizer_custom_group_item *item =
-			&data->items.array[idx];
+		struct visualizer_custom_group_item *item = &data->items.array[idx];
 
 		if (PLS_CUSTOM_GROUP_INT == item->type) {
 			if (min)
@@ -1827,16 +1617,14 @@ bool pls_property_visualizer_custom_group_item_int_params_ex(
 	return false;
 }
 
-bool pls_property_visualizer_custom_group_item_float_params(
-	obs_property_t *p, size_t idx, double *min, double *max, double *step,
-	const char **suffix, enum obs_number_type *type)
+bool pls_property_visualizer_custom_group_item_float_params(obs_property_t *p, size_t idx, double *min, double *max,
+							    double *step, const char **suffix,
+							    enum obs_number_type *type)
 {
-	struct visualizer_custom_group_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
+	struct visualizer_custom_group_data *data = get_pls_type_data(p, PLS_PROPERTY_VISUALIZER_CUSTOM_GROUP);
 
 	if (data && idx < data->items.num) {
-		struct visualizer_custom_group_item *item =
-			&data->items.array[idx];
+		struct visualizer_custom_group_item *item = &data->items.array[idx];
 
 		if (PLS_CUSTOM_GROUP_FLOAT == item->type) {
 			if (min)
@@ -1858,8 +1646,7 @@ bool pls_property_visualizer_custom_group_item_float_params(
 }
 #pragma endregion
 
-obs_property_t *pls_properties_add_bool_left(obs_properties_t *props,
-					     const char *name, const char *desc)
+obs_property_t *pls_properties_add_bool_left(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -1868,49 +1655,42 @@ obs_property_t *pls_properties_add_bool_left(obs_properties_t *props,
 }
 
 #pragma region virtual background
-obs_property_t *pls_properties_virtual_background_add_camera_state(
-	obs_properties_t *props, const char *name, const char *desc)
+obs_property_t *pls_properties_virtual_background_add_camera_state(obs_properties_t *props, const char *name,
+								   const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	return new_pls_prop(props, name, desc,
-			    PLS_PROPERTY_VIRTUAL_BACKGROUND_CAMERA_STATE);
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_VIRTUAL_BACKGROUND_CAMERA_STATE);
 }
 
-obs_property_t *pls_properties_virtual_background_add_resource(
-	obs_properties_t *props, const char *name, const char *desc)
+obs_property_t *pls_properties_virtual_background_add_resource(obs_properties_t *props, const char *name,
+							       const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	return new_pls_prop(props, name, desc,
-			    PLS_PROPERTY_VIRTUAL_BACKGROUND_RESOURCE);
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_VIRTUAL_BACKGROUND_RESOURCE);
 }
 
-obs_property_t *
-pls_properties_virtual_background_add_switch(obs_properties_t *props,
-					     const char *name, const char *desc)
+obs_property_t *pls_properties_virtual_background_add_switch(obs_properties_t *props, const char *name,
+							     const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	return new_pls_prop(props, name, desc,
-			    PLS_PROPERTY_VIRTUAL_BACKGROUND_SWITCH);
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_VIRTUAL_BACKGROUND_SWITCH);
 }
 #pragma endregion
 
 #pragma region mobile
-obs_property_t *pls_properties_mobile_add_help(obs_properties_t *props,
-					       const char *name,
-					       const char *desc,
+obs_property_t *pls_properties_mobile_add_help(obs_properties_t *props, const char *name, const char *desc,
 					       const char *image_url)
 {
 	if (!props)
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_MOBILE_HELP);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_MOBILE_HELP);
 
 	struct mobile_help_data *data = get_property_data(p);
 	data->image_url = bstrdup(image_url);
@@ -1920,23 +1700,19 @@ obs_property_t *pls_properties_mobile_add_help(obs_properties_t *props,
 
 const char *pls_property_mobile_help_image_url(obs_property_t *p)
 {
-	struct mobile_help_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_HELP);
+	struct mobile_help_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_HELP);
 
 	return data ? data->image_url : NULL;
 }
 
-obs_property_t *
-pls_properties_add_mobile_name(obs_properties_t *props, const char *name,
-			       const char *desc, const char *value,
-			       const char *button_desc, bool button_enabled,
-			       obs_property_clicked_t callback)
+obs_property_t *pls_properties_add_mobile_name(obs_properties_t *props, const char *name, const char *desc,
+					       const char *value, const char *button_desc, bool button_enabled,
+					       obs_property_clicked_t callback)
 {
 	if (!props)
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_MOBILE_NAME);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_MOBILE_NAME);
 
 	struct mobile_name_data *data = get_property_data(p);
 	data->value = bstrdup(value);
@@ -1949,32 +1725,28 @@ pls_properties_add_mobile_name(obs_properties_t *props, const char *name,
 
 const char *pls_property_mobile_name_value(obs_property_t *p)
 {
-	struct mobile_name_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
+	struct mobile_name_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
 
 	return data ? data->value : NULL;
 }
 
 const char *pls_property_mobile_name_button_desc(obs_property_t *p)
 {
-	struct mobile_name_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
+	struct mobile_name_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
 
 	return data ? data->button_desc : NULL;
 }
 
 bool pls_property_mobile_name_button_enabled(obs_property_t *p)
 {
-	struct mobile_name_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
+	struct mobile_name_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
 
 	return data ? data->button_enabled : false;
 }
 
 bool pls_property_mobile_name_button_clicked(obs_property_t *p, void *context)
 {
-	struct mobile_name_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
+	struct mobile_name_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_NAME);
 
 	if (!data) {
 		return false;
@@ -1984,27 +1756,19 @@ bool pls_property_mobile_name_button_clicked(obs_property_t *p, void *context)
 		obs_properties_t *top = get_topmost_parent(p->parent);
 		if (p->priv)
 			return data->callback(top, p, p->priv);
-		return data->callback(
-			top, p,
-			context != NULL
-				? ((struct obs_context_data *)context)->data
-				: NULL);
+		return data->callback(top, p, context != NULL ? ((struct obs_context_data *)context)->data : NULL);
 	}
 
 	return false;
 }
 
-obs_property_t *pls_properties_mobile_add_state(obs_properties_t *props,
-						const char *name,
-						const char *desc,
-						const char *value,
-						const char *image_url)
+obs_property_t *pls_properties_mobile_add_state(obs_properties_t *props, const char *name, const char *desc,
+						const char *value, const char *image_url)
 {
 	if (!props)
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_MOBILE_STATE);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_MOBILE_STATE);
 
 	struct mobile_state_data *data = get_property_data(p);
 	data->value = bstrdup(value);
@@ -2015,25 +1779,21 @@ obs_property_t *pls_properties_mobile_add_state(obs_properties_t *props,
 
 const char *pls_property_mobile_state_value(obs_property_t *p)
 {
-	struct mobile_state_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_STATE);
+	struct mobile_state_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_STATE);
 
 	return data ? data->value : NULL;
 }
 
 const char *pls_property_mobile_state_image_url(obs_property_t *p)
 {
-	struct mobile_state_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_MOBILE_STATE);
+	struct mobile_state_data *data = get_pls_type_data(p, PLS_PROPERTY_MOBILE_STATE);
 
 	return data ? data->image_url : NULL;
 }
 
 #pragma endregion
 
-obs_property_t *pls_properties_add_font_simple(obs_properties_t *props,
-					       const char *name,
-					       const char *desc)
+obs_property_t *pls_properties_add_font_simple(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -2041,9 +1801,7 @@ obs_property_t *pls_properties_add_font_simple(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_FONT_SIMPLE);
 }
 
-obs_property_t *pls_properties_add_color_checkbox(obs_properties_t *props,
-						  const char *name,
-						  const char *desc)
+obs_property_t *pls_properties_add_color_checkbox(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -2051,9 +1809,7 @@ obs_property_t *pls_properties_add_color_checkbox(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_COLOR_CHECKBOX);
 }
 
-obs_property_t *pls_properties_add_audio_meter(obs_properties_t *props,
-					       const char *name,
-					       const char *desc)
+obs_property_t *pls_properties_add_audio_meter(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -2061,9 +1817,7 @@ obs_property_t *pls_properties_add_audio_meter(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_AUDIO_METER);
 }
 
-obs_property_t *pls_properties_add_template_list(obs_properties_t *props,
-						 const char *name,
-						 const char *desc)
+obs_property_t *pls_properties_add_template_list(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
@@ -2071,27 +1825,21 @@ obs_property_t *pls_properties_add_template_list(obs_properties_t *props,
 	return new_pls_prop(props, name, desc, PLS_PROPERTY_TEMPLATE_LIST);
 }
 
-obs_property_t *pls_properties_add_color_alpha_checkbox(obs_properties_t *props,
-							const char *name,
-							const char *desc)
+obs_property_t *pls_properties_add_color_alpha_checkbox(obs_properties_t *props, const char *name, const char *desc)
 {
 	if (!props || has_prop(props, name))
 		return NULL;
 
-	return new_pls_prop(props, name, desc,
-			    PLS_PROPERTY_COLOR_ALPHA_CHECKBOX);
+	return new_pls_prop(props, name, desc, PLS_PROPERTY_COLOR_ALPHA_CHECKBOX);
 }
 
-obs_property_t *pls_properties_add_text_content(obs_properties_t *props,
-						const char *name,
-						const char *desc,
+obs_property_t *pls_properties_add_text_content(obs_properties_t *props, const char *name, const char *desc,
 						const char *content)
 {
 	if (!props)
 		return NULL;
 
-	struct obs_property *p =
-		new_pls_prop(props, name, desc, PLS_PROPERTY_TEXT_CONTENT);
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_TEXT_CONTENT);
 
 	struct text_content_data *data = get_property_data(p);
 	data->content = bstrdup(content);
@@ -2101,14 +1849,12 @@ obs_property_t *pls_properties_add_text_content(obs_properties_t *props,
 
 const char *pls_property_get_text_content(obs_property_t *p)
 {
-	struct text_content_data *data =
-		get_pls_type_data(p, PLS_PROPERTY_TEXT_CONTENT);
+	struct text_content_data *data = get_pls_type_data(p, PLS_PROPERTY_TEXT_CONTENT);
 
 	return data ? data->content : NULL;
 }
 
-obs_property_t* pls_properties_add_chzzk_sponsor(obs_properties_t* props,
-	const char* name)
+obs_property_t *pls_properties_add_chzzk_sponsor(obs_properties_t *props, const char *name)
 {
 	if (!props || has_prop(props, name))
 		return NULL;

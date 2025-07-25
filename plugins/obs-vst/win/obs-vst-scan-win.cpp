@@ -16,8 +16,7 @@ float **inputs = nullptr;
 float **outputs = nullptr;
 float **channelrefs = nullptr;
 
-intptr_t VstHostCallback(AEffect *effect, int32_t opcode, int32_t index,
-			 intptr_t value, void *ptr, float opt)
+intptr_t VstHostCallback(AEffect *effect, int32_t opcode, int32_t index, intptr_t value, void *ptr, float opt)
 {
 	VSTPlugin *plugin = nullptr;
 	if (effect && effect->user) {
@@ -73,15 +72,12 @@ bool InitEffect(const wchar_t *path, int *result)
 		return false;
 	}
 
-	vstPluginMain mainEntryPoint =
-		(vstPluginMain)GetProcAddress(dllHandle, "VSTPluginMain");
+	vstPluginMain mainEntryPoint = (vstPluginMain)GetProcAddress(dllHandle, "VSTPluginMain");
 	if (mainEntryPoint == nullptr) {
-		mainEntryPoint = (vstPluginMain)GetProcAddress(
-			dllHandle, "VstPluginMain()");
+		mainEntryPoint = (vstPluginMain)GetProcAddress(dllHandle, "VstPluginMain()");
 	}
 	if (mainEntryPoint == nullptr) {
-		mainEntryPoint =
-			(vstPluginMain)GetProcAddress(dllHandle, "main");
+		mainEntryPoint = (vstPluginMain)GetProcAddress(dllHandle, "main");
 	}
 	if (mainEntryPoint == nullptr) {
 		*result = VST_STATUS_NOT_VST;
@@ -114,8 +110,7 @@ bool CheckEffect(int *result)
 	effect->dispatcher(effect, effGetEffectName, 0, 0, effectName, 0);
 	effect->dispatcher(effect, effGetVendorString, 0, 0, vendorString, 0);
 
-	if ((effect->flags & effFlagsIsSynth) ||
-	    !(effect->flags & effFlagsCanReplacing)) {
+	if ((effect->flags & effFlagsIsSynth) || !(effect->flags & effFlagsCanReplacing)) {
 		*result = VST_STATUS_EFFECT_UNSUPPORT;
 		return false;
 	}
@@ -134,8 +129,7 @@ bool CheckEffect(int *result)
 	for (size_t channel = 0; channel < numChannels; channel++) {
 		inputs[channel] = (float *)malloc(sizeof(float) * blocksize);
 		outputs[channel] = (float *)malloc(sizeof(float) * blocksize);
-		channelrefs[channel] =
-			(float *)malloc(sizeof(float) * blocksize);
+		channelrefs[channel] = (float *)malloc(sizeof(float) * blocksize);
 	}
 
 	size_t sampleRate = TEST_SAMPLERATE;
@@ -146,12 +140,10 @@ bool CheckEffect(int *result)
 	mTimeInfo.tempo = 120.0;
 	mTimeInfo.timeSigNumerator = 4;
 	mTimeInfo.timeSigDenominator = 4;
-	mTimeInfo.flags = kVstTempoValid | kVstNanosValid |
-			  kVstTransportPlaying;
+	mTimeInfo.flags = kVstTempoValid | kVstNanosValid | kVstTransportPlaying;
 
 	effect->dispatcher(effect, effSetSampleRate, 0, 0, nullptr, sampleRate);
-	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr,
-			   0.0f);
+	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr, 0.0f);
 
 	// Ask the plugin to identify itself...might be needed for older plugins
 	effect->dispatcher(effect, effIdentify, 0, 0, nullptr, 0.0f);
@@ -160,8 +152,7 @@ bool CheckEffect(int *result)
 
 	// Set some default properties
 	effect->dispatcher(effect, effSetSampleRate, 0, 0, nullptr, sampleRate);
-	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr,
-			   0.0f);
+	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr, 0.0f);
 
 	effect->dispatcher(effect, effMainsChanged, 0, 1, nullptr, 0);
 
@@ -174,8 +165,7 @@ void TestChunk()
 	if (effect->flags & effFlagsProgramChunks) {
 		void *buf = nullptr;
 
-		intptr_t chunkSize = effect->dispatcher(effect, effGetChunk, 1,
-							0, &buf, 0.0);
+		intptr_t chunkSize = effect->dispatcher(effect, effGetChunk, 1, 0, &buf, 0.0);
 
 		QByteArray data = QByteArray((char *)buf, chunkSize);
 		QString temp = QString(data.toBase64());
@@ -188,8 +178,7 @@ void TestChunk()
 		}
 
 		const char *bytes = reinterpret_cast<const char *>(&params[0]);
-		QByteArray data =
-			QByteArray(bytes, (int)(sizeof(float) * params.size()));
+		QByteArray data = QByteArray(bytes, (int)(sizeof(float) * params.size()));
 		std::string encoded = QString(data.toBase64()).toStdString();
 		res = encoded;
 	}
@@ -199,21 +188,17 @@ void TestChunk()
 
 	std::string data = res;
 	if (effect->flags & effFlagsProgramChunks) {
-		QByteArray base64Data =
-			QByteArray(data.c_str(), (int)data.length());
+		QByteArray base64Data = QByteArray(data.c_str(), (int)data.length());
 		QByteArray chunkData = QByteArray::fromBase64(base64Data);
 		void *buf = nullptr;
 		buf = chunkData.data();
-		effect->dispatcher(effect, effSetChunk, 1, chunkData.length(),
-				   buf, 0);
+		effect->dispatcher(effect, effSetChunk, 1, chunkData.length(), buf, 0);
 	} else {
-		QByteArray base64Data =
-			QByteArray(data.c_str(), (int)data.length());
+		QByteArray base64Data = QByteArray(data.c_str(), (int)data.length());
 		QByteArray paramData = QByteArray::fromBase64(base64Data);
 
 		const char *p_chars = paramData.data();
-		const float *p_floats =
-			reinterpret_cast<const float *>(p_chars);
+		const float *p_floats = reinterpret_cast<const float *>(p_chars);
 
 		auto size = paramData.length() / sizeof(float);
 

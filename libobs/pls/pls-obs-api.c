@@ -2,6 +2,9 @@
 #include "obs-internal.h"
 #include "media-io/audio-io.h"
 #include "obs-scene.h"
+
+#include "pls/pls-dual-output-internal.h"
+
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__APPLE__)
@@ -12,6 +15,9 @@
 gs_effect_t *pls_effect = NULL;
 volatile bool g_app_exiting = false;
 volatile bool g_obs_shutdowning = false;
+
+volatile bool g_dev_mode = false;
+volatile bool g_local_log = false;
 
 static int g_prism_version_major = 0;
 static int g_prism_version_minor = 0;
@@ -24,8 +30,7 @@ static bool pls_source_alive(const obs_source_t *source)
 		return false;
 	}
 
-	obs_weak_source_t *control =
-		(obs_weak_source_t *)source->context.control;
+	obs_weak_source_t *control = (obs_weak_source_t *)source->context.control;
 	if (!control) {
 		return false;
 	}
@@ -33,8 +38,7 @@ static bool pls_source_alive(const obs_source_t *source)
 	return (control->ref.refs >= 0); // default refs is 0
 }
 
-void pls_vst_state_changed(const obs_source_t *source, const char *vst,
-			   enum obs_vst_verify_state state)
+void pls_vst_state_changed(const obs_source_t *source, const char *vst, enum obs_vst_verify_state state)
 {
 	if (!obs_source_valid(source, "obs_vst_state_changed"))
 		return;
@@ -52,8 +56,7 @@ void pls_vst_state_changed(const obs_source_t *source, const char *vst,
 	calldata_set_string(&data, "vst_path", vst);
 	calldata_set_int(&data, "vst_state", state);
 
-	signal_handler_signal(source->context.signals, "vst_state_changed",
-			      &data);
+	signal_handler_signal(source->context.signals, "vst_state_changed", &data);
 
 	calldata_free(&data);
 }
@@ -69,8 +72,7 @@ bool pls_get_wgc_borderless_enable()
 	return os_atomic_load_bool(&wgc_borderless_enable);
 }
 
-void pls_source_send_notify(const obs_source_t *source,
-			    enum obs_source_event_type type, int sub_code)
+void pls_source_send_notify(const obs_source_t *source, enum obs_source_event_type type, int sub_code)
 {
 	if (!source)
 		return;
@@ -89,9 +91,7 @@ void pls_source_send_notify(const obs_source_t *source,
 	signal_handler_signal(obs_get_signal_handler(), "source_notify", &data);
 }
 
-void pls_source_send_message(const obs_source_t *source,
-			     enum obs_source_event_type type,
-			     obs_data_t *msg_data)
+void pls_source_send_message(const obs_source_t *source, enum obs_source_event_type type, obs_data_t *msg_data)
 {
 	if (!source)
 		return;
@@ -107,12 +107,10 @@ void pls_source_send_message(const obs_source_t *source,
 	calldata_set_int(&data, "event_type", type);
 	calldata_set_ptr(&data, "message", (void *)msg_data);
 
-	signal_handler_signal(obs_get_signal_handler(), "source_message",
-			      &data);
+	signal_handler_signal(obs_get_signal_handler(), "source_message", &data);
 }
 
-void pls_source_property_update_notify(const obs_source_t *source,
-				       const char *name)
+void pls_source_property_update_notify(const obs_source_t *source, const char *name)
 {
 	if (!obs_source_valid(source, "obs_source_property_update_notify"))
 		return;
@@ -123,12 +121,10 @@ void pls_source_property_update_notify(const obs_source_t *source,
 	calldata_init_fixed(&data, stack, sizeof(stack));
 	calldata_set_ptr(&data, "source", (void *)source);
 	calldata_set_string(&data, "name", name);
-	signal_handler_signal(source->context.signals, "property_update_notify",
-			      &data);
+	signal_handler_signal(source->context.signals, "property_update_notify", &data);
 }
 
-void pls_source_cef_received_web_msg(const obs_source_t *source,
-				     const char *msg)
+void pls_source_cef_received_web_msg(const obs_source_t *source, const char *msg)
 {
 	if (!obs_source_valid(source, "obs_source_cef_received_web_msg"))
 		return;
@@ -142,22 +138,19 @@ void pls_source_cef_received_web_msg(const obs_source_t *source,
 		calldata_init(&data);
 		calldata_set_ptr(&data, "source", (void *)source);
 		calldata_set_string(&data, "msg", msg);
-		signal_handler_signal(source->context.signals,
-				      "sub_web_receive", &data);
+		signal_handler_signal(source->context.signals, "sub_web_receive", &data);
 		calldata_free(&data);
 	}
 }
 
 void pls_audio_output_get_info(uint32_t *samples_per_sec, int *speakers)
 {
-	const struct audio_output_info *info =
-		audio_output_get_info(obs_get_audio());
+	const struct audio_output_info *info = audio_output_get_info(obs_get_audio());
 	*samples_per_sec = info->samples_per_sec;
 	*speakers = info->speakers;
 }
 
-void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb,
-		      obs_load_pld_cb pldCb, void *private_data,
+void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb, obs_load_pld_cb pldCb, void *private_data,
 		      void *pld_private_data)
 {
 	struct obs_core_data *data = &obs->data;
@@ -243,27 +236,23 @@ bool pls_load_plugin(const char *bin_path, const char *data_path)
 
 	int code = obs_open_module(&module, bin_path, data_path);
 	if (code != MODULE_SUCCESS) {
-		blog(LOG_WARNING, "Failed to load given plugin '%s': %d %s",
-		     bin_path, code, __FUNCTION__);
+		blog(LOG_WARNING, "Failed to load given plugin '%s': %d %s", bin_path, code, __FUNCTION__);
 		assert(false);
 		return false;
 	}
 
 	if (!obs_init_module(module)) {
 		free_module(module);
-		blog(LOG_WARNING, "Failed to init module '%s' %s", bin_path,
-		     __FUNCTION__);
+		blog(LOG_WARNING, "Failed to init module '%s' %s", bin_path, __FUNCTION__);
 		assert(false);
 		return false;
 	}
 
-	blog(LOG_INFO, "Success to load given plugin '%s' %s", bin_path,
-	     __FUNCTION__);
+	blog(LOG_INFO, "Success to load given plugin '%s' %s", bin_path, __FUNCTION__);
 	return true;
 }
 
-void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture,
-			     bool save)
+void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture, bool save)
 {
 	UNUSED_PARAMETER(save);
 
@@ -281,12 +270,8 @@ void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture,
 	obs_enter_graphics();
 	uint32_t tex_width = gs_texture_get_width(texture);
 	uint32_t tex_height = gs_texture_get_height(texture);
-	uint32_t width = scene->canvas_texture
-				 ? gs_texture_get_width(scene->canvas_texture)
-				 : 0;
-	uint32_t height = scene->canvas_texture
-				  ? gs_texture_get_height(scene->canvas_texture)
-				  : 0;
+	uint32_t width = scene->canvas_texture ? gs_texture_get_width(scene->canvas_texture) : 0;
+	uint32_t height = scene->canvas_texture ? gs_texture_get_height(scene->canvas_texture) : 0;
 
 	enum gs_color_format fmt = gs_texture_get_color_format(texture);
 
@@ -298,8 +283,7 @@ void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture,
 	}
 
 	if (!scene->canvas_texture) {
-		scene->canvas_texture = gs_texture_create(
-			tex_width, tex_height, fmt, 1, NULL, GS_DYNAMIC);
+		scene->canvas_texture = gs_texture_create(tex_width, tex_height, fmt, 1, NULL, GS_DYNAMIC);
 	}
 
 	gs_copy_texture(scene->canvas_texture, texture);
@@ -318,8 +302,7 @@ gs_texture_t *pls_scene_get_canvas(obs_scene_t *scene)
 		obs_get_video_info(&ovi);
 		uint32_t width = ovi.base_width;
 		uint32_t height = ovi.base_height;
-		scene->canvas_texture = gs_texture_create(
-			width, height, GS_BGRA, 1, NULL, GS_DYNAMIC);
+		scene->canvas_texture = gs_texture_create(width, height, GS_BGRA, 1, NULL, GS_DYNAMIC);
 	}
 	obs_leave_graphics();
 	return scene->canvas_texture;
@@ -381,17 +364,14 @@ void pls_duplicate_scene_canvas(obs_scene_t *dst, obs_scene_t *src)
 	uint32_t width = obs_source_get_width(dst->source);
 	uint32_t height = obs_source_get_height(dst->source);
 
-	if (dst->canvas_texture &&
-	    (tex_width != width || tex_height != height)) {
+	if (dst->canvas_texture && (tex_width != width || tex_height != height)) {
 		gs_texture_destroy(dst->canvas_texture);
 		dst->canvas_texture = NULL;
 	}
 
 	if (!dst->canvas_texture) {
 		dst->canvas_texture = gs_texture_create(
-			tex_width, tex_height,
-			gs_texture_get_color_format(src->canvas_texture), 1,
-			NULL, GS_DYNAMIC);
+			tex_width, tex_height, gs_texture_get_color_format(src->canvas_texture), 1, NULL, GS_DYNAMIC);
 	}
 
 	gs_copy_texture(dst->canvas_texture, src->canvas_texture);
@@ -400,11 +380,9 @@ void pls_duplicate_scene_canvas(obs_scene_t *dst, obs_scene_t *src)
 	return;
 }
 
-void pls_source_properties_view_ok_button_enable(obs_source_t *source,
-						 bool enable)
+void pls_source_properties_view_ok_button_enable(obs_source_t *source, bool enable)
 {
-	if (!obs_source_valid(source,
-			      "obs_source_properties_view_ok_button_enable"))
+	if (!obs_source_valid(source, "obs_source_properties_view_ok_button_enable"))
 		return;
 
 	struct calldata data;
@@ -413,8 +391,7 @@ void pls_source_properties_view_ok_button_enable(obs_source_t *source,
 	calldata_init_fixed(&data, stack, sizeof(stack));
 	calldata_set_ptr(&data, "source", source);
 	calldata_set_bool(&data, "enable", enable);
-	signal_handler_signal(source->context.signals,
-			      "update_properties_ok_button_enable", &data);
+	signal_handler_signal(source->context.signals, "update_properties_ok_button_enable", &data);
 }
 
 #if defined(_WIN32)
@@ -424,13 +401,10 @@ static void log_module_address(obs_module_t *mod)
 	if (mod && mod->module) {
 		MODULEINFO modInfo;
 		ZeroMemory(&modInfo, sizeof(MODULEINFO));
-		BOOL result = GetModuleInformation(GetCurrentProcess(),
-						   (HMODULE)mod->module,
-						   &modInfo,
-						   sizeof(MODULEINFO));
+		BOOL result =
+			GetModuleInformation(GetCurrentProcess(), (HMODULE)mod->module, &modInfo, sizeof(MODULEINFO));
 		if (result) {
-			blog(LOG_INFO, "log module address: %s: %p-%p", mod->file,
-			     modInfo.lpBaseOfDll,
+			blog(LOG_INFO, "log module address: %s: %p-%p", mod->file, modInfo.lpBaseOfDll,
 			     (BYTE *)modInfo.lpBaseOfDll + modInfo.SizeOfImage);
 		}
 	}
@@ -441,8 +415,7 @@ void pls_log_loaded_modules(log_callback callback)
 {
 	for (obs_module_t *mod = obs->first_module; !!mod; mod = mod->next) {
 		if (callback) {
-			bool internal_module = !!os_dlsym(
-				mod->module, "obs_is_internal_module");
+			bool internal_module = !!os_dlsym(mod->module, "obs_is_internal_module");
 			callback(mod->file, internal_module);
 #if defined(_WIN32)
 			log_module_address(mod);
@@ -468,8 +441,7 @@ gs_effect_t *pls_get_prism_effect()
 }
 
 //PRISM/WuLongyue/20230727/None/codec analog
-EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode,
-				    bool hw)
+EXPORT void pls_analog_codec_notify(const char *codec, const char *encodeDecode, bool hw)
 {
 	if (!codec || !encodeDecode) {
 		return;
@@ -497,11 +469,13 @@ EXPORT bool pls_get_obs_exiting()
 }
 
 //PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
-EXPORT void pls_set_obs_shutdowning(bool shutdowning) {
+EXPORT void pls_set_obs_shutdowning(bool shutdowning)
+{
 	os_atomic_set_bool(&g_obs_shutdowning, shutdowning);
 }
 
-EXPORT bool pls_get_obs_shutdowning() {
+EXPORT bool pls_get_obs_shutdowning()
+{
 	return os_atomic_load_bool(&g_obs_shutdowning);
 }
 
@@ -537,3 +511,23 @@ EXPORT int pls_prism_version_build()
 {
 	return g_prism_version_build;
 }
+
+EXPORT void pls_set_dev_mode(bool dev)
+{
+	g_dev_mode = dev;
+}
+
+EXPORT bool pls_is_dev_mode()
+{
+	return g_dev_mode;
+}
+
+EXPORT void pls_set_local_log(bool local_log)
+{
+	g_local_log = local_log;
+}
+
+EXPORT bool pls_is_local_log()
+{
+	return g_local_log;
+};

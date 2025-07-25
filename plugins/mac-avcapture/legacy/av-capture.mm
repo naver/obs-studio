@@ -156,10 +156,11 @@ struct av_capture {
 };
 
 //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
-static NSDictionary<NSString *, NSValue *> * preset_sizes() {
+static NSDictionary<NSString *, NSValue *> *preset_sizes()
+{
     return @{
         AVCaptureSessionPreset3840x2160: @(NSMakeSize(3840, 2160)),
-        AVCaptureSessionPreset1920x1080:@(NSMakeSize(1920, 1080)),
+        AVCaptureSessionPreset1920x1080: @(NSMakeSize(1920, 1080)),
         AVCaptureSessionPreset1280x720: @(NSMakeSize(1280, 720)),
         AVCaptureSessionPreset960x540: @(NSMakeSize(960, 540)),
         AVCaptureSessionPreset640x480: @(NSMakeSize(640, 480)),
@@ -168,14 +169,15 @@ static NSDictionary<NSString *, NSValue *> * preset_sizes() {
     };
 }
 
-void check_and_update_video_settings(av_capture *capture, AVCaptureDevice *device, NSString *preset) {
+void check_and_update_video_settings(av_capture *capture, AVCaptureDevice *device, NSString *preset)
+{
     const char *name = device.localizedName.UTF8String;
     // for PRISM Lens virtual camera only
     if (name && strstr(name, "PRISM Lens ") != NULL) {
         // copy video settings to update
         NSMutableDictionary *videoSettings = [capture->out.videoSettings mutableCopy];
         // get current pixel format from video setting
-        OSType pixelFormat = [videoSettings[(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey] unsignedIntValue];
+        OSType pixelFormat = [videoSettings[(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey] unsignedIntValue];
         // handle 32BGRA pixel format only
         if (pixelFormat == kCVPixelFormatType_32BGRA) {
             // get the width and height for preset
@@ -184,12 +186,12 @@ void check_and_update_video_settings(av_capture *capture, AVCaptureDevice *devic
                 // if preset not in the list, give it a default value
                 resolutionValue = preset_sizes()[AVCaptureSessionPreset1920x1080];
             }
-            
+
             NSSize resolution = resolutionValue.sizeValue;
             // assign width and height to video settings
-            videoSettings[(__bridge NSString *)kCVPixelBufferWidthKey] = @(resolution.width);
-            videoSettings[(__bridge NSString *)kCVPixelBufferHeightKey] = @(resolution.height);
-            
+            videoSettings[(__bridge NSString *) kCVPixelBufferWidthKey] = @(resolution.width);
+            videoSettings[(__bridge NSString *) kCVPixelBufferHeightKey] = @(resolution.height);
+
             // set video settings
             capture->out.videoSettings = videoSettings;
         }
@@ -198,32 +200,37 @@ void check_and_update_video_settings(av_capture *capture, AVCaptureDevice *devic
 //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
 
 //PRISM/Zhongling/20230615/#/video device order
-static NSArray<AVCaptureDevice *> *av_sort_and_filter_video_device(NSArray<AVCaptureDevice *> *devices, BOOL isLensOrMobile)
+static NSArray<AVCaptureDevice *> *av_sort_and_filter_video_device(NSArray<AVCaptureDevice *> *devices,
+                                                                   BOOL isLensOrMobile)
 {
-	NSArray<NSString *> *priority_names = @[@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3];
-	
-	NSArray *filteredArray = [devices filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF.localizedName != 'PRISM Live Studio'"]];
-	NSArray<AVCaptureDevice *> * sorted_devices = [filteredArray sortedArrayUsingComparator:^NSComparisonResult(id  _Nonnull obj1, id  _Nonnull obj2) {
-		NSNumber *index1 = [[NSNumber alloc] initWithUnsignedLongLong:[priority_names indexOfObject:((AVCaptureDevice *)obj1).localizedName]];
-		NSNumber *index2 = [[NSNumber alloc] initWithUnsignedLongLong:[priority_names indexOfObject:((AVCaptureDevice *)obj2).localizedName]];
-		return [index1 compare:index2];
-	}];
-	
-	NSMutableArray<AVCaptureDevice *> * results = [NSMutableArray array];
-	if (isLensOrMobile) {
-		for (unsigned long i = 0; i < sorted_devices.count; i++) {
-			for (unsigned long j = 0; j < priority_names.count; j++) {
-				if ([priority_names[j] isEqualToString:sorted_devices[i].localizedName]) {
-					[results addObject:sorted_devices[i]];
-					break;
-				}
-			}
-		}
-	} else {
-		[results addObjectsFromArray:sorted_devices];
-	}
-	
-	return [results copy];
+    NSArray<NSString *> *priority_names = @[@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3];
+
+    NSArray *filteredArray = [devices
+        filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF.localizedName != 'PRISM Live Studio'"]];
+    NSArray<AVCaptureDevice *> *sorted_devices =
+        [filteredArray sortedArrayUsingComparator:^NSComparisonResult(id _Nonnull obj1, id _Nonnull obj2) {
+            NSNumber *index1 = [[NSNumber alloc]
+                initWithUnsignedLongLong:[priority_names indexOfObject:((AVCaptureDevice *) obj1).localizedName]];
+            NSNumber *index2 = [[NSNumber alloc]
+                initWithUnsignedLongLong:[priority_names indexOfObject:((AVCaptureDevice *) obj2).localizedName]];
+            return [index1 compare:index2];
+        }];
+
+    NSMutableArray<AVCaptureDevice *> *results = [NSMutableArray array];
+    if (isLensOrMobile) {
+        for (unsigned long i = 0; i < sorted_devices.count; i++) {
+            for (unsigned long j = 0; j < priority_names.count; j++) {
+                if ([priority_names[j] isEqualToString:sorted_devices[i].localizedName]) {
+                    [results addObject:sorted_devices[i]];
+                    break;
+                }
+            }
+        }
+    } else {
+        [results addObjectsFromArray:sorted_devices];
+    }
+
+    return [results copy];
 }
 //PRISM/Zhongling/20230615/#/video device order
 
@@ -231,58 +238,53 @@ static NSArray<AVCaptureDevice *> *av_sort_and_filter_video_device(NSArray<AVCap
 
 static NSArray<AVCaptureDevice *> *av_capture_get_device_list(BOOL isLensOrMobile)
 {
-	NSMutableArray *device_types = [NSMutableArray
-									arrayWithObjects:AVCaptureDeviceTypeBuiltInWideAngleCamera,
-									AVCaptureDeviceTypeExternalUnknown, nil];
+    NSMutableArray *device_types = [NSMutableArray
+        arrayWithObjects:AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternalUnknown, nil];
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000
-	if (__builtin_available(macOS 13.0, *)) {
-		[device_types addObject:AVCaptureDeviceTypeDeskViewCamera];
-	}
+    if (__builtin_available(macOS 13.0, *)) {
+        [device_types addObject:AVCaptureDeviceTypeDeskViewCamera];
+    }
 #endif
-	
-	NSMutableArray<AVCaptureDevice *> *allDevices = [NSMutableArray array];
-	AVCaptureDeviceDiscoverySession *video_discovery = [AVCaptureDeviceDiscoverySession
-														discoverySessionWithDeviceTypes:device_types
-														mediaType:AVMediaTypeVideo
-														position:AVCaptureDevicePositionUnspecified];
-	AVCaptureDeviceDiscoverySession *muxed_discovery = [AVCaptureDeviceDiscoverySession
-														discoverySessionWithDeviceTypes:device_types
-														mediaType:AVMediaTypeMuxed
-														position:AVCaptureDevicePositionUnspecified];
-	[allDevices addObjectsFromArray:[video_discovery devices]];
-	[allDevices addObjectsFromArray:[muxed_discovery devices]];
-	NSArray<AVCaptureDevice *> *sorted_devices = av_sort_and_filter_video_device(allDevices, isLensOrMobile);
-	return sorted_devices;
+
+    NSMutableArray<AVCaptureDevice *> *allDevices = [NSMutableArray array];
+    AVCaptureDeviceDiscoverySession *video_discovery =
+        [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:device_types mediaType:AVMediaTypeVideo
+                                                                position:AVCaptureDevicePositionUnspecified];
+    AVCaptureDeviceDiscoverySession *muxed_discovery =
+        [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:device_types mediaType:AVMediaTypeMuxed
+                                                                position:AVCaptureDevicePositionUnspecified];
+    [allDevices addObjectsFromArray:[video_discovery devices]];
+    [allDevices addObjectsFromArray:[muxed_discovery devices]];
+    NSArray<AVCaptureDevice *> *sorted_devices = av_sort_and_filter_video_device(allDevices, isLensOrMobile);
+    return sorted_devices;
 }
 
-static void av_capture_set_default_camera(obs_data_t *settings,
-										  NSArray<NSString *> *priorityCams,
-										  bool isLensOrMobile)
+static void av_capture_set_default_camera(obs_data_t *settings, NSArray<NSString *> *priorityCams, bool isLensOrMobile)
 {
-	NSArray<AVCaptureDevice *> *sorted_devices = av_capture_get_device_list(isLensOrMobile);
-	NSString *deviceName = NULL;
-	NSString *deviceUUID = NULL;
-	for (unsigned long i = 0; i < priorityCams.count; i++) {
-		for (unsigned long j = 0; j < sorted_devices.count; j++) {
-			if ([priorityCams[i] isEqualToString:sorted_devices[j].localizedName]) {
-				deviceName = sorted_devices[j].localizedName;
-				deviceUUID = sorted_devices[j].uniqueID;
-				break;
-			}
-		}
-		if (deviceName && deviceUUID)
-			break;
-	}
-	
-	if (!deviceName || !deviceUUID) {
-		deviceName = sorted_devices.firstObject.localizedName;
-		deviceUUID = sorted_devices.firstObject.uniqueID;
-	}
-	
-	if (deviceName && deviceUUID) {
-		obs_data_set_default_string(settings, "device_name", deviceName.UTF8String);
-		obs_data_set_default_string(settings, "device", deviceUUID.UTF8String);
-	}
+    NSArray<AVCaptureDevice *> *sorted_devices = av_capture_get_device_list(isLensOrMobile);
+    NSString *deviceName = NULL;
+    NSString *deviceUUID = NULL;
+    for (unsigned long i = 0; i < priorityCams.count; i++) {
+        for (unsigned long j = 0; j < sorted_devices.count; j++) {
+            if ([priorityCams[i] isEqualToString:sorted_devices[j].localizedName]) {
+                deviceName = sorted_devices[j].localizedName;
+                deviceUUID = sorted_devices[j].uniqueID;
+                break;
+            }
+        }
+        if (deviceName && deviceUUID)
+            break;
+    }
+
+    if (!deviceName || !deviceUUID) {
+        deviceName = sorted_devices.firstObject.localizedName;
+        deviceUUID = sorted_devices.firstObject.uniqueID;
+    }
+
+    if (deviceName && deviceUUID) {
+        obs_data_set_default_string(settings, "device_name", deviceName.UTF8String);
+        obs_data_set_default_string(settings, "device", deviceUUID.UTF8String);
+    }
 }
 //PRISM/Zhongling/20230809/#/lens and mobile plugin
 
@@ -884,8 +886,8 @@ static void av_capture_destroy(void *data)
     auto capture = static_cast<av_capture *>(data);
     //PRISM/cao.kewei/20231129/#3154/session queue
     capture->delegate = nil;
-	std::lock_guard<std::recursive_mutex> lock(sessionMutex);
-	delete capture;
+    std::lock_guard<std::recursive_mutex> lock(sessionMutex);
+    delete capture;
     //PRISM/cao.kewei/20231129/#3154/session queue
 }
 
@@ -929,9 +931,9 @@ static bool init_session(av_capture *capture)
         return false;
     }
 
-	//PRISM/cao.kewei/20231129/#3154/session queue
-	std::lock_guard<std::recursive_mutex> lock(sessionMutex);
-	//PRISM/cao.kewei/20231129/#3154/session queue
+    //PRISM/cao.kewei/20231129/#3154/session queue
+    std::lock_guard<std::recursive_mutex> lock(sessionMutex);
+    //PRISM/cao.kewei/20231129/#3154/session queue
     capture->session = session;
     capture->delegate = delegate;
     capture->out = out;
@@ -957,7 +959,7 @@ static bool init_device_input(av_capture *capture, AVCaptureDevice *dev)
         AVLOG(LOG_ERROR, "Error while initializing device input: %s", err.localizedFailureReason.UTF8String);
         return false;
     }
-    
+
     //PRISM/Renjibo/20230927/#/addInput crash.
     if ([capture->session canAddInput:device_input]) {
         [capture->session addInput:device_input];
@@ -996,14 +998,12 @@ static bool init_format(av_capture *capture, AVCaptureDevice *dev)
     capture->out.videoSettings = nil;
     FourCharCode subtype = uint_from_dict(capture->out.videoSettings, kCVPixelBufferPixelFormatTypeKey);
 
-	//PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel start
+    //PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel start
     const char *name = dev.localizedName.UTF8String;
     if (name && strstr(name, "PRISM Lens ") != NULL) {
         AVLOG(LOG_INFO, "Set PRISM Lens out format BGRA");
-        capture->out.videoSettings = @{
-            (__bridge NSString *)
-            kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)
-        };
+        capture->out.videoSettings =
+            @{(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)};
         return true;
     }
     //PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel end
@@ -1060,14 +1060,14 @@ static bool init_preset(av_capture *capture, AVCaptureDevice *dev, obs_data_t *s
         return false;
     }
 
-	//PRISM/cao.kewei/20240506/#5302/check session preset
-	if ([capture->session canSetSessionPreset:preset]) {
-		capture->session.sessionPreset = preset;
-	} else {
-		AVLOG(LOG_WARNING, "Cannot set session preset: %s", preset.UTF8String);
-	}
+    //PRISM/cao.kewei/20240506/#5302/check session preset
+    if ([capture->session canSetSessionPreset:preset]) {
+        capture->session.sessionPreset = preset;
+    } else {
+        AVLOG(LOG_WARNING, "Cannot set session preset: %s", preset.UTF8String);
+    }
     AVLOG(LOG_INFO, "Using preset %s", preset_names(preset).UTF8String);
-    
+
     //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
     check_and_update_video_settings(capture, dev, preset);
     //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
@@ -1306,7 +1306,7 @@ static void capture_device(av_capture *capture, AVCaptureDevice *dev, obs_data_t
         if ([dev isStudioLightActive])
             AVLOG(LOG_WARNING, "Studio Light effect is active on selected device");
     }
-    
+
     //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
     if (!init_device_input(capture, dev))
         return;
@@ -1395,16 +1395,16 @@ static bool av_capture_init(av_capture *capture, obs_data_t *settings)
     capture->disconnect_observer.reset([nc addObserverForName:AVCaptureDeviceWasDisconnectedNotification object:nil
                                                         queue:[NSOperationQueue mainQueue]
                                                    usingBlock:^(NSNotification *note) {
-		//PRISM/cao.kewei/20240717/session queue
-		std::lock_guard<std::recursive_mutex> lock(sessionMutex);
+                                                       //PRISM/cao.kewei/20240717/session queue
+                                                       std::lock_guard<std::recursive_mutex> lock(sessionMutex);
                                                        handle_disconnect(capture, note.object);
                                                    }]);
 
     capture->connect_observer.reset([nc addObserverForName:AVCaptureDeviceWasConnectedNotification object:nil
                                                      queue:[NSOperationQueue mainQueue]
                                                 usingBlock:^(NSNotification *note) {
-		//PRISM/cao.kewei/20240717/session queue
-		std::lock_guard<std::recursive_mutex> lock(sessionMutex);
+                                                    //PRISM/cao.kewei/20240717/session queue
+                                                    std::lock_guard<std::recursive_mutex> lock(sessionMutex);
                                                     handle_connect(capture, note.object, settings);
                                                 }]);
 
@@ -1422,8 +1422,8 @@ static bool av_capture_init(av_capture *capture, obs_data_t *settings)
     }
 
     //PRISM/cao.kewei/20231129/#3154/session queue
-	std::lock_guard<std::recursive_mutex> lock(sessionMutex);
-	capture_device(capture, dev, settings);
+    std::lock_guard<std::recursive_mutex> lock(sessionMutex);
+    capture_device(capture, dev, settings);
     //PRISM/cao.kewei/20231129/#3154/session queue
 
     return true;
@@ -1545,12 +1545,11 @@ static bool update_device_list(obs_property_t *list, NSString *uid, NSString *na
     if (dev_found)
         return list_modified;
 
-    
     //PRISM/Zhongling/20230828/#2601 start
-	if ([name length] == 0 || [uid length] == 0) {
-		return true;
-	}
-	//PRISM/Zhongling/20230828/#2601 end
+    if ([name length] == 0 || [uid length] == 0) {
+        return true;
+    }
+    //PRISM/Zhongling/20230828/#2601 end
 
     size_t idx = obs_property_list_add_string(list, name.UTF8String, uid.UTF8String);
     obs_property_list_item_disable(list, idx, disconnected);
@@ -2220,27 +2219,27 @@ static void add_manual_properties(obs_properties_t *props)
 #undef ADD_RANGE
 }
 
-static bool properties_device_changed_lens_or_mobile(obs_properties_t *props,
-													 obs_property_t *p, obs_data_t *settings);
+static bool properties_device_changed_lens_or_mobile(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
 static obs_properties_t *av_capture_properties(void *data)
 {
     obs_properties_t *props = obs_properties_create();
 
-	//PRISM/Zhongling/20230828/#/lens and mobile properties start
-	BOOL isLens = NO;
-	BOOL isMobile = NO;
-	if (data) {
-		struct av_capture *capture = static_cast<av_capture *>(data);
-		NSString *pluginID = [NSString stringWithUTF8String:obs_source_get_id(capture->source)];
-		isLens = [pluginID isEqualToString:@TEXT_PRISM_LENS_ID];
-		isMobile = [pluginID isEqualToString:@TEXT_PRISM_LENS_MOBILE_ID];
-	}
-	
-//    obs_property_t *dev_list =
-//        obs_properties_add_list(props, "device", TEXT_DEVICE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-	obs_property_t *dev_list = 
-		obs_properties_add_list(props, "device", isMobile || isLens ? TEXT_PRISM_LENS_DEVICE : TEXT_DEVICE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-	
+    //PRISM/Zhongling/20230828/#/lens and mobile properties start
+    BOOL isLens = NO;
+    BOOL isMobile = NO;
+    if (data) {
+        struct av_capture *capture = static_cast<av_capture *>(data);
+        NSString *pluginID = [NSString stringWithUTF8String:obs_source_get_id(capture->source)];
+        isLens = [pluginID isEqualToString:@TEXT_PRISM_LENS_ID];
+        isMobile = [pluginID isEqualToString:@TEXT_PRISM_LENS_MOBILE_ID];
+    }
+
+    //    obs_property_t *dev_list =
+    //        obs_properties_add_list(props, "device", TEXT_DEVICE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_t *dev_list = obs_properties_add_list(props, "device",
+                                                       isMobile || isLens ? TEXT_PRISM_LENS_DEVICE : TEXT_DEVICE,
+                                                       OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+
 #if 0
     obs_property_list_add_string(dev_list, "", "");
 
@@ -2265,27 +2264,25 @@ static obs_properties_t *av_capture_properties(void *data)
     }
 #endif
 
-	NSArray<AVCaptureDevice *> *sorted_devices = av_capture_get_device_list(isLens || isMobile);
-	for (AVCaptureDevice *dev in sorted_devices) {
-		obs_property_list_add_string(dev_list,
-									 dev.localizedName.UTF8String,
-									 dev.uniqueID.UTF8String);
-	}
-	
-	if (isLens || isMobile) {
-		obs_properties_add_button(props, TEXT_PRISM_LENS_OPEN_KEY, TEXT_PRISM_LENS_OPEN_TEXT, nullptr);
-		
-		if (isLens) {
-			pls_properties_add_tips(props, "tip", TEXT_PRISM_LENS_TIPS);
-		} else if (isMobile) {
-			pls_properties_add_tips(props, "tip", TEXT_PRISM_LENS_MOBILE_TIPS);
-		}
-		
-		pls_properties_add_tips(props, TEXT_PRISM_LENS_AUDIO_TIPS_KEY, TEXT_PRISM_LENS_AUDIO_TIPS);
-		obs_property_set_modified_callback(dev_list, properties_device_changed_lens_or_mobile);
-		return props;
-	}
-	//PRISM/Zhongling/20230828/#/lens and mobile properties end
+    NSArray<AVCaptureDevice *> *sorted_devices = av_capture_get_device_list(isLens || isMobile);
+    for (AVCaptureDevice *dev in sorted_devices) {
+        obs_property_list_add_string(dev_list, dev.localizedName.UTF8String, dev.uniqueID.UTF8String);
+    }
+
+    if (isLens || isMobile) {
+        obs_properties_add_button(props, TEXT_PRISM_LENS_OPEN_KEY, TEXT_PRISM_LENS_OPEN_TEXT, nullptr);
+
+        if (isLens) {
+            pls_properties_add_tips(props, "tip", TEXT_PRISM_LENS_TIPS);
+        } else if (isMobile) {
+            pls_properties_add_tips(props, "tip", TEXT_PRISM_LENS_MOBILE_TIPS);
+        }
+
+        pls_properties_add_tips(props, TEXT_PRISM_LENS_AUDIO_TIPS_KEY, TEXT_PRISM_LENS_AUDIO_TIPS);
+        obs_property_set_modified_callback(dev_list, properties_device_changed_lens_or_mobile);
+        return props;
+    }
+    //PRISM/Zhongling/20230828/#/lens and mobile properties end
 
     obs_property_set_modified_callback(dev_list, properties_device_changed);
 
@@ -2357,18 +2354,18 @@ static void update_preset(av_capture *capture, obs_data_t *settings)
         preset = select_preset(capture->device, preset);
     }
 
-	//PRISM/cao.kewei/20240506/#5302/check session preset
-	if ([capture->session canSetSessionPreset:preset]) {
-		capture->session.sessionPreset = preset;
-	} else {
-		AVLOG(LOG_WARNING, "Cannot set session preset: %s", preset.UTF8String);
-	}
+    //PRISM/cao.kewei/20240506/#5302/check session preset
+    if ([capture->session canSetSessionPreset:preset]) {
+        capture->session.sessionPreset = preset;
+    } else {
+        AVLOG(LOG_WARNING, "Cannot set session preset: %s", preset.UTF8String);
+    }
     AVLOG(LOG_INFO, "Selected preset %s", preset.UTF8String);
-	
-	//PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
-	check_and_update_video_settings(capture, capture->device, preset);
-	//PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
-	
+
+    //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
+    check_and_update_video_settings(capture, capture->device, preset);
+    //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
+
     start_capture(capture);
 }
 
@@ -2386,10 +2383,10 @@ static void av_capture_update(void *data, obs_data_t *settings)
 
     //PRISM/cao.kewei/20231129/#3154/session queue
     if (!capture->device || ![capture->device.uniqueID isEqualToString:uid]) {
-		{
-			std::lock_guard<std::recursive_mutex> lock(sessionMutex);
-			switch_device(capture, uid, settings);
-		}
+        {
+            std::lock_guard<std::recursive_mutex> lock(sessionMutex);
+            switch_device(capture, uid, settings);
+        }
         return;
     }
     //PRISM/cao.kewei/20231129/#3154/session queue
@@ -2418,23 +2415,21 @@ static const char *av_capture_getname_lens_mobile(void *)
     return TEXT_PRISM_LENS_MOBILE_NAME;
 }
 
-static bool properties_device_changed_lens_or_mobile(obs_properties_t *props,
-                                                     obs_property_t *p, obs_data_t *settings)
+static bool properties_device_changed_lens_or_mobile(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
 {
     NSString *uid = get_string(settings, "device");
     AVCaptureDevice *dev = [AVCaptureDevice deviceWithUniqueID:uid];
-    
+
     NSString *name = get_string(settings, "device_name");
     bool dev_list_updated = update_device_list(p, uid, name, !dev && uid.length);
     bool autoselect_changed = autoselect_preset(dev, settings);
-    
-    config_helper conf{settings};
+
+    config_helper conf {settings};
     bool res_changed = update_resolution_property(props, conf);
     bool fps_changed = update_frame_rate_property(props, conf);
     bool if_changed = update_input_format_property(props, conf);
-    
-    return autoselect_changed || dev_list_updated ||
-    res_changed || fps_changed || if_changed;
+
+    return autoselect_changed || dev_list_updated || res_changed || fps_changed || if_changed;
 }
 //PRISM/Zhongling/20230809/#/lens and mobile plugin end
 
@@ -2442,24 +2437,18 @@ static bool properties_device_changed_lens_or_mobile(obs_properties_t *props,
 static void av_capture_defaults_lens_mobile(obs_data_t *settings)
 {
     av_capture_defaults(settings, true);
-    
-    NSArray<NSString *> *priorityCams = [NSArray arrayWithObjects:
-                                         @TEXT_PRISM_LENS_3,
-                                         @TEXT_PRISM_LENS_1,
-                                         @TEXT_PRISM_LENS_2,
-                                         nil];
+
+    NSArray<NSString *> *priorityCams =
+        [NSArray arrayWithObjects:@TEXT_PRISM_LENS_3, @TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, nil];
     av_capture_set_default_camera(settings, priorityCams, true);
 }
 
 static void av_capture_defaults_lens(obs_data_t *settings)
 {
     av_capture_defaults(settings, true);
-    
-    NSArray<NSString *> *priorityCams = [NSArray arrayWithObjects:
-                                         @TEXT_PRISM_LENS_1,
-                                         @TEXT_PRISM_LENS_2,
-                                         @TEXT_PRISM_LENS_3,
-                                         nil];
+
+    NSArray<NSString *> *priorityCams =
+        [NSArray arrayWithObjects:@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3, nil];
     av_capture_set_default_camera(settings, priorityCams, true);
 }
 //PRISM/Zhongling/20230809/#/lens and mobile plugin
@@ -2505,26 +2494,24 @@ bool obs_module_load(void)
     obs_register_source(&av_capture_info);
 
     //PRISM/Zhongling/20230809/#/lens and mobile plugin Add Start
-	av_capture_info.id = TEXT_PRISM_LENS_MOBILE_ID;
-	av_capture_info.version = 0;
-	av_capture_info.output_flags = OBS_SOURCE_ASYNC_VIDEO |
-						OBS_SOURCE_DO_NOT_DUPLICATE;
-	av_capture_info.get_name = av_capture_getname_lens_mobile;
-	av_capture_info.get_defaults = av_capture_defaults_lens_mobile;
-	av_capture_info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_MOBILE);
+    av_capture_info.id = TEXT_PRISM_LENS_MOBILE_ID;
+    av_capture_info.version = 0;
+    av_capture_info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
+    av_capture_info.get_name = av_capture_getname_lens_mobile;
+    av_capture_info.get_defaults = av_capture_defaults_lens_mobile;
+    av_capture_info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_MOBILE);
 
-	obs_register_source(&av_capture_info);
+    obs_register_source(&av_capture_info);
 
-	av_capture_info.id = TEXT_PRISM_LENS_ID;
-	av_capture_info.version = 0;
-	av_capture_info.output_flags = OBS_SOURCE_ASYNC_VIDEO |
-						OBS_SOURCE_DO_NOT_DUPLICATE;
-	av_capture_info.get_name = av_capture_getname_lens;
-	av_capture_info.get_defaults = av_capture_defaults_lens;
-	av_capture_info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_LENS);
+    av_capture_info.id = TEXT_PRISM_LENS_ID;
+    av_capture_info.version = 0;
+    av_capture_info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
+    av_capture_info.get_name = av_capture_getname_lens;
+    av_capture_info.get_defaults = av_capture_defaults_lens;
+    av_capture_info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_LENS);
 
-	obs_register_source(&av_capture_info);
-	//PRISM/Zhongling/20230809/#/lens and mobile plugin Add End
+    obs_register_source(&av_capture_info);
+    //PRISM/Zhongling/20230809/#/lens and mobile plugin Add End
 
     return true;
 }

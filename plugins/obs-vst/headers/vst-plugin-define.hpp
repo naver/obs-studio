@@ -12,7 +12,7 @@ static QString getFileName(const QString &path)
 	}
 	return path;
 }
-}
+} // namespace vst
 
 typedef void *(*process_create)(uint32_t process_id);
 typedef void (*process_destroy)(void *process);

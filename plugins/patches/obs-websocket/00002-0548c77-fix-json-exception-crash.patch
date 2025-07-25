@@ -1,0 +1,23 @@
+ src/utils/Json.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/utils/Json.cpp b/src/utils/Json.cpp
+index 923020a..c73e96e 100644
+--- a/src/utils/Json.cpp
++++ b/src/utils/Json.cpp
+@@ -215,8 +215,15 @@ bool Utils::Json::SetJsonFileContent(std::string fileName, const json &content,
+ 		return false;
+ 	}
+ 
++	try{
+ 	// Set indent to 2 spaces, then dump content
+ 	f << std::setw(2) << content;
++	} catch (json::exception &e) {
++		//the operator << would throw an exception if the content is not UTF-8 encoded
++		blog(LOG_ERROR, "[Utils::Json::SetJsonFileContent] Failed to encode content of JSON file `%s`. Error: %s",
++		     fileName.c_str(), e.what());
++		return false;
++	}
+ 
+ 	return true;
+ }

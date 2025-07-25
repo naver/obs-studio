@@ -28,22 +28,18 @@ struct ffmpeg_image {
 static bool ffmpeg_image_open_decoder_context(struct ffmpeg_image *info)
 {
 	AVFormatContext *const fmt_ctx = info->fmt_ctx;
-	int ret = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, 1, NULL,
-				      0);
+	int ret = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, 1, NULL, 0);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Couldn't find video stream in file '%s': %s",
-		     info->file, av_err2str(ret));
+		blog(LOG_WARNING, "Couldn't find video stream in file '%s': %s", info->file, av_err2str(ret));
 		return false;
 	}
 
 	AVStream *const stream = fmt_ctx->streams[ret];
 	AVCodecParameters *const codecpar = stream->codecpar;
-	const AVCodec *const decoder = avcodec_find_decoder(
-		codecpar->codec_id); // fix discarded-qualifiers
+	const AVCodec *const decoder = avcodec_find_decoder(codecpar->codec_id); // fix discarded-qualifiers
 
 	if (!decoder) {
-		blog(LOG_WARNING, "Failed to find decoder for file '%s'",
-		     info->file);
+		blog(LOG_WARNING, "Failed to find decoder for file '%s'", info->file);
 		return false;
 	}
 
@@ -85,8 +81,7 @@ static bool ffmpeg_image_init(struct ffmpeg_image *info, const char *file)
 
 	ret = avformat_open_input(&info->fmt_ctx, file, NULL, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING, "Failed to open file '%s': %s", info->file,
-		     av_err2str(ret));
+		blog(LOG_WARNING, "Failed to open file '%s': %s", info->file, av_err2str(ret));
 		return false;
 	}
 
@@ -115,8 +110,7 @@ fail:
 #define obs_bswap16(v) __builtin_bswap16(v)
 #endif
 
-static void *ffmpeg_image_copy_data_straight(struct ffmpeg_image *info,
-					     AVFrame *frame)
+static void *ffmpeg_image_copy_data_straight(struct ffmpeg_image *info, AVFrame *frame)
 {
 	const size_t linesize = (size_t)info->cx * 4;
 	const size_t totalsize = info->cy * linesize;
@@ -124,8 +118,7 @@ static void *ffmpeg_image_copy_data_straight(struct ffmpeg_image *info,
 
 	const size_t src_linesize = frame->linesize[0];
 	if (linesize != src_linesize) {
-		const size_t min_line = linesize < src_linesize ? linesize
-								: src_linesize;
+		const size_t min_line = linesize < src_linesize ? linesize : src_linesize;
 
 		uint8_t *dst = data;
 		const uint8_t *src = frame->data[0];
@@ -141,9 +134,7 @@ static void *ffmpeg_image_copy_data_straight(struct ffmpeg_image *info,
 	return data;
 }
 
-static inline size_t get_dst_position(const size_t w, const size_t h,
-				      const size_t x, const size_t y,
-				      int orient)
+static inline size_t get_dst_position(const size_t w, const size_t h, const size_t x, const size_t y, int orient)
 {
 	size_t res_x = 0;
 	size_t res_y = 0;
@@ -302,8 +293,7 @@ static inline size_t get_dst_position(const size_t w, const size_t h,
 #define TILE_SIZE 16
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-static void *ffmpeg_image_orient(struct ffmpeg_image *info, void *in_data,
-				 int orient)
+static void *ffmpeg_image_orient(struct ffmpeg_image *info, void *in_data, int orient)
 {
 	const size_t sx = (size_t)info->cx;
 	const size_t sy = (size_t)info->cy;
@@ -332,12 +322,9 @@ static void *ffmpeg_image_orient(struct ffmpeg_image *info, void *in_data,
 				for (size_t x = x0; x < lim_x; x++) {
 					off_src = (x + y * sx) * 4;
 
-					off_dst = get_dst_position(info->cx,
-								   info->cy, x,
-								   y, orient);
+					off_dst = get_dst_position(info->cx, info->cy, x, y, orient);
 
-					memcpy(data + off_dst, src + off_src,
-					       4);
+					memcpy(data + off_dst, src + off_src, 4);
 				}
 			}
 		}
@@ -347,9 +334,7 @@ static void *ffmpeg_image_orient(struct ffmpeg_image *info, void *in_data,
 	return data;
 }
 
-static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
-					 AVFrame *frame,
-					 enum gs_image_alpha_mode alpha_mode)
+static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info, AVFrame *frame, enum gs_image_alpha_mode alpha_mode)
 {
 	struct SwsContext *sws_ctx = NULL;
 	void *data = NULL;
@@ -361,8 +346,7 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 	int orient = 0;
 
 	if (dict) {
-		entry = av_dict_get(dict, "Orientation", NULL,
-				    AV_DICT_MATCH_CASE);
+		entry = av_dict_get(dict, "Orientation", NULL, AV_DICT_MATCH_CASE);
 		if (entry && entry->value) {
 			orient = atoi(entry->value);
 		}
@@ -370,8 +354,7 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 
 	if (info->format == AV_PIX_FMT_BGR0) {
 		data = ffmpeg_image_copy_data_straight(info, frame);
-	} else if (info->format == AV_PIX_FMT_RGBA ||
-		   info->format == AV_PIX_FMT_BGRA) {
+	} else if (info->format == AV_PIX_FMT_RGBA || info->format == AV_PIX_FMT_BGRA) {
 		if (alpha_mode == GS_IMAGE_ALPHA_STRAIGHT) {
 			data = ffmpeg_image_copy_data_straight(info, frame);
 		} else {
@@ -379,23 +362,19 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 			const size_t totalsize = info->cy * linesize;
 			data = bmalloc(totalsize);
 			const size_t src_linesize = frame->linesize[0];
-			const size_t min_line = linesize < src_linesize
-							? linesize
-							: src_linesize;
+			const size_t min_line = linesize < src_linesize ? linesize : src_linesize;
 			uint8_t *dst = data;
 			const uint8_t *src = frame->data[0];
 			const size_t row_elements = min_line >> 2;
 			if (alpha_mode == GS_IMAGE_ALPHA_PREMULTIPLY_SRGB) {
 				for (int y = 0; y < info->cy; y++) {
-					gs_premultiply_xyza_srgb_loop_restrict(
-						dst, src, row_elements);
+					gs_premultiply_xyza_srgb_loop_restrict(dst, src, row_elements);
 					dst += linesize;
 					src += src_linesize;
 				}
 			} else if (alpha_mode == GS_IMAGE_ALPHA_PREMULTIPLY) {
 				for (int y = 0; y < info->cy; y++) {
-					gs_premultiply_xyza_loop_restrict(
-						dst, src, row_elements);
+					gs_premultiply_xyza_loop_restrict(dst, src, row_elements);
 					dst += linesize;
 					src += src_linesize;
 				}
@@ -405,9 +384,7 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 		const size_t dst_linesize = (size_t)info->cx * 4;
 		data = bmalloc(info->cy * dst_linesize);
 		const size_t src_linesize = frame->linesize[0];
-		const size_t src_min_line = (dst_linesize * 2) < src_linesize
-						    ? (dst_linesize * 2)
-						    : src_linesize;
+		const size_t src_min_line = (dst_linesize * 2) < src_linesize ? (dst_linesize * 2) : src_linesize;
 		const size_t row_elements = src_min_line >> 3;
 		uint8_t *dst = data;
 		const uint8_t *src = frame->data[0];
@@ -417,14 +394,10 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 			for (int y = 0; y < info->cy; y++) {
 				for (size_t x = 0; x < row_elements; ++x) {
 					memcpy(value, src, sizeof(value));
-					f[0] = (float)obs_bswap16(value[0]) /
-					       65535.0f;
-					f[1] = (float)obs_bswap16(value[1]) /
-					       65535.0f;
-					f[2] = (float)obs_bswap16(value[2]) /
-					       65535.0f;
-					f[3] = (float)obs_bswap16(value[3]) /
-					       65535.0f;
+					f[0] = (float)obs_bswap16(value[0]) / 65535.0f;
+					f[1] = (float)obs_bswap16(value[1]) / 65535.0f;
+					f[2] = (float)obs_bswap16(value[2]) / 65535.0f;
+					f[3] = (float)obs_bswap16(value[3]) / 65535.0f;
 					gs_float4_to_u8x4(dst, f);
 					dst += sizeof(*dst) * 4;
 					src += sizeof(value);
@@ -436,14 +409,10 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 			for (int y = 0; y < info->cy; y++) {
 				for (size_t x = 0; x < row_elements; ++x) {
 					memcpy(value, src, sizeof(value));
-					f[0] = (float)obs_bswap16(value[0]) /
-					       65535.0f;
-					f[1] = (float)obs_bswap16(value[1]) /
-					       65535.0f;
-					f[2] = (float)obs_bswap16(value[2]) /
-					       65535.0f;
-					f[3] = (float)obs_bswap16(value[3]) /
-					       65535.0f;
+					f[0] = (float)obs_bswap16(value[0]) / 65535.0f;
+					f[1] = (float)obs_bswap16(value[1]) / 65535.0f;
+					f[2] = (float)obs_bswap16(value[2]) / 65535.0f;
+					f[3] = (float)obs_bswap16(value[3]) / 65535.0f;
 					gs_float3_srgb_nonlinear_to_linear(f);
 					gs_premultiply_float4(f);
 					gs_float3_srgb_linear_to_nonlinear(f);
@@ -458,14 +427,10 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 			for (int y = 0; y < info->cy; y++) {
 				for (size_t x = 0; x < row_elements; ++x) {
 					memcpy(value, src, sizeof(value));
-					f[0] = (float)obs_bswap16(value[0]) /
-					       65535.0f;
-					f[1] = (float)obs_bswap16(value[1]) /
-					       65535.0f;
-					f[2] = (float)obs_bswap16(value[2]) /
-					       65535.0f;
-					f[3] = (float)obs_bswap16(value[3]) /
-					       65535.0f;
+					f[0] = (float)obs_bswap16(value[0]) / 65535.0f;
+					f[1] = (float)obs_bswap16(value[1]) / 65535.0f;
+					f[2] = (float)obs_bswap16(value[2]) / 65535.0f;
+					f[3] = (float)obs_bswap16(value[3]) / 65535.0f;
 					gs_premultiply_float4(f);
 					gs_float4_to_u8x4(dst, f);
 					dst += sizeof(*dst) * 4;
@@ -480,9 +445,8 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 	} else {
 		static const enum AVPixelFormat format = AV_PIX_FMT_BGRA;
 
-		sws_ctx = sws_getContext(info->cx, info->cy, info->format,
-					 info->cx, info->cy, format, SWS_POINT,
-					 NULL, NULL, NULL);
+		sws_ctx = sws_getContext(info->cx, info->cy, info->format, info->cx, info->cy, format, SWS_POINT, NULL,
+					 NULL, NULL);
 		if (!sws_ctx) {
 			blog(LOG_WARNING,
 			     "Failed to create scale context "
@@ -493,23 +457,19 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 
 		uint8_t *pointers[4];
 		int linesizes[4];
-		ret = av_image_alloc(pointers, linesizes, info->cx, info->cy,
-				     format, 32);
+		ret = av_image_alloc(pointers, linesizes, info->cx, info->cy, format, 32);
 		if (ret < 0) {
-			blog(LOG_WARNING, "av_image_alloc failed for '%s': %s",
-			     info->file, av_err2str(ret));
+			blog(LOG_WARNING, "av_image_alloc failed for '%s': %s", info->file, av_err2str(ret));
 			sws_freeContext(sws_ctx);
 			goto fail;
 		}
 
-		ret = sws_scale(sws_ctx, (const uint8_t *const *)frame->data,
-				frame->linesize, 0, info->cy, pointers,
+		ret = sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, info->cy, pointers,
 				linesizes);
 		sws_freeContext(sws_ctx);
 
 		if (ret < 0) {
-			blog(LOG_WARNING, "sws_scale failed for '%s': %s",
-			     info->file, av_err2str(ret));
+			blog(LOG_WARNING, "sws_scale failed for '%s': %s", info->file, av_err2str(ret));
 			av_freep(pointers);
 			goto fail;
 		}
@@ -527,11 +487,9 @@ static void *ffmpeg_image_reformat_frame(struct ffmpeg_image *info,
 		av_freep(pointers);
 
 		if (alpha_mode == GS_IMAGE_ALPHA_PREMULTIPLY_SRGB) {
-			gs_premultiply_xyza_srgb_loop(data, (size_t)info->cx *
-								    info->cy);
+			gs_premultiply_xyza_srgb_loop(data, (size_t)info->cx * info->cy);
 		} else if (alpha_mode == GS_IMAGE_ALPHA_PREMULTIPLY) {
-			gs_premultiply_xyza_loop(data,
-						 (size_t)info->cx * info->cy);
+			gs_premultiply_xyza_loop(data, (size_t)info->cx * info->cy);
 		}
 
 		info->format = format;
@@ -543,9 +501,11 @@ fail:
 	return data;
 }
 
-static void *ffmpeg_image_decode(struct ffmpeg_image *info,
-				 enum gs_image_alpha_mode alpha_mode)
+// PRISM: About this function, most code has been changed for PRISM.
+// So, please forget the code of OBS
+static void *ffmpeg_image_decode(struct ffmpeg_image *info, enum gs_image_alpha_mode alpha_mode)
 {
+	//PRISM/Zengqin/fix bug for decoding vb resource ----------- start
 	AVPacket packet = {0};
 	void *data = NULL;
 	AVFrame *frame = av_frame_alloc();
@@ -553,8 +513,7 @@ static void *ffmpeg_image_decode(struct ffmpeg_image *info,
 	int ret;
 
 	if (!frame) {
-		blog(LOG_WARNING, "Failed to create frame data for '%s'",
-		     info->file);
+		blog(LOG_WARNING, "Failed to create frame data for '%s'", info->file);
 		return NULL;
 	}
 
@@ -564,16 +523,13 @@ static void *ffmpeg_image_decode(struct ffmpeg_image *info,
 		if (ret < 0) {
 			if (ret == AVERROR_EOF) {
 				eof = true;
-			}
-			else {
-				blog(LOG_WARNING,
-					"Failed to read image frame : %d, '%s'",
-					ret, av_err2str(ret));
+			} else {
+				blog(LOG_WARNING, "Failed to read image frame : %d, '%s'", ret, av_err2str(ret));
 				goto fail;
 			}
 		}
 
-		AVStream* stream = info->fmt_ctx->streams[packet.stream_index];
+		AVStream *stream = info->fmt_ctx->streams[packet.stream_index];
 		if (stream && stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
 			av_packet_unref(&packet);
 			continue;
@@ -590,30 +546,26 @@ static void *ffmpeg_image_decode(struct ffmpeg_image *info,
 		ret = avcodec_receive_frame(info->decoder_ctx, frame);
 		if (ret < 0) {
 			if (ret != AVERROR(EAGAIN)) {
-				blog(LOG_WARNING,
-					"Failed to decode frame : %d, '%s'",
-					ret, av_err2str(ret));
+				blog(LOG_WARNING, "Failed to decode frame : %d, '%s'", ret, av_err2str(ret));
 				goto fail;
-			}
-			else if(ret == AVERROR_EOF || eof) {
-				blog(LOG_WARNING,
-					"Can not decode one frame before EOF.");
+			} else if (ret == AVERROR_EOF || eof) {
+				blog(LOG_WARNING, "Can not decode one frame before EOF.");
 				goto fail;
 			}
 			continue;
-		}
-		else {
+		} else {
 			got_frame = 1;
 		}
 	}
 
-	if(got_frame)
+	if (got_frame)
 		data = ffmpeg_image_reformat_frame(info, frame, alpha_mode);
 
 fail:
 	av_packet_unref(&packet);
 	av_frame_free(&frame);
 	return data;
+	//PRISM/Zengqin/fix bug for decoding vb resource ----------- start
 }
 
 void gs_init_image_deps(void) {}
@@ -637,8 +589,7 @@ static inline enum gs_color_format convert_format(enum AVPixelFormat format)
 }
 
 //PRISM/ZengQin/20230620/1363/scale large image
-bool gs_image_convert_resolution(uint32_t src_cx, uint32_t src_cy,
-				 uint32_t *dest_cx, uint32_t *dest_cy)
+bool gs_image_convert_resolution(uint32_t src_cx, uint32_t src_cy, uint32_t *dest_cx, uint32_t *dest_cy)
 {
 	uint32_t sz = src_cx > src_cy ? src_cx : src_cy;
 	if (sz <= 4096) {
@@ -652,10 +603,9 @@ bool gs_image_convert_resolution(uint32_t src_cx, uint32_t src_cy,
 }
 
 //PRISM/ZengQin/20230620/1363/scale large image
-uint8_t *gs_image_scale(uint8_t *data, enum AVPixelFormat format,
-			uint32_t *cx_out, uint32_t *cy_out)
+uint8_t *gs_image_scale(uint8_t *data, enum AVPixelFormat format, uint32_t *cx_out, uint32_t *cy_out)
 {
-	
+
 	struct SwsContext *sws_ctx = NULL;
 	do {
 		if (!data) {
@@ -668,20 +618,15 @@ uint8_t *gs_image_scale(uint8_t *data, enum AVPixelFormat format,
 			break;
 		}
 
-		sws_ctx = sws_getContext(*cx_out, *cy_out, format, cx, cy,
-					 format, SWS_BICUBIC, NULL,
-					 NULL, NULL);
+		sws_ctx = sws_getContext(*cx_out, *cy_out, format, cx, cy, format, SWS_BICUBIC, NULL, NULL, NULL);
 		if (!sws_ctx) {
-			blog(LOG_WARNING,
-			     "[scale-image] Failed to create scale context. %dx%d",
-			     *cx_out, *cy_out);
+			blog(LOG_WARNING, "[scale-image] Failed to create scale context. %dx%d", *cx_out, *cy_out);
 			break;
 		}
 
 		uint8_t *dest_buffer = bmalloc(cx * cy * 4);
 		if (!dest_buffer) {
-			blog(LOG_WARNING,
-			     "[scale-image] Failed to malloc memory");
+			blog(LOG_WARNING, "[scale-image] Failed to malloc memory");
 			break;
 		}
 
@@ -691,12 +636,9 @@ uint8_t *gs_image_scale(uint8_t *data, enum AVPixelFormat format,
 		uint8_t *dest_data[AV_NUM_DATA_POINTERS] = {dest_buffer};
 		int dest_linesizes[AV_NUM_DATA_POINTERS] = {cx * 4};
 
-		int ret = sws_scale(sws_ctx, src_data, src_linesize, 0, *cy_out,
-				    dest_data, dest_linesizes);
+		int ret = sws_scale(sws_ctx, src_data, src_linesize, 0, *cy_out, dest_data, dest_linesizes);
 		if (ret < 0) {
-			blog(LOG_WARNING,
-			     "[scale-image] Failed to scale image. error:%d",
-			     ret);
+			blog(LOG_WARNING, "[scale-image] Failed to scale image. error:%d", ret);
 			bfree(dest_buffer);
 			break;
 		}
@@ -715,9 +657,7 @@ uint8_t *gs_image_scale(uint8_t *data, enum AVPixelFormat format,
 	return data;
 }
 
-uint8_t *gs_create_texture_file_data(const char *file,
-				     enum gs_color_format *format,
-				     uint32_t *cx_out, uint32_t *cy_out)
+uint8_t *gs_create_texture_file_data(const char *file, enum gs_color_format *format, uint32_t *cx_out, uint32_t *cy_out)
 {
 	struct ffmpeg_image image;
 	uint8_t *data = NULL;
@@ -741,13 +681,10 @@ uint8_t *gs_create_texture_file_data(const char *file,
 static float pq_to_linear(float u)
 {
 	const float common = powf(u, 1.f / 78.84375f);
-	return powf(fabsf(max(common - 0.8359375f, 0.f) /
-			  (18.8515625f - 18.6875f * common)),
-		    1.f / 0.1593017578f);
+	return powf(fabsf(max(common - 0.8359375f, 0.f) / (18.8515625f - 18.6875f * common)), 1.f / 0.1593017578f);
 }
 
-static void convert_pq_to_cccs(const BYTE *intermediate,
-			       const UINT intermediate_size, BYTE *bytes)
+static void convert_pq_to_cccs(const BYTE *intermediate, const UINT intermediate_size, BYTE *bytes)
 {
 	const BYTE *src_cursor = intermediate;
 	const BYTE *src_cursor_end = src_cursor + intermediate_size;
@@ -763,14 +700,11 @@ static void convert_pq_to_cccs(const BYTE *intermediate,
 		const float red2020 = pq_to_linear(red);
 		const float green2020 = pq_to_linear(green);
 		const float blue2020 = pq_to_linear(blue);
-		const float red709 = 1.6604910021084345f * red2020 -
-				     0.58764113878854951f * green2020 -
+		const float red709 = 1.6604910021084345f * red2020 - 0.58764113878854951f * green2020 -
 				     0.072849863319884883f * blue2020;
-		const float green709 = -0.12455047452159074f * red2020 +
-				       1.1328998971259603f * green2020 -
+		const float green709 = -0.12455047452159074f * red2020 + 1.1328998971259603f * green2020 -
 				       0.0083494226043694768f * blue2020;
-		const float blue709 = -0.018150763354905303f * red2020 -
-				      0.10057889800800739f * green2020 +
+		const float blue709 = -0.018150763354905303f * red2020 - 0.10057889800800739f * green2020 +
 				      1.1187296613629127f * blue2020;
 		rgba16[0] = half_from_float(red709 * 125.f);
 		rgba16[1] = half_from_float(green709 * 125.f);
@@ -781,23 +715,16 @@ static void convert_pq_to_cccs(const BYTE *intermediate,
 	}
 }
 
-static void *wic_image_init_internal(const char *file,
-				     IWICBitmapFrameDecode *pFrame,
-				     enum gs_color_format *format,
-				     uint32_t *cx_out, uint32_t *cy_out,
-				     enum gs_color_space *space)
+static void *wic_image_init_internal(const char *file, IWICBitmapFrameDecode *pFrame, enum gs_color_format *format,
+				     uint32_t *cx_out, uint32_t *cy_out, enum gs_color_space *space)
 {
 	BYTE *bytes = NULL;
 
 	WICPixelFormatGUID pixelFormat;
 	HRESULT hr = pFrame->lpVtbl->GetPixelFormat(pFrame, &pixelFormat);
 	if (SUCCEEDED(hr)) {
-		const bool scrgb = memcmp(&pixelFormat,
-					  &GUID_WICPixelFormat64bppRGBAHalf,
-					  sizeof(pixelFormat)) == 0;
-		const bool pq10 = memcmp(&pixelFormat,
-					 &GUID_WICPixelFormat32bppBGR101010,
-					 sizeof(pixelFormat)) == 0;
+		const bool scrgb = memcmp(&pixelFormat, &GUID_WICPixelFormat64bppRGBAHalf, sizeof(pixelFormat)) == 0;
+		const bool pq10 = memcmp(&pixelFormat, &GUID_WICPixelFormat32bppBGR101010, sizeof(pixelFormat)) == 0;
 		if (scrgb || pq10) {
 			UINT width, height;
 			hr = pFrame->lpVtbl->GetSize(pFrame, &width, &height);
@@ -808,25 +735,18 @@ static void *wic_image_init_internal(const char *file,
 				if (bytes) {
 					bool success = false;
 					if (pq10) {
-						const UINT intermediate_pitch =
-							4 * width;
-						const UINT intermediate_size =
-							intermediate_pitch *
-							height;
-						BYTE *intermediate = bmalloc(
-							intermediate_size);
+						const UINT intermediate_pitch = 4 * width;
+						const UINT intermediate_size = intermediate_pitch * height;
+						BYTE *intermediate = bmalloc(intermediate_size);
 						if (intermediate) {
-							hr = pFrame->lpVtbl->CopyPixels(
-								pFrame, NULL,
-								intermediate_pitch,
-								intermediate_size,
-								intermediate);
+							hr = pFrame->lpVtbl->CopyPixels(pFrame, NULL,
+											intermediate_pitch,
+											intermediate_size,
+											intermediate);
 							success = SUCCEEDED(hr);
 							if (success) {
-								convert_pq_to_cccs(
-									intermediate,
-									intermediate_size,
-									bytes);
+								convert_pq_to_cccs(intermediate, intermediate_size,
+										   bytes);
 							} else {
 								blog(LOG_WARNING,
 								     "WIC: Failed to CopyPixels intermediate for file: %s",
@@ -836,17 +756,13 @@ static void *wic_image_init_internal(const char *file,
 							bfree(intermediate);
 						} else {
 							blog(LOG_WARNING,
-							     "WIC: Failed to allocate intermediate for file: %s",
-							     file);
+							     "WIC: Failed to allocate intermediate for file: %s", file);
 						}
 					} else {
-						hr = pFrame->lpVtbl->CopyPixels(
-							pFrame, NULL, pitch,
-							size, bytes);
+						hr = pFrame->lpVtbl->CopyPixels(pFrame, NULL, pitch, size, bytes);
 						success = SUCCEEDED(hr);
 						if (!success) {
-							blog(LOG_WARNING,
-							     "WIC: Failed to CopyPixels for file: %s",
+							blog(LOG_WARNING, "WIC: Failed to CopyPixels for file: %s",
 							     file);
 						}
 					}
@@ -861,35 +777,28 @@ static void *wic_image_init_internal(const char *file,
 						bytes = NULL;
 					}
 				} else {
-					blog(LOG_WARNING,
-					     "WIC: Failed to allocate for file: %s",
-					     file);
+					blog(LOG_WARNING, "WIC: Failed to allocate for file: %s", file);
 				}
 			} else {
-				blog(LOG_WARNING,
-				     "WIC: Failed to GetSize of frame for file: %s",
-				     file);
+				blog(LOG_WARNING, "WIC: Failed to GetSize of frame for file: %s", file);
 			}
 		} else {
 			blog(LOG_WARNING,
 			     "WIC: Only handle GUID_WICPixelFormat32bppBGR101010 and GUID_WICPixelFormat64bppRGBAHalf for now");
 		}
 	} else {
-		blog(LOG_WARNING, "WIC: Failed to GetPixelFormat for file: %s",
-		     file);
+		blog(LOG_WARNING, "WIC: Failed to GetPixelFormat for file: %s", file);
 	}
 
 	return bytes;
 }
 
-static void *wic_image_init(const struct ffmpeg_image *info, const char *file,
-			    enum gs_color_format *format, uint32_t *cx_out,
-			    uint32_t *cy_out, enum gs_color_space *space)
+static void *wic_image_init(const struct ffmpeg_image *info, const char *file, enum gs_color_format *format,
+			    uint32_t *cx_out, uint32_t *cy_out, enum gs_color_space *space)
 {
 	const size_t len = strlen(file);
 	if (len <= 4 && astrcmpi(file + len - 4, ".jxr") != 0) {
-		blog(LOG_WARNING,
-		     "WIC: Only handle JXR for WIC images for now");
+		blog(LOG_WARNING, "WIC: Only handle JXR for WIC images for now");
 		return NULL;
 	}
 
@@ -899,42 +808,32 @@ static void *wic_image_init(const struct ffmpeg_image *info, const char *file,
 	os_utf8_to_wcs_ptr(file, 0, &file_w);
 	if (file_w) {
 		IWICImagingFactory *pFactory = NULL;
-		HRESULT hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL,
-					      CLSCTX_INPROC_SERVER,
-					      &IID_IWICImagingFactory,
-					      &pFactory);
+		HRESULT hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+					      &IID_IWICImagingFactory, &pFactory);
 		if (SUCCEEDED(hr)) {
 			IWICBitmapDecoder *pDecoder = NULL;
-			hr = pFactory->lpVtbl->CreateDecoderFromFilename(
-				pFactory, file_w, NULL, GENERIC_READ,
-				WICDecodeMetadataCacheOnDemand, &pDecoder);
+			hr = pFactory->lpVtbl->CreateDecoderFromFilename(pFactory, file_w, NULL, GENERIC_READ,
+									 WICDecodeMetadataCacheOnDemand, &pDecoder);
 			if (SUCCEEDED(hr)) {
 				IWICBitmapFrameDecode *pFrame = NULL;
-				hr = pDecoder->lpVtbl->GetFrame(pDecoder, 0,
-								&pFrame);
+				hr = pDecoder->lpVtbl->GetFrame(pDecoder, 0, &pFrame);
 				if (SUCCEEDED(hr)) {
-					bytes = wic_image_init_internal(
-						file, pFrame, format, cx_out,
-						cy_out, space);
+					bytes = wic_image_init_internal(file, pFrame, format, cx_out, cy_out, space);
 
 					pFrame->lpVtbl->Release(pFrame);
 				} else {
-					blog(LOG_WARNING,
-					     "WIC: Failed to create IWICBitmapFrameDecode from file: %s",
+					blog(LOG_WARNING, "WIC: Failed to create IWICBitmapFrameDecode from file: %s",
 					     file);
 				}
 
 				pDecoder->lpVtbl->Release(pDecoder);
 			} else {
-				blog(LOG_WARNING,
-				     "WIC: Failed to create IWICBitmapDecoder from file: %s",
-				     file);
+				blog(LOG_WARNING, "WIC: Failed to create IWICBitmapDecoder from file: %s", file);
 			}
 
 			pFactory->lpVtbl->Release(pFactory);
 		} else {
-			blog(LOG_WARNING,
-			     "WIC: Failed to create IWICImagingFactory");
+			blog(LOG_WARNING, "WIC: Failed to create IWICImagingFactory");
 		}
 
 		bfree(file_w);
@@ -946,20 +845,15 @@ static void *wic_image_init(const struct ffmpeg_image *info, const char *file,
 }
 #endif
 
-uint8_t *gs_create_texture_file_data2(const char *file,
-				      enum gs_image_alpha_mode alpha_mode,
-				      enum gs_color_format *format,
-				      uint32_t *cx_out, uint32_t *cy_out)
+uint8_t *gs_create_texture_file_data2(const char *file, enum gs_image_alpha_mode alpha_mode,
+				      enum gs_color_format *format, uint32_t *cx_out, uint32_t *cy_out)
 {
 	enum gs_color_space unused;
-	return gs_create_texture_file_data3(file, alpha_mode, format, cx_out,
-					    cy_out, &unused);
+	return gs_create_texture_file_data3(file, alpha_mode, format, cx_out, cy_out, &unused);
 }
 
-uint8_t *gs_create_texture_file_data3(const char *file,
-				      enum gs_image_alpha_mode alpha_mode,
-				      enum gs_color_format *format,
-				      uint32_t *cx_out, uint32_t *cy_out,
+uint8_t *gs_create_texture_file_data3(const char *file, enum gs_image_alpha_mode alpha_mode,
+				      enum gs_color_format *format, uint32_t *cx_out, uint32_t *cy_out,
 				      enum gs_color_space *space)
 {
 	struct ffmpeg_image image;
@@ -981,8 +875,7 @@ uint8_t *gs_create_texture_file_data3(const char *file,
 
 #ifdef _WIN32
 	if (data == NULL) {
-		data = wic_image_init(&image, file, format, cx_out, cy_out,
-				      space);
+		data = wic_image_init(&image, file, format, cx_out, cy_out, space);
 	}
 #endif
 

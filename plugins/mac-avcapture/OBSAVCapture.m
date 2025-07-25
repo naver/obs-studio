@@ -19,8 +19,11 @@
     self = [super init];
 
     if (self) {
+        //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+        _configurating = false;
+
         CMIOObjectPropertyAddress propertyAddress = {kCMIOHardwarePropertyAllowScreenCaptureDevices,
-			kCMIOObjectPropertyScopeGlobal, kCMIOObjectPropertyElementMain};
+                                                     kCMIOObjectPropertyScopeGlobal, kCMIOObjectPropertyElementMain};
 
         UInt32 allow = 1;
         CMIOObjectSetPropertyData(kCMIOObjectSystemObject, &propertyAddress, 0, NULL, sizeof(allow), &allow);
@@ -75,16 +78,16 @@
             dispatch_async(_sessionQueue, ^{
                 NSError *error = nil;
 
-				OBSAVCapture *instance = weakSelf;
-				if (!instance) {
-					return;
-				}
+                OBSAVCapture *instance = weakSelf;
+                if (!instance) {
+                    return;
+                }
 
-				//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
-				obs_source_t *strong_source = obs_source_get_ref(instance.captureInfo->source);
-				if (!strong_source) {
-					return;
-				}
+                //PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+                obs_source_t *strong_source = obs_source_get_ref(instance.captureInfo->source);
+                if (!strong_source) {
+                    return;
+                }
 
                 if ([instance createSession:&error]) {
                     if ([instance switchCaptureDevice:UUID withError:nil]) {
@@ -103,9 +106,9 @@
                 } else {
                     [instance AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
                 }
-				
-				//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
-				obs_source_release(strong_source);
+
+                //PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+                obs_source_release(strong_source);
             });
         }
     }
@@ -118,8 +121,6 @@
 - (BOOL)createSession:(NSError *__autoreleasing *)error
 {
     AVCaptureSession *session = [[AVCaptureSession alloc] init];
-
-    [session beginConfiguration];
 
     if (!session) {
         if (error) {
@@ -176,6 +177,9 @@
 
         return NO;
     }
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    [session beginConfiguration];
+    self.configurating = true;
 
     if ([session canAddOutput:videoOutput]) {
         [session addOutput:videoOutput];
@@ -188,6 +192,8 @@
     }
 
     [session commitConfiguration];
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    self.configurating = false;
 
     self.session = session;
     self.videoOutput = videoOutput;
@@ -222,7 +228,7 @@
             return NO;
         }
     }
-//PRISM/cao.kewei/20240712/use Objective-C style
+    //PRISM/cao.kewei/20240712/use Objective-C style
     NSString *deviceName = device.localizedName;
     obs_data_set_string(self.captureInfo->settings, "device_name", deviceName.UTF8String);
     obs_data_set_string(self.captureInfo->settings, "device", device.uniqueID.UTF8String);
@@ -260,6 +266,8 @@
     }
 
     [self.session beginConfiguration];
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    self.configurating = true;
 
     if ([self.session canAddInput:deviceInput]) {
         [self.session addInput:deviceInput];
@@ -275,6 +283,8 @@
         }
 
         [self.session commitConfiguration];
+        //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+        self.configurating = false;
         return NO;
     }
 
@@ -293,6 +303,8 @@
 
         [self.session removeInput:deviceInput];
         [self.session commitConfiguration];
+        //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+        self.configurating = false;
         return NO;
     }
 
@@ -313,23 +325,24 @@
 
         FourCharCode subType = [[self.videoOutput.videoSettings
             objectForKey:(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey] unsignedIntValue];
-		
-		//PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel start
-		if ([deviceName containsString: @"PRISM Lens "]) {
-			[self AVCaptureLog:LOG_INFO withFormat:@"Set PRISM Lens out format BGRA"];
-			NSMutableDictionary *videoSettings =
-			[NSMutableDictionary dictionaryWithDictionary:self.videoOutput.videoSettings];
-			
-			[videoSettings setObject:@(kCVPixelFormatType_32BGRA)
-							  forKey:(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey];
-			
-			self.videoOutput.videoSettings = videoSettings;
-			
-			[self.session commitConfiguration];
 
-			return YES;
-		}
-		//PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel end
+        //PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel start
+        if ([deviceName containsString:@"PRISM Lens "]) {
+            [self AVCaptureLog:LOG_INFO withFormat:@"Set PRISM Lens out format BGRA"];
+            NSMutableDictionary *videoSettings =
+                [NSMutableDictionary dictionaryWithDictionary:self.videoOutput.videoSettings];
+
+            [videoSettings setObject:@(kCVPixelFormatType_32BGRA)
+                              forKey:(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey];
+
+            self.videoOutput.videoSettings = videoSettings;
+
+            [self.session commitConfiguration];
+            //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+            self.configurating = false;
+            return YES;
+        }
+        //PRISM/ZhongLing/20230724/#/PPRISM Lens alpha channel end
 
         if ([OBSAVCapture formatFromSubtype:subType] != VIDEO_FORMAT_NONE) {
             [self AVCaptureLog:LOG_DEBUG
@@ -350,14 +363,22 @@
     }
 
     [self.session commitConfiguration];
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    self.configurating = false;
 
     return YES;
 }
 
 - (void)startCaptureSession
 {
-    if (!self.session.running) {
-        [self.session startRunning];
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    if (!self.session.running && !self.configurating) {
+        //PRISM/cao.kewei/20250110/PRISM_PC_NELO-144
+        @try {
+            [self.session startRunning];
+        } @catch (NSException *exception) {
+            [self AVCaptureLog:LOG_ERROR withFormat:@"%@", exception];
+        }
     }
 }
 
@@ -438,8 +459,8 @@
         if ([self.session canSetSessionPreset:preset]) {
             self.session.sessionPreset = preset;
         }
-//PRISM/cao.kewei/20240712/session preset
-		[self checkAndUpdateVideoSettingsWithDevice:self.deviceInput.device preset:preset];
+        //PRISM/cao.kewei/20240712/session preset
+        [self checkAndUpdateVideoSettingsWithDevice:self.deviceInput.device preset:preset];
     } else {
         if (error) {
             NSDictionary *userInfo = @{
@@ -534,17 +555,19 @@
     }
 
     if (!format) {
-        [self AVCaptureLog:LOG_WARNING withFormat:@"Frame rate is not supported: %g FPS (%u/%u)",
-                                                  media_frames_per_second_to_fps(fps), fps.numerator, fps.denominator];
+        [self AVCaptureLog:LOG_DEBUG withFormat:@"Frame rate is not supported: %g FPS (%u/%u)",
+                                                media_frames_per_second_to_fps(fps), fps.numerator, fps.denominator];
         return NO;
     }
 
     [self.session beginConfiguration];
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    self.configurating = true;
 
     self.isDeviceLocked = [self.deviceInput.device lockForConfiguration:error];
 
     if (!self.isDeviceLocked) {
-        [self AVCaptureLog:LOG_WARNING withFormat:@"Could not lock devie for configuration"];
+        [self AVCaptureLog:LOG_DEBUG withFormat:@"Could not lock devie for configuration"];
         return NO;
     }
 
@@ -584,6 +607,8 @@
     self.deviceInput.device.activeVideoMaxFrameDuration = time;
 
     [self.session commitConfiguration];
+    //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+    self.configurating = false;
 
     return YES;
 }
@@ -1044,12 +1069,12 @@
     NSString *presetName = [OBSAVCapture stringFromSettings:self.captureInfo->settings withSetting:@"preset"];
     BOOL isPresetEnabled = obs_data_get_bool(self.captureInfo->settings, "use_preset");
     BOOL isFastPath = self.captureInfo->isFastPath;
-	
-	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
-	obs_source_t *strong_source = obs_source_get_ref(self.captureInfo->source);
-	if (!strong_source) {
-		return;
-	}
+
+    //PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+    obs_source_t *strong_source = obs_source_get_ref(self.captureInfo->source);
+    if (!strong_source) {
+        return;
+    }
 
     if ([self switchCaptureDevice:device.uniqueID withError:&error]) {
         BOOL success;
@@ -1064,23 +1089,22 @@
                 [self startCaptureSession];
             });
         } else {
-		//PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
-		if (error.localizedDescription) {
-			[self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
-		}
-            
+            //PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
+            if (error.localizedDescription) {
+                [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
+            }
         }
     } else {
-	    //PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
-	    if (error.localizedDescription) {
-		    [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
-	    }
+        //PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
+        if (error.localizedDescription) {
+            [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
+        }
     }
 
     obs_source_update_properties(self.captureInfo->source);
-	
-	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
-	obs_source_release(strong_source);
+
+    //PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+    obs_source_release(strong_source);
 }
 
 - (void)deviceDisconnected:(NSNotification *)notification
@@ -1110,12 +1134,12 @@
     dispatch_async(self.sessionQueue, ^{
         OBSAVCapture *instance = weakSelf;
 
-		//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
-		obs_source_t *strong_source = obs_source_get_ref(instance.captureInfo->source);
-		if (strong_source) {
-			[instance stopCaptureSession];
-			obs_source_release(strong_source);
-		}
+        //PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+        obs_source_t *strong_source = obs_source_get_ref(instance.captureInfo->source);
+        if (strong_source) {
+            [instance stopCaptureSession];
+            obs_source_release(strong_source);
+        }
         [instance.session removeInput:instance.deviceInput];
 
         instance.deviceInput = nil;
@@ -1430,44 +1454,46 @@
 
 #pragma mark - PRISM Additions
 //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
-- (NSDictionary<NSString *, NSValue *> *)presetSizes {
-	return @{
-		AVCaptureSessionPreset3840x2160: @(NSMakeSize(3840, 2160)),
-		AVCaptureSessionPreset1920x1080:@(NSMakeSize(1920, 1080)),
-		AVCaptureSessionPreset1280x720: @(NSMakeSize(1280, 720)),
-		AVCaptureSessionPreset960x540: @(NSMakeSize(960, 540)),
-		AVCaptureSessionPreset640x480: @(NSMakeSize(640, 480)),
-		AVCaptureSessionPreset352x288: @(NSMakeSize(352, 288)),
-		AVCaptureSessionPreset320x240: @(NSMakeSize(320, 240)),
-	};
+- (NSDictionary<NSString *, NSValue *> *)presetSizes
+{
+    return @{
+        AVCaptureSessionPreset3840x2160: @(NSMakeSize(3840, 2160)),
+        AVCaptureSessionPreset1920x1080: @(NSMakeSize(1920, 1080)),
+        AVCaptureSessionPreset1280x720: @(NSMakeSize(1280, 720)),
+        AVCaptureSessionPreset960x540: @(NSMakeSize(960, 540)),
+        AVCaptureSessionPreset640x480: @(NSMakeSize(640, 480)),
+        AVCaptureSessionPreset352x288: @(NSMakeSize(352, 288)),
+        AVCaptureSessionPreset320x240: @(NSMakeSize(320, 240)),
+    };
 }
 
-- (void)checkAndUpdateVideoSettingsWithDevice:(AVCaptureDevice *)device preset:(NSString *)preset {
-	NSString *deviceName = device.localizedName;
-	// for PRISM Lens virtual camera only
-	if ([deviceName containsString:@"PRISM Lens "]) {
-		// copy video settings to update
-		NSMutableDictionary *videoSettings = [self.videoOutput.videoSettings mutableCopy];
-		// get current pixel format from video setting
-		OSType pixelFormat = [videoSettings[(__bridge NSString *)kCVPixelBufferPixelFormatTypeKey] unsignedIntValue];
-		// handle 32BGRA pixel format only
-		if (pixelFormat == kCVPixelFormatType_32BGRA) {
-			// get the width and height for preset
-			NSValue *resolutionValue = [self presetSizes][preset];
-			if (!resolutionValue) {
-				// if preset not in the list, give it a default value
-				resolutionValue = [self presetSizes][AVCaptureSessionPreset1920x1080];
-			}
-			
-			NSSize resolution = resolutionValue.sizeValue;
-			// assign width and height to video settings
-			videoSettings[(__bridge NSString *)kCVPixelBufferWidthKey] = @(resolution.width);
-			videoSettings[(__bridge NSString *)kCVPixelBufferHeightKey] = @(resolution.height);
-			
-			// set video settings
-			self.videoOutput.videoSettings = videoSettings;
-		}
-	}
+- (void)checkAndUpdateVideoSettingsWithDevice:(AVCaptureDevice *)device preset:(NSString *)preset
+{
+    NSString *deviceName = device.localizedName;
+    // for PRISM Lens virtual camera only
+    if ([deviceName containsString:@"PRISM Lens "]) {
+        // copy video settings to update
+        NSMutableDictionary *videoSettings = [self.videoOutput.videoSettings mutableCopy];
+        // get current pixel format from video setting
+        OSType pixelFormat = [videoSettings[(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey] unsignedIntValue];
+        // handle 32BGRA pixel format only
+        if (pixelFormat == kCVPixelFormatType_32BGRA) {
+            // get the width and height for preset
+            NSValue *resolutionValue = [self presetSizes][preset];
+            if (!resolutionValue) {
+                // if preset not in the list, give it a default value
+                resolutionValue = [self presetSizes][AVCaptureSessionPreset1920x1080];
+            }
+
+            NSSize resolution = resolutionValue.sizeValue;
+            // assign width and height to video settings
+            videoSettings[(__bridge NSString *) kCVPixelBufferWidthKey] = @(resolution.width);
+            videoSettings[(__bridge NSString *) kCVPixelBufferHeightKey] = @(resolution.height);
+
+            // set video settings
+            self.videoOutput.videoSettings = videoSettings;
+        }
+    }
 }
 //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
 

@@ -43,6 +43,8 @@ struct ffmpeg_cfg {
 	const char *password;
 	const char *stream_id;
 	const char *encrypt_passphrase;
+	bool is_srt;
+	bool is_rist;
 };
 
 struct ffmpeg_audio_info {
@@ -89,7 +91,7 @@ struct ffmpeg_output {
 	obs_output_t *output;
 	volatile bool active;
 	struct ffmpeg_data ff_data;
-	
+
 	pthread_mutex_t video_mutex;
 	pthread_mutex_t audio_mutex;
 

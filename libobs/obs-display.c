@@ -22,20 +22,17 @@
 #include "pls/pls-base.h"
 #include "pls/pls-obs-api.h"
 
-bool obs_display_init(struct obs_display *display,
-		      const struct gs_init_data *graphics_data)
+bool obs_display_init(struct obs_display *display, const struct gs_init_data *graphics_data)
 {
 	//PRISM/WuLongyue/20231214/#3427/add logs
-	blog(LOG_INFO, "%p-%s: [Enter] graphics_data=%p", display, __FUNCTION__,
-	     graphics_data);
+	blog(LOG_INFO, "%p-%s: [Enter] graphics_data=%p", display, __FUNCTION__, graphics_data);
 
 	pthread_mutex_init_value(&display->draw_callbacks_mutex);
 	pthread_mutex_init_value(&display->draw_info_mutex);
 
 #if defined(_WIN32)
 	/* Conservative test for NVIDIA flickering in multi-GPU setups */
-	display->use_clear_workaround = gs_get_adapter_count() > 1 &&
-					!gs_can_adapter_fast_clear();
+	display->use_clear_workaround = gs_get_adapter_count() > 1 && !gs_can_adapter_fast_clear();
 #elif defined(__APPLE__)
 	/* Apple Silicon GL driver doesn't seem to track SRGB clears correctly */
 	display->use_clear_workaround = true;
@@ -76,14 +73,13 @@ bool obs_display_init(struct obs_display *display,
 	return true;
 }
 
-obs_display_t *obs_display_create(const struct gs_init_data *graphics_data,
-				  uint32_t background_color)
+obs_display_t *obs_display_create(const struct gs_init_data *graphics_data, uint32_t background_color)
 {
 	struct obs_display *display = bzalloc(sizeof(struct obs_display));
 
 	//PRISM/WuLongyue/20231214/#3427/add logs
-	blog(LOG_INFO, "%p-%s: [Enter] graphics_data=%p, background_color=%u",
-	     display, __FUNCTION__, graphics_data, background_color);
+	blog(LOG_INFO, "%p-%s: [Enter] graphics_data=%p, background_color=%u", display, __FUNCTION__, graphics_data,
+	     background_color);
 
 	gs_enter_context(obs->video.graphics);
 
@@ -116,14 +112,19 @@ void obs_display_free_macos(void *context)
 {
 	if (!context)
 		return;
-	
+
+	//PRISM/Keven/20250409/none/crash fix
+	if (!obs) {
+		return;
+	}
+
 	bool is_app_exiting = pls_get_obs_exiting();
-	
+
 	obs_display_t *display = context;
 	obs_enter_graphics();
 	bool is_destroyed = gs_swapchain_destroy_if_need(display->swap, is_app_exiting);
 	obs_leave_graphics();
-	
+
 	if (!is_destroyed) {
 		//PRISM/Zhongling/20230816/#2251/crash on `gl_update`
 		os_async_on_main_queue(display, obs_display_free_macos);
@@ -138,7 +139,7 @@ void obs_display_free(obs_display_t *display)
 	pthread_mutex_destroy(&display->draw_info_mutex);
 	da_free(display->draw_callbacks);
 	obs_leave_graphics();
-	
+
 	obs_display_free_macos(display);
 }
 #else
@@ -152,7 +153,7 @@ void obs_display_free(obs_display_t *display)
 	pthread_mutex_destroy(&display->draw_callbacks_mutex);
 	pthread_mutex_destroy(&display->draw_info_mutex);
 	da_free(display->draw_callbacks);
-	
+
 	if (display->swap) {
 		gs_swapchain_destroy(display->swap);
 		display->swap = NULL;
@@ -162,7 +163,6 @@ void obs_display_free(obs_display_t *display)
 	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 #endif
-
 
 void obs_display_destroy(obs_display_t *display)
 {
@@ -219,9 +219,7 @@ void obs_display_update_color_space(obs_display_t *display)
 	pthread_mutex_unlock(&display->draw_info_mutex);
 }
 
-void obs_display_add_draw_callback(obs_display_t *display,
-				   void (*draw)(void *param, uint32_t cx,
-						uint32_t cy),
+void obs_display_add_draw_callback(obs_display_t *display, void (*draw)(void *param, uint32_t cx, uint32_t cy),
 				   void *param)
 {
 	//PRISM/WuLongyue/20231214/#3427/add logs
@@ -240,14 +238,11 @@ void obs_display_add_draw_callback(obs_display_t *display,
 	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 
-void obs_display_remove_draw_callback(obs_display_t *display,
-				      void (*draw)(void *param, uint32_t cx,
-						   uint32_t cy),
+void obs_display_remove_draw_callback(obs_display_t *display, void (*draw)(void *param, uint32_t cx, uint32_t cy),
 				      void *param)
 {
 	//PRISM/WuLongyue/20231214/#3427/add logs
-	blog(LOG_INFO, "%p-%s: [Enter] draw=%p, param=%p", display,
-	     __FUNCTION__, draw, param);
+	blog(LOG_INFO, "%p-%s: [Enter] draw=%p, param=%p", display, __FUNCTION__, draw, param);
 
 	if (!display)
 		return;
@@ -262,9 +257,7 @@ void obs_display_remove_draw_callback(obs_display_t *display,
 	blog(LOG_INFO, "%p-%s: [Exit]", display, __FUNCTION__);
 }
 
-static inline bool render_display_begin(struct obs_display *display,
-					uint32_t cx, uint32_t cy,
-					bool update_color_space)
+static inline bool render_display_begin(struct obs_display *display, uint32_t cx, uint32_t cy, bool update_color_space)
 {
 	struct vec4 clear_color;
 
@@ -285,8 +278,7 @@ static inline bool render_display_begin(struct obs_display *display,
 		if (gs_get_color_space() == GS_CS_SRGB)
 			vec4_from_rgba(&clear_color, display->background_color);
 		else
-			vec4_from_rgba_srgb(&clear_color,
-					    display->background_color);
+			vec4_from_rgba_srgb(&clear_color, display->background_color);
 		clear_color.w = 1.0f;
 
 		const bool use_clear_workaround = display->use_clear_workaround;
@@ -304,11 +296,8 @@ static inline bool render_display_begin(struct obs_display *display,
 		gs_set_viewport(0, 0, cx, cy);
 
 		if (use_clear_workaround) {
-			gs_effect_t *const solid_effect =
-				obs->video.solid_effect;
-			gs_effect_set_vec4(gs_effect_get_param_by_name(
-						   solid_effect, "color"),
-					   &clear_color);
+			gs_effect_t *const solid_effect = obs->video.solid_effect;
+			gs_effect_set_vec4(gs_effect_get_param_by_name(solid_effect, "color"), &clear_color);
 			while (gs_effect_loop(solid_effect, "Solid"))
 				gs_draw_sprite(NULL, 0, cx, cy);
 		}
@@ -349,9 +338,8 @@ void render_display(struct obs_display *display)
 
 		//PRISM/Zengqin/20240528/none/add display draw profile
 		if (!display->display_draw_profile) {
-			display->display_draw_profile = profile_store_name(
-						obs_get_profiler_name_store(),
-						"render_display_draw_callback(%p)", display);
+			display->display_draw_profile = profile_store_name(obs_get_profiler_name_store(),
+									   "render_display_draw_callback(%p)", display);
 		}
 		//PRISM/Zengqin/20240528/none/add display draw profile
 		if (display->display_draw_profile)
@@ -378,9 +366,8 @@ void render_display(struct obs_display *display)
 
 		//PRISM/Zengqin/20240528/none/add display present profile
 		if (!display->display_present_profile) {
-			display->display_present_profile = profile_store_name(
-				obs_get_profiler_name_store(),
-				"display_gs_present(%p)", display);
+			display->display_present_profile =
+				profile_store_name(obs_get_profiler_name_store(), "display_gs_present(%p)", display);
 		}
 		//PRISM/Zengqin/20240528/none/add display present profile
 		if (display->display_present_profile)

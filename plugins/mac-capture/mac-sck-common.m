@@ -37,8 +37,9 @@ bool is_screen_capture_available(void)
             errorMessage = @"Stream stopped as no capture source was not found.";
             break;
         default:
-			//PRISM/cao.kewei/20240223/#/NSString
-            errorMessage = [NSString stringWithFormat:@"Stream stopped with error %ld (\"%@\")", error.code, error.localizedDescription];
+            //PRISM/cao.kewei/20240223/#/NSString
+            errorMessage = [NSString
+                stringWithFormat:@"Stream stopped with error %ld (\"%@\")", error.code, error.localizedDescription];
             break;
     }
 
@@ -69,12 +70,12 @@ void screen_capture_build_content_list(struct screen_capture *sc, bool display_c
         os_sem_post(sc->shareable_content_available);
     };
 
-	os_sem_wait(sc->shareable_content_available);
-	//PRISM/cao.kewei/20241205/crash fix for error case
-	if (sc->shareable_content != NULL) {
+    os_sem_wait(sc->shareable_content_available);
+    //PRISM/cao.kewei/20241205/crash fix for error case
+    if (sc->shareable_content != NULL) {
         [sc->shareable_content release];
-		sc->shareable_content = NULL;
-	}
+        sc->shareable_content = NULL;
+    }
     BOOL onScreenWindowsOnly = (display_capture) ? NO : !sc->show_hidden_windows;
     [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:onScreenWindowsOnly
                                                  completionHandler:new_content_received];
@@ -82,13 +83,13 @@ void screen_capture_build_content_list(struct screen_capture *sc, bool display_c
 
 bool build_display_list(struct screen_capture *sc, obs_properties_t *props)
 {
-	os_sem_wait(sc->shareable_content_available);
+    os_sem_wait(sc->shareable_content_available);
 
-	//PRISM/cao.kewei/20241205/crash fix for error case
-	if (sc->shareable_content == NULL) {
-		os_sem_post(sc->shareable_content_available);
-		return false;
-	}
+    //PRISM/cao.kewei/20241205/crash fix for error case
+    if (sc->shareable_content == NULL) {
+        os_sem_post(sc->shareable_content_available);
+        return false;
+    }
 
     obs_property_t *display_list = obs_properties_get(props, "display_uuid");
     obs_property_list_clear(display_list);
@@ -132,13 +133,13 @@ bool build_display_list(struct screen_capture *sc, obs_properties_t *props)
 
 bool build_window_list(struct screen_capture *sc, obs_properties_t *props)
 {
-	os_sem_wait(sc->shareable_content_available);
+    os_sem_wait(sc->shareable_content_available);
 
-	//PRISM/cao.kewei/20241205/crash fix for error case
-	if (sc->shareable_content == NULL) {
-		os_sem_post(sc->shareable_content_available);
-		return false;
-	}
+    //PRISM/cao.kewei/20241205/crash fix for error case
+    if (sc->shareable_content == NULL) {
+        os_sem_post(sc->shareable_content_available);
+        return false;
+    }
 
     obs_property_t *window_list = obs_properties_get(props, "window");
     obs_property_list_clear(window_list);
@@ -184,13 +185,13 @@ bool build_window_list(struct screen_capture *sc, obs_properties_t *props)
 
 bool build_application_list(struct screen_capture *sc, obs_properties_t *props)
 {
-	os_sem_wait(sc->shareable_content_available);
+    os_sem_wait(sc->shareable_content_available);
 
-	//PRISM/cao.kewei/20241205/crash fix for error case
-	if (sc->shareable_content == NULL) {
-		os_sem_post(sc->shareable_content_available);
-		return false;
-	}
+    //PRISM/cao.kewei/20241205/crash fix for error case
+    if (sc->shareable_content == NULL) {
+        os_sem_post(sc->shareable_content_available);
+        return false;
+    }
 
     obs_property_t *application_list = obs_properties_get(props, "application");
     obs_property_list_clear(application_list);

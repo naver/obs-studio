@@ -17,11 +17,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "../headers/VSTPlugin.h"
 #import <AppKit/AppKit.h>
+//PRISM/aiguanghua/20250331/PRISM_PC_NELO-225/unloadLibrary crash
+#import "VSTPluginMacWeakBundle.h"
 
 AEffect *VSTPlugin::loadEffect(const std::string &path)
 {
     UNUSED_PARAMETER(path);
-    
+
     AEffect *newEffect = NULL;
 
     // Create a path to the bundle
@@ -73,6 +75,13 @@ AEffect *VSTPlugin::loadEffect(const std::string &path)
     }
 
     newEffect->user = this;
+    //PRISM/aiguanghua/20250331/PRISM_PC_NELO-225/unloadLibrary crash
+    VSTPluginMacWeakBundle *bundleHandle = [[VSTPluginMacWeakBundle alloc] initWithCFBundle:bundle];
+    weakBundlePtr = (__bridge void *) bundleHandle;
+    NSString *pointer =
+        [NSString stringWithFormat:@"Mac VSTPLguin Process: %p loadEffect, bundle is %@, weakBundlePtr is %@", this,
+                                   bundle, weakBundlePtr];
+    blog(LOG_INFO, "%s", [pointer UTF8String]);
 
     // Clean up
     CFRelease(pluginPathStringRef);
@@ -83,9 +92,20 @@ AEffect *VSTPlugin::loadEffect(const std::string &path)
 
 void VSTPlugin::unloadLibrary()
 {
-    if (bundle) {
-        CFRelease(bundle);
-        bundle = NULL;
+    //PRISM/aiguanghua/20250331/PRISM_PC_NELO-225/unloadLibrary crash
+    if (weakBundlePtr) {
+        VSTPluginMacWeakBundle *macPlugin = (__bridge VSTPluginMacWeakBundle *) weakBundlePtr;
+        NSString *pointer = [NSString
+            stringWithFormat:@"Mac VSTPLguin Proces: %p unloadLibrary, macPlugin bundleIsValid is %s, macPlugin is %@",
+                             this, [macPlugin bundleIsValid] ? "valid" : "invalid", macPlugin];
+        blog(LOG_INFO, "%s", [pointer UTF8String]);
+
+        if ([macPlugin bundleIsValid]) {
+            CFRelease(bundle);
+            bundle = NULL;
+        }
+        [macPlugin release];
+        weakBundlePtr = nullptr;
     }
 }
 
@@ -98,5 +118,6 @@ void VSTPlugin::unloadLibrary()
 // PRISM/Xiewei/20231101/None/get obs-vst library path on MacOS
 std::string getVstLibraryPath()
 {
-    return std::string([NSBundle mainBundle].builtInPlugInsPath.UTF8String).append("/obs-vst.plugin/Contents/MacOS/obs-vst");
+    return std::string([NSBundle mainBundle].builtInPlugInsPath.UTF8String)
+        .append("/obs-vst.plugin/Contents/MacOS/obs-vst");
 }

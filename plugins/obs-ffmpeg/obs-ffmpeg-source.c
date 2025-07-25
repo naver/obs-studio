@@ -23,12 +23,11 @@
 #include "obs-ffmpeg-formats.h"
 
 #include <media-playback/media-playback.h>
+#include <pls/pls-source.h>
 
-#define FF_LOG_S(source, level, format, ...)        \
-	blog(level, "[Media Source '%s']: " format, \
-	     obs_source_get_name(source), ##__VA_ARGS__)
-#define FF_BLOG(level, format, ...) \
-	FF_LOG_S(s->source, level, format, ##__VA_ARGS__)
+#define FF_LOG_S(source, level, format, ...) \
+	blog(level, "[Media Source '%s']: " format, obs_source_get_name(source), ##__VA_ARGS__)
+#define FF_BLOG(level, format, ...) FF_LOG_S(s->source, level, format, ##__VA_ARGS__)
 
 struct ffmpeg_source {
 	media_playback_t *media;
@@ -69,6 +68,10 @@ struct ffmpeg_source {
 
 	//PRISM/zengqin/20240111/#2943 #2940 #3682 #3882/for bgm source
 	bool bgm_source;
+
+	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+	// if a source is force released, we can not allow it to play again unless its file path is reset
+	bool is_force_released;
 };
 
 // Used to safely cancel and join any active reconnect threads
@@ -94,22 +97,19 @@ static void set_media_state(void *data, enum obs_media_state state)
 	s->state = state;
 }
 
-static bool is_local_file_modified(obs_properties_t *props,
-				   obs_property_t *prop, obs_data_t *settings)
+static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
 {
 	UNUSED_PARAMETER(prop);
 
 	bool enabled = obs_data_get_bool(settings, "is_local_file");
 	obs_property_t *input = obs_properties_get(props, "input");
-	obs_property_t *input_format =
-		obs_properties_get(props, "input_format");
+	obs_property_t *input_format = obs_properties_get(props, "input_format");
 	obs_property_t *local_file = obs_properties_get(props, "local_file");
 	obs_property_t *looping = obs_properties_get(props, "looping");
 	obs_property_t *buffering = obs_properties_get(props, "buffering_mb");
 	obs_property_t *seekable = obs_properties_get(props, "seekable");
 	obs_property_t *speed = obs_properties_get(props, "speed_percent");
-	obs_property_t *reconnect_delay_sec =
-		obs_properties_get(props, "reconnect_delay_sec");
+	obs_property_t *reconnect_delay_sec = obs_properties_get(props, "reconnect_delay_sec");
 	obs_property_set_visible(input, !enabled);
 	obs_property_set_visible(input_format, !enabled);
 	obs_property_set_visible(buffering, !enabled);
@@ -137,8 +137,7 @@ static void ffmpeg_source_defaults(obs_data_t *settings)
 
 static const char *media_filter =
 	" (*.mp4 *.m4v *.ts *.mov *.mxf *.flv *.mkv *.avi *.mp3 *.ogg *.aac *.wav *.gif *.webm);;";
-static const char *video_filter =
-	" (*.mp4 *.m4v *.ts *.mov *.mxf *.flv *.mkv *.avi *.gif *.webm);;";
+static const char *video_filter = " (*.mp4 *.m4v *.ts *.mov *.mxf *.flv *.mkv *.avi *.gif *.webm);;";
 static const char *audio_filter = " (*.mp3 *.aac *.ogg *.wav);;";
 
 static obs_properties_t *ffmpeg_source_getproperties(void *data)
@@ -153,8 +152,7 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 
 	obs_property_t *prop;
 	// use this when obs allows non-readonly paths
-	prop = obs_properties_add_bool(props, "is_local_file",
-				       obs_module_text("LocalFile"));
+	prop = obs_properties_add_bool(props, "is_local_file", obs_module_text("LocalFile"));
 
 	obs_property_set_modified_callback(prop, is_local_file_modified);
 
@@ -177,79 +175,54 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 			dstr_resize(&path, slash - path.array + 1);
 	}
 
-	obs_properties_add_path(props, "local_file",
-				obs_module_text("LocalFile"), OBS_PATH_FILE,
-				filter.array, path.array);
+	obs_properties_add_path(props, "local_file", obs_module_text("LocalFile"), OBS_PATH_FILE, filter.array,
+				path.array);
 	dstr_free(&filter);
 	dstr_free(&path);
 
 	obs_properties_add_bool(props, "looping", obs_module_text("Looping"));
 
-	obs_properties_add_bool(props, "restart_on_activate",
-				obs_module_text("RestartWhenActivated"));
+	obs_properties_add_bool(props, "restart_on_activate", obs_module_text("RestartWhenActivated"));
 
-	prop = obs_properties_add_int_slider(props, "buffering_mb",
-					     obs_module_text("BufferingMB"), 0,
-					     16, 1);
+	prop = obs_properties_add_int_slider(props, "buffering_mb", obs_module_text("BufferingMB"), 0, 16, 1);
 	obs_property_int_set_suffix(prop, " MB");
 
-	obs_properties_add_text(props, "input", obs_module_text("Input"),
-				OBS_TEXT_DEFAULT);
+	obs_properties_add_text(props, "input", obs_module_text("Input"), OBS_TEXT_DEFAULT);
 
-	obs_properties_add_text(props, "input_format",
-				obs_module_text("InputFormat"),
-				OBS_TEXT_DEFAULT);
+	obs_properties_add_text(props, "input_format", obs_module_text("InputFormat"), OBS_TEXT_DEFAULT);
 
-	prop = obs_properties_add_int_slider(
-		props, "reconnect_delay_sec",
-		obs_module_text("ReconnectDelayTime"), 1, 60, 1);
+	prop = obs_properties_add_int_slider(props, "reconnect_delay_sec", obs_module_text("ReconnectDelayTime"), 1, 60,
+					     1);
 	obs_property_int_set_suffix(prop, " S");
 
-	obs_properties_add_bool(props, "hw_decode",
-				obs_module_text("HardwareDecode"));
+	obs_properties_add_bool(props, "hw_decode", obs_module_text("HardwareDecode"));
 
-	obs_properties_add_bool(props, "clear_on_media_end",
-				obs_module_text("ClearOnMediaEnd"));
+	obs_properties_add_bool(props, "clear_on_media_end", obs_module_text("ClearOnMediaEnd"));
 
-	prop = obs_properties_add_bool(
-		props, "close_when_inactive",
-		obs_module_text("CloseFileWhenInactive"));
+	prop = obs_properties_add_bool(props, "close_when_inactive", obs_module_text("CloseFileWhenInactive"));
 
-	obs_property_set_long_description(
-		prop, obs_module_text("CloseFileWhenInactive.ToolTip"));
+	obs_property_set_long_description(prop, obs_module_text("CloseFileWhenInactive.ToolTip"));
 
-	prop = obs_properties_add_int_slider(props, "speed_percent",
-					     obs_module_text("SpeedPercentage"),
-					     1, 200, 1);
+	prop = obs_properties_add_int_slider(props, "speed_percent", obs_module_text("SpeedPercentage"), 1, 200, 1);
 	obs_property_int_set_suffix(prop, "%");
 
-	prop = obs_properties_add_list(props, "color_range",
-				       obs_module_text("ColorRange"),
-				       OBS_COMBO_TYPE_LIST,
+	prop = obs_properties_add_list(props, "color_range", obs_module_text("ColorRange"), OBS_COMBO_TYPE_LIST,
 				       OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(prop, obs_module_text("ColorRange.Auto"),
-				  VIDEO_RANGE_DEFAULT);
-	obs_property_list_add_int(prop, obs_module_text("ColorRange.Partial"),
-				  VIDEO_RANGE_PARTIAL);
-	obs_property_list_add_int(prop, obs_module_text("ColorRange.Full"),
-				  VIDEO_RANGE_FULL);
+	obs_property_list_add_int(prop, obs_module_text("ColorRange.Auto"), VIDEO_RANGE_DEFAULT);
+	obs_property_list_add_int(prop, obs_module_text("ColorRange.Partial"), VIDEO_RANGE_PARTIAL);
+	obs_property_list_add_int(prop, obs_module_text("ColorRange.Full"), VIDEO_RANGE_FULL);
 
-	obs_properties_add_bool(props, "linear_alpha",
-				obs_module_text("LinearAlpha"));
+	obs_properties_add_bool(props, "linear_alpha", obs_module_text("LinearAlpha"));
 
 	obs_properties_add_bool(props, "seekable", obs_module_text("Seekable"));
 
-	prop = obs_properties_add_text(props, "ffmpeg_options",
-				       obs_module_text("FFmpegOpts"),
-				       OBS_TEXT_DEFAULT);
-	obs_property_set_long_description(
-		prop, obs_module_text("FFmpegOpts.ToolTip.Source"));
+	prop = obs_properties_add_text(props, "ffmpeg_options", obs_module_text("FFmpegOpts"), OBS_TEXT_DEFAULT);
+	obs_property_set_long_description(prop, obs_module_text("FFmpegOpts.ToolTip.Source"));
 
 	return props;
 }
 
-static void dump_source_info(struct ffmpeg_source *s, const char *input,
-			     const char *input_format)
+static void dump_source_info(struct ffmpeg_source *s, const char *input, const char *input_format)
 {
 	if (!s->log_changes)
 		return;
@@ -266,14 +239,10 @@ static void dump_source_info(struct ffmpeg_source *s, const char *input,
 		"\tclose_when_inactive:     %s\n"
 		"\tfull_decode:             %s\n"
 		"\tffmpeg_options:          %s",
-		input ? input : "(null)",
-		input_format ? input_format : "(null)", s->speed_percent,
-		s->is_looping ? "yes" : "no", s->is_linear_alpha ? "yes" : "no",
-		s->is_hw_decoding ? "yes" : "no",
-		s->is_clear_on_media_end ? "yes" : "no",
-		s->restart_on_activate ? "yes" : "no",
-		s->close_when_inactive ? "yes" : "no",
-		s->full_decode ? "yes" : "no", s->ffmpeg_options);
+		input ? input : "(null)", input_format ? input_format : "(null)", s->speed_percent,
+		s->is_looping ? "yes" : "no", s->is_linear_alpha ? "yes" : "no", s->is_hw_decoding ? "yes" : "no",
+		s->is_clear_on_media_end ? "yes" : "no", s->restart_on_activate ? "yes" : "no",
+		s->close_when_inactive ? "yes" : "no", s->full_decode ? "yes" : "no", s->ffmpeg_options);
 }
 
 static void get_frame(void *opaque, struct obs_source_frame *f)
@@ -350,6 +319,8 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 			.full_decode = s->full_decode,
 			//PRISM/zengqin/20240111/#2943 #2940 #3682 #3882/for bgm source
 			.bgm_source = s->bgm_source,
+			//PRISM/chenguoxi/20241216/PRISM_PC-1778/audio has cover
+			.source = s->source,
 		};
 
 		s->media = media_playback_create(&info);
@@ -365,8 +336,7 @@ static void ffmpeg_source_start(struct ffmpeg_source *s)
 		return;
 
 	media_playback_play(s->media, s->is_looping, s->reconnecting);
-	if (s->is_local_file && media_playback_has_video(s->media) &&
-	    (s->is_clear_on_media_end || s->is_looping))
+	if (s->is_local_file && media_playback_has_video(s->media) && (s->is_clear_on_media_end || s->is_looping))
 		obs_source_show_preloaded_video(s->source);
 	else
 		obs_source_output_video(s->source, NULL);
@@ -379,8 +349,7 @@ static void *ffmpeg_source_reconnect(void *data)
 {
 	struct ffmpeg_source *s = data;
 
-	int ret = os_event_timedwait(s->reconnect_stop_event,
-				     s->reconnect_delay_sec * 1000);
+	int ret = os_event_timedwait(s->reconnect_stop_event, s->reconnect_delay_sec * 1000);
 	if (ret == 0 || s->media)
 		return NULL;
 
@@ -418,8 +387,7 @@ static void ffmpeg_source_tick(void *data, float seconds)
 				s->reconnect_thread_valid = false;
 				os_event_reset(s->reconnect_stop_event);
 			}
-			if (pthread_create(&s->reconnect_thread, NULL,
-					   ffmpeg_source_reconnect, s) != 0) {
+			if (pthread_create(&s->reconnect_thread, NULL, ffmpeg_source_reconnect, s) != 0) {
 				FF_BLOG(LOG_WARNING, "Could not create "
 						     "reconnect thread");
 				pthread_mutex_unlock(&s->reconnect_mutex);
@@ -433,6 +401,29 @@ static void ffmpeg_source_tick(void *data, float seconds)
 
 #define RIST_PROTO "rist"
 
+
+//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+static void ffmpeg_source_stop(void *data);
+void ffmpeg_free_resource(void *source)
+{
+	struct ffmpeg_source *s = source;
+
+	if (s == NULL)
+		return;
+
+	if (!s->is_local_file)
+		return;
+
+	ffmpeg_source_stop(s);
+
+	s->is_force_released = true;
+
+	if (s->media) {
+		media_playback_destroy(s->media);
+		s->media = NULL;
+	}
+}
+
 static void ffmpeg_source_update(void *data, obs_data_t *settings)
 {
 	struct ffmpeg_source *s = data;
@@ -443,8 +434,8 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	bool is_track_matte = obs_data_get_bool(settings, "is_track_matte");
 	//PRISM/ZengQin/20231130/#3311/play bgm when path is same --start
 	s->bgm_source = obs_data_get_bool(settings, "bgm_source");
-	bool should_restart_media = (is_local_file != s->is_local_file) ||
-				    (is_stinger != s->is_stinger) || s->bgm_source;
+	bool should_restart_media = (is_local_file != s->is_local_file) || (is_stinger != s->is_stinger) ||
+				    s->bgm_source;
 	//PRISM/ZengQin/20231130/#3311/play bgm when path is same --end
 
 	const char *input;
@@ -470,13 +461,17 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 		should_restart_media = true;
 		input = obs_data_get_string(settings, "input");
 		input_format = obs_data_get_string(settings, "input_format");
-		s->reconnect_delay_sec =
-			(int)obs_data_get_int(settings, "reconnect_delay_sec");
-		s->reconnect_delay_sec = s->reconnect_delay_sec == 0
-						 ? 10
-						 : s->reconnect_delay_sec;
+		s->reconnect_delay_sec = (int)obs_data_get_int(settings, "reconnect_delay_sec");
+		s->reconnect_delay_sec = s->reconnect_delay_sec == 0 ? 10 : s->reconnect_delay_sec;
 		is_looping = false;
 	}
+
+	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources --start
+	if (s->input == NULL  || (input != NULL && strcmp(s->input, input) != 0)) {
+		// the source is reset
+		s->is_force_released = false;
+	}
+	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources --end
 
 	stop_reconnect_thread(s);
 
@@ -488,17 +483,14 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	ffmpeg_options = obs_data_get_string(settings, "ffmpeg_options");
 
 	/* Restart media source if these properties are changed */
-	if (s->is_hw_decoding != is_hw_decoding || s->range != range ||
-	    s->speed_percent != speed_percent ||
-	    (s->ffmpeg_options &&
-	     strcmp(s->ffmpeg_options, ffmpeg_options) != 0))
+	if (s->is_hw_decoding != is_hw_decoding || s->range != range || s->speed_percent != speed_percent ||
+	    (s->ffmpeg_options && strcmp(s->ffmpeg_options, ffmpeg_options) != 0))
 		should_restart_media = true;
 
 	/* If media has ended and user enables looping, user expects that it restarts.
 	 * Should still check if is_looping was changed, because users may stop them
 	 * intentionally, which is why we only check for ENDED and not STOPPED. */
-	if (active && s->state == OBS_MEDIA_STATE_ENDED && is_looping == true &&
-	    s->is_looping == false) {
+	if (active && s->state == OBS_MEDIA_STATE_ENDED && is_looping == true && s->is_looping == false) {
 		should_restart_media = true;
 	}
 
@@ -506,18 +498,15 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	bfree(s->ffmpeg_options);
 
 	s->is_looping = is_looping;
-	s->close_when_inactive =
-		obs_data_get_bool(settings, "close_when_inactive");
+	s->close_when_inactive = obs_data_get_bool(settings, "close_when_inactive");
 	s->input = input ? bstrdup(input) : NULL;
 	s->input_format = input_format ? bstrdup(input_format) : NULL;
 	s->is_hw_decoding = is_hw_decoding;
 	s->full_decode = obs_data_get_bool(settings, "full_decode");
-	s->is_clear_on_media_end =
-		obs_data_get_bool(settings, "clear_on_media_end");
-	s->restart_on_activate =
-		!astrcmpi_n(input, RIST_PROTO, sizeof(RIST_PROTO) - 1)
-			? false
-			: obs_data_get_bool(settings, "restart_on_activate");
+	s->is_clear_on_media_end = obs_data_get_bool(settings, "clear_on_media_end");
+	s->restart_on_activate = !astrcmpi_n(input, RIST_PROTO, sizeof(RIST_PROTO) - 1)
+					 ? false
+					 : obs_data_get_bool(settings, "restart_on_activate");
 	s->range = range;
 	is_linear_alpha = obs_data_get_bool(settings, "linear_alpha");
 	s->is_linear_alpha = is_linear_alpha;
@@ -533,7 +522,6 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	if (s->speed_percent < 1 || s->speed_percent > 200)
 		s->speed_percent = 100;
 
-
 	//PRISM/ZengQin/20230915/#2587/push frame to refresh aynsc texture
 	if (!s->input || (s->input && !strlen(s->input))) {
 		struct obs_source_frame frame;
@@ -547,7 +535,7 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 		obs_source_frame_free(&frame);
 	}
 
-    if (s->media && should_restart_media) {
+	if (s->media && should_restart_media) {
 		media_playback_destroy(s->media);
 		s->media = NULL;
 	}
@@ -571,8 +559,7 @@ static const char *ffmpeg_source_getname(void *unused)
 	return obs_module_text("FFmpegSource");
 }
 
-static void restart_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
-			   bool pressed)
+static void restart_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hotkey);
@@ -617,8 +604,7 @@ static void get_nb_frames(void *data, calldata_t *cd)
 	calldata_set_int(cd, "num_frames", frames);
 }
 
-static bool ffmpeg_source_play_hotkey(void *data, obs_hotkey_pair_id id,
-				      obs_hotkey_t *hotkey, bool pressed)
+static bool ffmpeg_source_play_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hotkey);
@@ -628,16 +614,14 @@ static bool ffmpeg_source_play_hotkey(void *data, obs_hotkey_pair_id id,
 
 	struct ffmpeg_source *s = data;
 
-	if (s->state == OBS_MEDIA_STATE_PLAYING ||
-	    !obs_source_showing(s->source))
+	if (s->state == OBS_MEDIA_STATE_PLAYING || !obs_source_showing(s->source))
 		return false;
 
 	obs_source_media_play_pause(s->source, false);
 	return true;
 }
 
-static bool ffmpeg_source_pause_hotkey(void *data, obs_hotkey_pair_id id,
-				       obs_hotkey_t *hotkey, bool pressed)
+static bool ffmpeg_source_pause_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hotkey);
@@ -647,16 +631,14 @@ static bool ffmpeg_source_pause_hotkey(void *data, obs_hotkey_pair_id id,
 
 	struct ffmpeg_source *s = data;
 
-	if (s->state != OBS_MEDIA_STATE_PLAYING ||
-	    !obs_source_showing(s->source))
+	if (s->state != OBS_MEDIA_STATE_PLAYING || !obs_source_showing(s->source))
 		return false;
 
 	obs_source_media_play_pause(s->source, true);
 	return true;
 }
 
-static void ffmpeg_source_stop_hotkey(void *data, obs_hotkey_id id,
-				      obs_hotkey_t *hotkey, bool pressed)
+static void ffmpeg_source_stop_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hotkey);
@@ -689,28 +671,22 @@ static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
 		return NULL;
 	}
 
-	s->hotkey = obs_hotkey_register_source(source, "MediaSource.Restart",
-					       obs_module_text("RestartMedia"),
+	s->hotkey = obs_hotkey_register_source(source, "MediaSource.Restart", obs_module_text("RestartMedia"),
 					       restart_hotkey, s);
 
-	s->play_pause_hotkey = obs_hotkey_pair_register_source(
-		s->source, "MediaSource.Play", obs_module_text("Play"),
-		"MediaSource.Pause", obs_module_text("Pause"),
-		ffmpeg_source_play_hotkey, ffmpeg_source_pause_hotkey, s, s);
+	s->play_pause_hotkey = obs_hotkey_pair_register_source(s->source, "MediaSource.Play", obs_module_text("Play"),
+							       "MediaSource.Pause", obs_module_text("Pause"),
+							       ffmpeg_source_play_hotkey, ffmpeg_source_pause_hotkey, s,
+							       s);
 
-	s->stop_hotkey = obs_hotkey_register_source(source, "MediaSource.Stop",
-						    obs_module_text("Stop"),
-						    ffmpeg_source_stop_hotkey,
-						    s);
+	s->stop_hotkey = obs_hotkey_register_source(source, "MediaSource.Stop", obs_module_text("Stop"),
+						    ffmpeg_source_stop_hotkey, s);
 
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void restart()", restart_proc, s);
-	proc_handler_add(ph, "void preload_first_frame()",
-			 preload_first_frame_proc, s);
-	proc_handler_add(ph, "void get_duration(out int duration)",
-			 get_duration, s);
-	proc_handler_add(ph, "void get_nb_frames(out int num_frames)",
-			 get_nb_frames, s);
+	proc_handler_add(ph, "void preload_first_frame()", preload_first_frame_proc, s);
+	proc_handler_add(ph, "void get_duration(out int duration)", get_duration, s);
+	proc_handler_add(ph, "void get_nb_frames(out int num_frames)", get_nb_frames, s);
 
 	ffmpeg_source_update(s, settings);
 	return s;
@@ -761,6 +737,11 @@ static void ffmpeg_source_play_pause(void *data, bool pause)
 {
 	struct ffmpeg_source *s = data;
 
+	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+	if (s->is_force_released) {
+		return;
+	}
+
 	if (!s->media)
 		ffmpeg_source_open(s);
 
@@ -794,6 +775,11 @@ static void ffmpeg_source_restart(void *data)
 {
 	struct ffmpeg_source *s = data;
 
+	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+	if (s->is_force_released) {
+		return;
+	}
+
 	if (obs_source_showing(s->source))
 		ffmpeg_source_start(s);
 
@@ -814,6 +800,10 @@ static int64_t ffmpeg_source_get_duration(void *data)
 static int64_t ffmpeg_source_get_time(void *data)
 {
 	struct ffmpeg_source *s = data;
+
+	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+	if (!s->media)
+		return 0;
 
 	return media_playback_get_current_time(s->media);
 }
@@ -855,9 +845,8 @@ static obs_missing_files_t *ffmpeg_source_missingfiles(void *data)
 
 	if (s->is_local_file && strcmp(s->input, "") != 0) {
 		if (!os_file_exists(s->input)) {
-			obs_missing_file_t *file = obs_missing_file_create(
-				s->input, missing_file_callback,
-				OBS_MISSING_FILE_SOURCE, s->source, NULL);
+			obs_missing_file_t *file = obs_missing_file_create(s->input, missing_file_callback,
+									   OBS_MISSING_FILE_SOURCE, s->source, NULL);
 
 			obs_missing_files_add_file(files, file);
 		}
@@ -869,8 +858,7 @@ static obs_missing_files_t *ffmpeg_source_missingfiles(void *data)
 struct obs_source_info ffmpeg_source = {
 	.id = "ffmpeg_source",
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO |
-			OBS_SOURCE_DO_NOT_DUPLICATE |
+	.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
 			OBS_SOURCE_CONTROLLABLE_MEDIA,
 	.get_name = ffmpeg_source_getname,
 	.create = ffmpeg_source_create,

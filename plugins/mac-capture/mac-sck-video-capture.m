@@ -9,9 +9,7 @@ API_AVAILABLE(macos(12.5)) static void destroy_screen_stream(struct screen_captu
                 MACCAP_ERR("destroy_screen_stream: Failed to stop stream with error %s\n",
                            [[error localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding]);
             }
-			os_event_signal(sc->disp_finished);
         }];
-		os_event_wait(sc->disp_finished);
     }
 
     if (sc->stream_properties) {
@@ -41,7 +39,6 @@ API_AVAILABLE(macos(12.5)) static void destroy_screen_stream(struct screen_captu
         sc->disp = NULL;
     }
 
-    os_event_destroy(sc->disp_finished);
     os_event_destroy(sc->stream_start_completed);
 }
 
@@ -59,7 +56,7 @@ API_AVAILABLE(macos(12.5)) static void sck_video_capture_destroy(void *data)
     obs_leave_graphics();
 
     if (sc->shareable_content) {
-		os_sem_wait(sc->shareable_content_available);
+        os_sem_wait(sc->shareable_content_available);
         [sc->shareable_content release];
         os_sem_destroy(sc->shareable_content_available);
         sc->shareable_content_available = NULL;
@@ -84,7 +81,7 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
 
     sc->frame = CGRectZero;
     sc->stream_properties = [[SCStreamConfiguration alloc] init];
-	os_sem_wait(sc->shareable_content_available);
+    os_sem_wait(sc->shareable_content_available);
 
     SCDisplayRef (^get_target_display)(void) = ^SCDisplayRef {
         for (SCDisplay *display in sc->shareable_content.displays) {
@@ -110,7 +107,6 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
                 MACCAP_ERR("init_screen_stream: Invalid target display ID:  %u\n", sc->display);
                 os_sem_post(sc->shareable_content_available);
                 sc->disp = NULL;
-                os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
                 os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
                 return true;
             }
@@ -152,7 +148,6 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
                 MACCAP_ERR("init_screen_stream: Invalid target window ID:  %u\n", sc->window);
                 os_sem_post(sc->shareable_content_available);
                 sc->disp = NULL;
-                os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
                 os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
                 return true;
             } else {
@@ -172,7 +167,6 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
                 MACCAP_ERR("init_screen_stream: Invalid target display ID:  %u\n", sc->display);
                 os_sem_post(sc->shareable_content_available);
                 sc->disp = NULL;
-                os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
                 os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
                 return true;
             }
@@ -217,7 +211,6 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
         if (sc->capture_type != ScreenCaptureWindowStream) {
             sc->disp = NULL;
             [content_filter release];
-            os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
             os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
             return true;
         }
@@ -250,7 +243,6 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
             return !did_add_output;
         }
     }
-    os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
     os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
 
     __block BOOL did_stream_start = NO;
@@ -265,7 +257,7 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
         }
         os_event_signal(sc->stream_start_completed);
     }];
-	os_event_wait(sc->stream_start_completed);
+    os_event_wait(sc->stream_start_completed);
 
     return did_stream_start;
 }
@@ -556,10 +548,10 @@ static bool reactivate_capture(obs_properties_t *props __unused, obs_property_t 
     obs_enter_graphics();
     destroy_screen_stream(sc);
     sc->capture_failed = false;
-	//PRISM/cao.kewei/20240117/#4063/SCK Restart
-	screen_capture_build_content_list(sc, true);
-	build_display_list(sc, props);
-	//PRISM/cao.kewei/20240117/#4063/SCK Restart
+    //PRISM/cao.kewei/20240117/#4063/SCK Restart
+    screen_capture_build_content_list(sc, true);
+    build_display_list(sc, props);
+    //PRISM/cao.kewei/20240117/#4063/SCK Restart
     init_screen_stream(sc);
     obs_leave_graphics();
     obs_property_set_enabled(property, false);

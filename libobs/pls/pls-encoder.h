@@ -7,8 +7,7 @@ extern "C" {
 //PRISM/cao.kewei/20240514/#5378/force keyframe
 EXPORT bool obs_encoder_request_keyframe(obs_encoder_t *encoder);
 EXPORT bool obs_encoder_request_keyframe_and_clean(obs_encoder_t *encoder);
-EXPORT void obs_encoder_set_request_keyframe(obs_encoder_t *encoder,
-					     bool keyframe);
+EXPORT void obs_encoder_set_request_keyframe(obs_encoder_t *encoder, bool keyframe);
 
 EXPORT void obs_encoder_on_encoded_frame(obs_encoder_t *encoder, bool keyframe);
 
@@ -29,8 +28,8 @@ typedef struct PtsStats {
 	const char *encode_info_id;
 } PtsStats;
 
-EXPORT void init_pts_stats(PtsStats *stats, const obs_encoder_t *encoder,
-			   const char *encoder_context_name, const char *encode_info_id);
+EXPORT void init_pts_stats(PtsStats *stats, const obs_encoder_t *encoder, const char *encoder_context_name,
+			   const char *encode_info_id);
 
 EXPORT void record_pts_stats(PtsStats *stats, double frame_pts_ms, double pkt_pts_ms);
 

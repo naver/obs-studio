@@ -13,9 +13,7 @@ API_AVAILABLE(macos(13.0)) static void destroy_audio_screen_stream(struct screen
                 MACCAP_ERR("destroy_audio_screen_stream: Failed to stop stream with error %s\n",
                            [[error localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding]);
             }
-            os_event_signal(sc->disp_finished);
         }];
-		os_event_wait(sc->disp_finished);
     }
 
     if (sc->stream_properties) {
@@ -28,7 +26,6 @@ API_AVAILABLE(macos(13.0)) static void destroy_audio_screen_stream(struct screen
         sc->disp = NULL;
     }
 
-    os_event_destroy(sc->disp_finished);
     os_event_destroy(sc->stream_start_completed);
 }
 
@@ -42,7 +39,7 @@ API_AVAILABLE(macos(13.0)) static void sck_audio_capture_destroy(void *data)
     destroy_audio_screen_stream(sc);
 
     if (sc->shareable_content) {
-		os_sem_wait(sc->shareable_content_available);
+        os_sem_wait(sc->shareable_content_available);
         [sc->shareable_content release];
         os_sem_destroy(sc->shareable_content_available);
         sc->shareable_content_available = NULL;
@@ -66,7 +63,7 @@ API_AVAILABLE(macos(13.0)) static bool init_audio_screen_stream(struct screen_ca
     }
 
     sc->stream_properties = [[SCStreamConfiguration alloc] init];
-	os_sem_wait(sc->shareable_content_available);
+    os_sem_wait(sc->shareable_content_available);
 
     SCDisplayRef (^get_target_display)(void) = ^SCDisplayRef {
         for (SCDisplay *display in sc->shareable_content.displays) {
@@ -152,7 +149,6 @@ API_AVAILABLE(macos(13.0)) static bool init_audio_screen_stream(struct screen_ca
         sc->disp = NULL;
         return !did_add_output;
     }
-    os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
     os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
 
     __block BOOL did_stream_start = false;
@@ -167,7 +163,7 @@ API_AVAILABLE(macos(13.0)) static bool init_audio_screen_stream(struct screen_ca
         }
         os_event_signal(sc->stream_start_completed);
     }];
-	os_event_wait(sc->stream_start_completed);
+    os_event_wait(sc->stream_start_completed);
 
     return did_stream_start;
 }
@@ -187,7 +183,7 @@ API_AVAILABLE(macos(13.0)) static void *sck_audio_capture_create(obs_data_t *set
     sc->audio_capture_type = (unsigned int) obs_data_get_int(settings, "type");
 
     os_sem_init(&sc->shareable_content_available, 1);
-    screen_capture_build_content_list(sc, sc->capture_type == ScreenCaptureAudioDesktopStream);
+    screen_capture_build_content_list(sc, sc->audio_capture_type == ScreenCaptureAudioDesktopStream);
 
     sc->capture_delegate = [[ScreenCaptureDelegate alloc] init];
     sc->capture_delegate.sc = sc;
@@ -245,10 +241,10 @@ static bool reactivate_capture(obs_properties_t *props __unused, obs_property_t 
 
     destroy_audio_screen_stream(sc);
     sc->capture_failed = false;
-	//PRISM/cao.kewei/20240117/#4063/SCK Restart
-	screen_capture_build_content_list(sc, true);
-	build_display_list(sc, props);
-	//PRISM/cao.kewei/20240117/#4063/SCK Restart
+    //PRISM/cao.kewei/20240117/#4063/SCK Restart
+    screen_capture_build_content_list(sc, true);
+    build_display_list(sc, props);
+    //PRISM/cao.kewei/20240117/#4063/SCK Restart
     init_audio_screen_stream(sc);
     obs_property_set_enabled(property, false);
     return true;
@@ -320,5 +316,5 @@ struct obs_source_info sck_audio_capture_info = {
     .get_defaults = sck_audio_capture_defaults,
     .get_properties = sck_audio_capture_properties,
     .update = sck_audio_capture_update,
-    .icon_type = OBS_ICON_TYPE_PROCESS_AUDIO_OUTPUT, //PRISM/Zhongling/20231128/#3254,#3256
+    .icon_type = OBS_ICON_TYPE_PROCESS_AUDIO_OUTPUT,  //PRISM/Zhongling/20231128/#3254,#3256
 };

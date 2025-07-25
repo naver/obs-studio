@@ -33,45 +33,37 @@ AEffect *VSTPlugin::loadEffect(const std::string &path)
 	if (dllHandle == nullptr) {
 		DWORD errorCode = GetLastError();
 		if (errorCode == ERROR_BAD_EXE_FORMAT) {
-			warn("Could not open library, wrong architecture. '%s'",
-			     qUtf8Printable(fileName));
+			warn("Could not open library, wrong architecture. '%s'", qUtf8Printable(fileName));
 		} else {
-			warn("Failed trying to load VST from '%s', error: %u \n",
-			     qUtf8Printable(fileName), errorCode);
+			warn("Failed trying to load VST from '%s', error: %u \n", qUtf8Printable(fileName), errorCode);
 		}
 		return nullptr;
 	}
 
-	vstPluginMain mainEntryPoint =
-		(vstPluginMain)GetProcAddress(dllHandle, "VSTPluginMain");
+	vstPluginMain mainEntryPoint = (vstPluginMain)GetProcAddress(dllHandle, "VSTPluginMain");
 
 	if (mainEntryPoint == nullptr) {
-		mainEntryPoint = (vstPluginMain)GetProcAddress(
-			dllHandle, "VstPluginMain()");
+		mainEntryPoint = (vstPluginMain)GetProcAddress(dllHandle, "VstPluginMain()");
 	}
 
 	if (mainEntryPoint == nullptr) {
-		mainEntryPoint =
-			(vstPluginMain)GetProcAddress(dllHandle, "main");
+		mainEntryPoint = (vstPluginMain)GetProcAddress(dllHandle, "main");
 	}
 
 	if (mainEntryPoint == nullptr) {
-		warn("Couldn't get a pointer to plug-in's main() '%s'",
-		     qUtf8Printable(fileName));
+		warn("Couldn't get a pointer to plug-in's main() '%s'", qUtf8Printable(fileName));
 		return nullptr;
 	}
 
 	try {
 		plugin = mainEntryPoint(hostCallback_static);
 	} catch (...) {
-		warn("VST plugin initialization failed '%s'",
-		     qUtf8Printable(fileName));
+		warn("VST plugin initialization failed '%s'", qUtf8Printable(fileName));
 		return nullptr;
 	}
 
 	if (!plugin) {
-		warn("mainEntryPoint failed for '%s'",
-		     qUtf8Printable(fileName));
+		warn("mainEntryPoint failed for '%s'", qUtf8Printable(fileName));
 		return nullptr;
 	}
 

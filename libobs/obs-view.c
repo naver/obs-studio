@@ -107,12 +107,10 @@ obs_source_t *obs_view_get_source(obs_view_t *view, uint32_t channel)
 	return source;
 }
 
-void obs_view_set_source(obs_view_t *view, uint32_t channel,
-			 obs_source_t *source)
+void obs_view_set_source(obs_view_t *view, uint32_t channel, obs_source_t *source)
 {
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: channel=%u, source=%p", view, __FUNCTION__,
-	     channel, source);
+	blog(LOG_INFO, "%p-%s: channel=%u, source=%p", view, __FUNCTION__, channel, source);
 
 	struct obs_source *prev_source;
 
@@ -184,6 +182,27 @@ static inline void set_main_mix()
 	obs->video.main_mix = mix;
 }
 
+//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+static void set_vertical_mix()
+{
+	struct obs_video_info_v2 *vertical_canvas = obs_get_canvas_by_index(VERTIVAL_CANVAS_INDEX);
+	if (vertical_canvas == NULL) {
+		return;
+	}
+
+	struct obs_core_video_mix *vertical_mix = NULL;
+
+	for (size_t i = 0; i < obs->video.mixes.num; i++) {
+		struct obs_core_video_mix *mix = obs->video.mixes.array[i];
+		if (mix->ovi == vertical_canvas->ovi) {
+			vertical_mix = mix;
+			break;
+		}
+	}
+
+	obs->video.vertical_mix = vertical_mix;
+}
+
 video_t *obs_view_add(obs_view_t *view)
 {
 	if (!obs->video.main_mix)
@@ -211,18 +230,21 @@ video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
 	} else {
 		ovi_v2 = obs_find_ovi_v2_by_ovi(ovi);
 		if (ovi_v2 == NULL) {
-			blog(LOG_WARNING,"%s: ovi=%p not in canvases. Create new ovi!!!", __FUNCTION__, ovi);
+			blog(LOG_WARNING, "%s: ovi=%p not in canvases. Create new ovi!!!", __FUNCTION__, ovi);
 			if (obs->video.canvases.num == 0)
 				return NULL;
 			ovi_v2 = obs_create_3dr_ovi(ovi);
 			if (ovi_v2 == NULL)
 				return NULL;
 			ovi_v2->parent = obs->video.canvases.array[0];
-			blog(LOG_WARNING,"%s: ovi=%p not in canvases. Create new ovi: ovi_v2=%p!!!", __FUNCTION__, ovi, ovi_v2);
+			blog(LOG_WARNING,
+			     "%s: ovi=%p not in canvases. Create new ovi: ovi_v2=%p!!!, parent=%p, canvas0=%p",
+			     __FUNCTION__, ovi, ovi_v2, ovi_v2->parent, obs->video.canvases.array[0]);
 		}
 	}
 
-	struct obs_core_video_mix *mix = obs_create_video_mix(ovi);
+	assert(ovi_v2 != NULL);
+	struct obs_core_video_mix *mix = obs_create_video_mix(ovi_v2);
 	if (!mix) {
 		return NULL;
 	}
@@ -231,11 +253,13 @@ video_t *obs_view_add2(obs_view_t *view, struct obs_video_info *ovi)
 	pthread_mutex_lock(&obs->video.mixes_mutex);
 	da_push_back(obs->video.mixes, &mix);
 	set_main_mix();
+	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
+	set_vertical_mix();
 	pthread_mutex_unlock(&obs->video.mixes_mutex);
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	blog(LOG_INFO, "%p-%s: [Exit] in_ovi=%p, ovi=%p, ovi_v2=%p, mix=%p, video=%p", view, __FUNCTION__, ovi, ovi_v2->ovi, ovi_v2,
-	     mix, mix->video);
+	blog(LOG_INFO, "%p-%s: [Exit] in_ovi=%p, ovi=%p, ovi_v2=%p, mix=%p, video=%p", view, __FUNCTION__, ovi,
+	     ovi_v2->ovi, ovi_v2, mix, mix->video);
 
 	return mix->video;
 }
@@ -281,10 +305,7 @@ bool obs_view_get_video_info(obs_view_t *view, struct obs_video_info *ovi)
 	return false;
 }
 
-void obs_view_enum_video_info(obs_view_t *view,
-			      bool (*enum_proc)(void *,
-						struct obs_video_info *),
-			      void *param)
+void obs_view_enum_video_info(obs_view_t *view, bool (*enum_proc)(void *, struct obs_video_info *), void *param)
 {
 	pthread_mutex_lock(&obs->video.mixes_mutex);
 

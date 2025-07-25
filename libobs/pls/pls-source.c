@@ -3,35 +3,31 @@
 
 static void free_pls_data(void *type_data)
 {
-	struct pls_source_info *pls_source_info =
-		(struct pls_source_info *)type_data;
+	struct pls_source_info *pls_source_info = (struct pls_source_info *)type_data;
 
 	bfree(pls_source_info);
 }
 
 const int IS_PLS_SOURCE = 0x63278228;
 
-void register_pls_source_info(struct obs_source_info *obs_info,
-			      struct pls_source_info *pls_info)
+void register_pls_source_info(struct obs_source_info *obs_info, struct pls_source_info *pls_info)
 {
 	pls_info->is_pls_source = IS_PLS_SOURCE;
 	obs_info->type_data = bmemdup(pls_info, sizeof(struct pls_source_info));
 	obs_info->free_type_data = free_pls_data;
 }
 
-#define pls_source_invoke_func(FuncName, ...)                             \
-	if (source->context.data && source->info.type_data) {             \
-		struct pls_source_info *pls_source_info =                 \
-			(struct pls_source_info *)source->info.type_data; \
-		if (IS_PLS_SOURCE != pls_source_info->is_pls_source) {    \
-			return false;                                     \
-		}                                                         \
-		if (pls_source_info->FuncName) {                          \
-			pls_source_info->FuncName(source->context.data,   \
-						  ##__VA_ARGS__);         \
-			return true;                                      \
-		}                                                         \
-	}                                                                 \
+#define pls_source_invoke_func(FuncName, ...)                                                               \
+	if (source->context.data && source->info.type_data) {                                               \
+		struct pls_source_info *pls_source_info = (struct pls_source_info *)source->info.type_data; \
+		if (IS_PLS_SOURCE != pls_source_info->is_pls_source) {                                      \
+			return false;                                                                       \
+		}                                                                                           \
+		if (pls_source_info->FuncName) {                                                            \
+			pls_source_info->FuncName(source->context.data, ##__VA_ARGS__);                     \
+			return true;                                                                        \
+		}                                                                                           \
+	}                                                                                                   \
 	return false;
 
 bool pls_source_set_private_data(obs_source_t *source, obs_data_t *data)
@@ -50,8 +46,7 @@ bool pls_plugin_set_private_data(const char *id, obs_data_t *data)
 	if (!info)
 		return false;
 
-	const struct pls_source_info *pls_source_info =
-		(struct pls_source_info *)info->type_data;
+	const struct pls_source_info *pls_source_info = (struct pls_source_info *)info->type_data;
 	if (pls_source_info && pls_source_info->set_private_data) {
 		pls_source_info->set_private_data(NULL, data);
 		return true;
@@ -65,8 +60,7 @@ bool pls_plugin_get_private_data(const char *id, obs_data_t *out_data)
 	if (!info)
 		return false;
 
-	const struct pls_source_info *pls_source_info =
-		(struct pls_source_info *)info->type_data;
+	const struct pls_source_info *pls_source_info = (struct pls_source_info *)info->type_data;
 	if (pls_source_info && pls_source_info->get_private_data) {
 		pls_source_info->get_private_data(NULL, out_data);
 		return true;
@@ -81,19 +75,16 @@ bool pls_source_properties_edit_start(obs_source_t *source)
 
 bool pls_source_properties_edit_end(obs_source_t *source, bool is_save_click)
 {
-	pls_source_invoke_func(properties_edit_end, source->context.settings,
-			       is_save_click);
+	pls_source_invoke_func(properties_edit_end, source->context.settings, is_save_click);
 }
 
 //PRISM/Zhangdewen/20230202/#/update extern params
-bool pls_source_update_extern_params(obs_source_t *source,
-				     const calldata_t *extern_params)
+bool pls_source_update_extern_params(obs_source_t *source, const calldata_t *extern_params)
 {
 	pls_source_invoke_func(update_extern_params, extern_params);
 }
 //PRISM/Zhangdewen/20230202/#/update extern params, calldata_t: { cjson:const char*, sub_code:int }
-bool pls_source_update_extern_params_json(obs_source_t *source,
-					  const char *cjson, int sub_code)
+bool pls_source_update_extern_params_json(obs_source_t *source, const char *cjson, int sub_code)
 {
 	struct calldata data;
 	calldata_init(&data);
@@ -106,8 +97,7 @@ bool pls_source_update_extern_params_json(obs_source_t *source,
 	return retval;
 }
 //PRISM/Zhangdewen/20230202/#/move from //PRISM/RenJinbo/20210603/#none/timer source feature
-bool pls_source_dispatch_cef_js(const obs_source_t *source,
-				const char *event_name, const char *json_data)
+bool pls_source_dispatch_cef_js(const obs_source_t *source, const char *event_name, const char *json_data)
 {
 	pls_source_invoke_func(cef_dispatch_js, event_name, json_data);
 }
@@ -122,6 +112,36 @@ void pls_source_invoke_method(obs_source_t *source, const char *method)
 
 	pls_source_set_private_data(source, data);
 	obs_data_release(data);
+}
+
+AUDIO_COVER_STATUS pls_source_is_audio_has_cover(obs_source_t *source)
+{
+	if (!source || !source->is_audio_has_cover_ready)
+		return MP_NOT_READY;
+	return source->is_audio_has_cover ? MP_HAS_COVER : MP_NO_COVER;
+}
+
+//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+bool pls_source_free_resources(obs_source_t *source)
+{
+	pls_source_invoke_func(free_resources);
+}
+
+//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
+bool pls_stop_ffmpeg_source(obs_source_t *source)
+{
+	if (source == NULL ||
+	    0 != strcmp(obs_source_get_id(source), "ffmpeg_source"))
+		return false;
+
+	struct media_action action = {
+		.type = MEDIA_ACTION_FORCE_FREE,
+	};
+
+	pthread_mutex_lock(&source->media_actions_mutex);
+	da_push_back(source->media_actions, &action);
+	pthread_mutex_unlock(&source->media_actions_mutex);
+	return true;
 }
 
 //---------------------------------------- alive module start ----------------------------------------
@@ -164,6 +184,11 @@ bool pls_is_alive(void *s)
 	pthread_mutex_unlock(&mutex_alive);
 
 	return alive;
+}
+
+bool obs_source_check_settings_ex(obs_source_t *source, obs_data_t *output)
+{
+	pls_source_invoke_func(check_obs_source_settings, output);
 }
 
 //---------------------------------------- alive module end ----------------------------------------

@@ -9,8 +9,7 @@ constexpr auto deviceNotificationClassName = L"PrismLiveStudioCameraDeviceNotifi
 
 static std::wstring str_tolower(std::wstring s)
 {
-	std::transform(s.begin(), s.end(), s.begin(),
-		       [](wchar_t c) { return std::tolower(c); });
+	std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) { return std::tolower(c); });
 	return s;
 }
 
@@ -78,8 +77,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	case WM_DEVICECHANGE:
 		if (lParam != 0) {
 			auto long_ptr = GetWindowLongPtr(hWnd, GWLP_USERDATA);
-			DeviceNotification *param =
-				reinterpret_cast<DeviceNotification *>(long_ptr);
+			DeviceNotification *param = reinterpret_cast<DeviceNotification *>(long_ptr);
 			if (param) {
 				(void)param->CheckDeviceLost((PDEV_BROADCAST_HDR)lParam, wParam);
 			}
@@ -107,8 +105,8 @@ bool DeviceNotification::CreateMessageWindow()
 	}
 
 	// Create the main window.
-	m_hwnd = CreateWindowEx(0, deviceNotificationClassName, nullptr, 0, 0, 0, 0, 0,
-				HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), nullptr);
+	m_hwnd = CreateWindowEx(0, deviceNotificationClassName, nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+				GetModuleHandle(nullptr), nullptr);
 	if (!m_hwnd) {
 		auto error_code = GetLastError();
 		blog(LOG_WARNING, "Failed to create window: %lu", error_code);

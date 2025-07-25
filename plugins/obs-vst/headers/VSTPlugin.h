@@ -39,8 +39,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
-#define do_log(level, format, ...) \
-	blog(level, "[VST Plug-in : %p] " format, sourceContext, ##__VA_ARGS__)
+#define do_log(level, format, ...) blog(level, "[VST Plug-in : %p] " format, sourceContext, ##__VA_ARGS__)
 
 #define warn(format, ...) do_log(LOG_WARNING, format, ##__VA_ARGS__)
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
@@ -117,7 +116,7 @@ class VSTPlugin : public QObject {
 	size_t numChannels = 0;
 
 	EditorWidget *editorWidget = nullptr;
-	bool editorOpenned = false;
+	bool editorOpened = false;
 
 	std::string sourceName;
 	std::string filterName;
@@ -128,6 +127,8 @@ class VSTPlugin : public QObject {
 
 #ifdef __APPLE__
 	CFBundleRef bundle = NULL;
+	//PRISM/aiguanghua/20250331/PRISM_PC_NELO-225/unloadLibrary crash
+	void *weakBundlePtr = nullptr;
 #elif WIN32
 	HINSTANCE dllHandle = nullptr;
 #elif __linux__
@@ -135,20 +136,14 @@ class VSTPlugin : public QObject {
 #endif
 
 	ScanVstThread *scanThread = nullptr;
-	SCAN_VST_INFO_PTR currentScanInfo =
-		nullptr; // only be accessed in UI thread
-	std::vector<ScanResultCache>
-		scanResultList; // only be accessed in UI thread
+	SCAN_VST_INFO_PTR currentScanInfo = nullptr; // only be accessed in UI thread
+	std::vector<ScanResultCache> scanResultList; // only be accessed in UI thread
 
 private:
 	void checkActionLog(const std::string &path);
 
-	void realUpdateVst(const std::string &path,
-			   enum obs_vst_verify_state &state,
-			   const QString &hash);
-	void loadEffectFromPath(const std::string &path,
-				enum obs_vst_verify_state state,
-				const QString &hash);
+	void realUpdateVst(const std::string &path, enum obs_vst_verify_state &state, const QString &hash);
+	void loadEffectFromPath(const std::string &path, enum obs_vst_verify_state state, const QString &hash);
 	AEffect *loadEffect(const std::string &path);
 	void unloadEffect();
 	void unloadLibrary();
@@ -156,9 +151,8 @@ private:
 	void createChannelBuffers(size_t count);
 	void cleanupChannelBuffers();
 
-	static intptr_t hostCallback_static(AEffect *effect, int32_t opcode,
-					    int32_t index, intptr_t value,
-					    void *ptr, float opt);
+	static intptr_t hostCallback_static(AEffect *effect, int32_t opcode, int32_t index, intptr_t value, void *ptr,
+					    float opt);
 	VstTimeInfo *GetTimeInfo();
 	float GetSampleRate();
 

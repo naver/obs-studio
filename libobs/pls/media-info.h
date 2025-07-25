@@ -23,8 +23,7 @@ enum mi_type {
 
 enum mi_open_mode {
 	MI_OPEN_DIRECTLY = 1,
-	MI_OPEN_DEFER =
-		2, // this should be used when user only want to get 'id3v2_obj'
+	MI_OPEN_DEFER = 2, // this should be used when user only want to get 'id3v2_obj'
 	MI_OPEN_TRY_DECODER = 4,
 };
 
@@ -144,8 +143,7 @@ EXPORT mi_obj mi_get_obj(media_info_t *mi, const char *key);
 //EXPORT bool mi_id3v2_queued();
 
 /** return true if media remux success, false otherwise */
-EXPORT bool mi_remux_do(const char *in_path, const char *out_filename,
-			unsigned int fps);
+EXPORT bool mi_remux_do(const char *in_path, const char *out_filename, unsigned int fps);
 
 #ifdef __cplusplus
 }

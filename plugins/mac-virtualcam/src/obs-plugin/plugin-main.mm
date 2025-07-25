@@ -19,7 +19,7 @@ NSString *const OBSDalDestination = @"/Library/CoreMediaIO/Plug-Ins/DAL";
 
 static bool cmio_extension_supported()
 {
-    if (@available(macOS 12.3, *)) { //PRISM/Zhongling/20231130/#/For MacOS 12.3
+    if (@available(macOS 12.3, *)) {  //PRISM/Zhongling/20231130/#/For MacOS 12.3
         return true;
     } else {
         return false;
@@ -75,16 +75,16 @@ struct virtualcam_data {
             @"mac-camera-extension: Replacement requested. Existing version: %@ (%@), new version: %@ (%@). Replacing...",
             existing.bundleShortVersion, existing.bundleVersion, ext.bundleShortVersion, ext.bundleVersion];
     blog(LOG_INFO, "%s", infoString.UTF8String);
-	//PRISM/Zhongling/20231128/#/Fix cannot find virtual camera start
-	if (existing.isEnabled && !existing.isUninstalling && !existing.isAwaitingUserApproval
-		&& [existing.bundleVersion isEqualToString:ext.bundleVersion]
-		&& [existing.bundleShortVersion isEqualToString:ext.bundleShortVersion]) {
-		self.installed = YES;
-		return OSSystemExtensionReplacementActionCancel;
-	} else {
-		return OSSystemExtensionReplacementActionReplace;
-	}
-	//PRISM/Zhongling/20231128/#/Fix cannot find virtual camera end
+    //PRISM/Zhongling/20231128/#/Fix cannot find virtual camera start
+    if (existing.isEnabled && !existing.isUninstalling && !existing.isAwaitingUserApproval &&
+        [existing.bundleVersion isEqualToString:ext.bundleVersion] &&
+        [existing.bundleShortVersion isEqualToString:ext.bundleShortVersion]) {
+        self.installed = YES;
+        return OSSystemExtensionReplacementActionCancel;
+    } else {
+        return OSSystemExtensionReplacementActionReplace;
+    }
+    //PRISM/Zhongling/20231128/#/Fix cannot find virtual camera end
 }
 
 - (void)request:(nonnull OSSystemExtensionRequest *)request didFailWithError:(nonnull NSError *)error
@@ -136,8 +136,8 @@ struct virtualcam_data {
 static void install_cmio_system_extension(struct virtualcam_data *vcam)
 {
     OSSystemExtensionRequest *request = [OSSystemExtensionRequest
-										 //PRISM/Zhongling/20231123/#/VCAM
-										 activationRequestForExtension:@"com.prismlive.prismlivestudio.mac-camera-extension"
+        //PRISM/Zhongling/20231123/#/VCAM
+        activationRequestForExtension:@"com.prismlive.prismlivestudio.mac-camera-extension"
                                 queue:dispatch_get_main_queue()];
     request.delegate = vcam->extensionDelegate;
 
@@ -154,7 +154,7 @@ static dal_plugin_status check_dal_plugin()
 {
     NSFileManager *fileManager = [NSFileManager defaultManager];
 
-	//PRISM/Zhongling/20231101/#/prism vcam Modify
+    //PRISM/Zhongling/20231101/#/prism vcam Modify
     NSString *dalPluginFileName = [OBSDalDestination stringByAppendingString:@"/prism-mac-virtualcam.plugin"];
 
     BOOL dalPluginInstalled = [fileManager fileExistsAtPath:dalPluginFileName];
@@ -162,9 +162,10 @@ static dal_plugin_status check_dal_plugin()
     if (dalPluginInstalled) {
         NSDictionary *dalPluginInfoPlist = [NSDictionary
             dictionaryWithContentsOfURL:
-                [NSURL fileURLWithPath:[OBSDalDestination
-                                           //PRISM/Zhongling/20231101/#/prism vcam Modify
-                                           stringByAppendingString:@"/prism-mac-virtualcam.plugin/Contents/Info.plist"]]];
+                [NSURL
+                    fileURLWithPath:[OBSDalDestination
+                                        //PRISM/Zhongling/20231101/#/prism vcam Modify
+                                        stringByAppendingString:@"/prism-mac-virtualcam.plugin/Contents/Info.plist"]]];
 
         NSString *dalPluginVersion = [dalPluginInfoPlist valueForKey:@"CFBundleShortVersionString"];
         NSString *dalPluginBuild = [dalPluginInfoPlist valueForKey:@"CFBundleVersion"];
@@ -186,7 +187,7 @@ static bool install_dal_plugin(bool update)
     BOOL dalPluginDirExists = [fileManager fileExistsAtPath:OBSDalDestination];
 
     NSURL *bundleURL = [[NSBundle mainBundle] bundleURL];
-	//PRISM/Zhongling/20231101/#/prism vcam Modify
+    //PRISM/Zhongling/20231101/#/prism vcam Modify
     NSString *pluginPath = @"Contents/Resources/prism-mac-virtualcam.plugin";
 
     NSURL *pluginUrl = [bundleURL URLByAppendingPathComponent:pluginPath];
@@ -322,7 +323,12 @@ static bool virtualcam_output_start(void *data)
                                                delegate.lastErrorMessage]
                         .UTF8String);
             } else {
-                obs_output_set_last_error(vcam->output, obs_module_text("Error.SystemExtension.NotInstalled"));
+                if (@available(macOS 15.0, *)) {
+                    obs_output_set_last_error(vcam->output,
+                                              obs_module_text("Error.SystemExtension.NotInstalled.MacOS15"));
+                } else {
+                    obs_output_set_last_error(vcam->output, obs_module_text("Error.SystemExtension.NotInstalled"));
+                }
             }
 
             return false;
@@ -393,13 +399,16 @@ static bool virtualcam_output_start(void *data)
         CMIOObjectGetPropertyData(kCMIOObjectSystemObject, &address, 0, NULL, size, &used, device_data);
 
         vcam->deviceID = 0;
-        NSString *OBSVirtualCamUUID = [[NSBundle bundleWithIdentifier:@"com.prismlive.prismlivestudio.mac-camera-extension"]
-            objectForInfoDictionaryKey:@"OBSCameraDeviceUUID"];
-		//PRISM/Zhongling/20231123/#/VCAM start
-		if (!OBSVirtualCamUUID || OBSVirtualCamUUID.length == 0) {
-			OBSVirtualCamUUID = @"152BAC5D-98FD-40BD-B501-0684FDED5D86";
-		}
-		//PRISM/Zhongling/20231123/#/VCAM end
+        NSString *OBSVirtualCamUUIDString =
+            [[NSBundle bundleWithIdentifier:@"com.prismlive.prismlivestudio.mac-camera-extension"]
+                objectForInfoDictionaryKey:@"OBSCameraDeviceUUID"];
+        //PRISM/Zhongling/20231123/#/VCAM start
+        if (!OBSVirtualCamUUIDString || OBSVirtualCamUUIDString.length == 0) {
+            OBSVirtualCamUUIDString = @"152BAC5D-98FD-40BD-B501-0684FDED5D86";
+        }
+        //PRISM/Zhongling/20231123/#/VCAM end
+        CFUUIDRef OBSVirtualCamUUID =
+            CFUUIDCreateFromString(kCFAllocatorDefault, (CFStringRef) OBSVirtualCamUUIDString);
 
         size_t num_elements = size / sizeof(CMIOObjectID);
         for (size_t i = 0; i < num_elements; i++) {
@@ -411,15 +420,19 @@ static bool virtualcam_output_start(void *data)
             CMIOObjectGetPropertyDataSize(cmioDevice, &address, 0, NULL, &device_name_size);
             CFStringRef uid;
             CMIOObjectGetPropertyData(cmioDevice, &address, 0, NULL, device_name_size, &used, &uid);
-            const char *uid_string = CFStringGetCStringPtr(uid, kCFStringEncodingUTF8);
-            if (uid_string && strcmp(uid_string, OBSVirtualCamUUID.UTF8String) == 0) {
+            CFUUIDRef deviceUUID = CFUUIDCreateFromString(kCFAllocatorDefault, uid);
+
+            if (CFEqual(OBSVirtualCamUUID, deviceUUID)) {
                 vcam->deviceID = cmioDevice;
                 CFRelease(uid);
+                CFRelease(deviceUUID);
                 break;
             } else {
                 CFRelease(uid);
+                CFRelease(deviceUUID);
             }
         }
+        CFRelease(OBSVirtualCamUUID);
 
         if (!vcam->deviceID) {
             obs_output_set_last_error(vcam->output, obs_module_text("Error.SystemExtension.CameraUnavailable"));

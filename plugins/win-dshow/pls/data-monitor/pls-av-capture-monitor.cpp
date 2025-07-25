@@ -9,8 +9,7 @@ const auto PER_STATISTICS_INTERVAL = 60; // in seconds
 
 uint64_t GetTimeIn1000NS()
 {
-	return std::chrono::steady_clock::now().time_since_epoch().count() /
-	       1000;
+	return std::chrono::steady_clock::now().time_since_epoch().count() / 1000;
 }
 
 void PLSMonitorCameraVideo::SetFPS(double fps)
@@ -65,10 +64,8 @@ void PLSMonitorCameraVideo::BeginHandleVideo()
 	}
 
 	if ((current_time - pre_video_systime) > (1 * 1000000)) {
-		blog(LOG_WARNING,
-		     "[obs_camera] %p['%s']: Current video is %llums behind previous frame.",
-		     context, video_name.c_str(),
-		     (current_time - pre_video_systime) / 1000);
+		blog(LOG_WARNING, "[obs_camera] %p['%s']: Current video is %llums behind previous frame.", context,
+		     video_name.c_str(), (current_time - pre_video_systime) / 1000);
 	}
 
 	++fps_video_count;
@@ -76,8 +73,7 @@ void PLSMonitorCameraVideo::BeginHandleVideo()
 	// check fps
 	uint64_t interval = (current_time - start_fps_systime);
 	if (interval >= 1000000) {
-		double fps =
-			double(fps_video_count * 1000000) / double(interval);
+		double fps = double(fps_video_count * 1000000) / double(interval);
 
 		fps_list.push_back(fps);
 
@@ -89,8 +85,7 @@ void PLSMonitorCameraVideo::BeginHandleVideo()
 	// check frame late
 	if (next_video_systime != 0) {
 		if (current_time > next_video_systime) {
-			uint64_t late_ms = (current_time / 1000 -
-					    next_video_systime / 1000);
+			uint64_t late_ms = (current_time / 1000 - next_video_systime / 1000);
 			late_list.push_back(late_ms);
 		} else {
 			late_list.push_back(0);
@@ -98,8 +93,7 @@ void PLSMonitorCameraVideo::BeginHandleVideo()
 	}
 
 	interval = (current_time - pre_log_systime);
-	if (!fps_list.empty() && !late_list.empty() &&
-	    interval >= (1000000 * PER_STATISTICS_INTERVAL)) {
+	if (!fps_list.empty() && !late_list.empty() && interval >= (1000000 * PER_STATISTICS_INTERVAL)) {
 		SaveStatisticsLog(interval / 1000000);
 	}
 }
@@ -118,16 +112,15 @@ void PLSMonitorCameraVideo::SendCatchLogs()
 	}
 
 	std::string log = "";
-	std::for_each(log_list.begin(), log_list.end(),
-		      [&log](const auto &item) {
-			      log += item;
-			      log += "\n";
-		      });
+	std::for_each(log_list.begin(), log_list.end(), [&log](const auto &item) {
+		log += item;
+		log += "\n";
+	});
 
 	log_list.clear();
 
-	blog(LOG_INFO, "[obs_camera] %p['%s']: Camera video information.\n%s",
-	     context, video_name.c_str(), log.c_str());
+	blog(LOG_INFO, "[obs_camera] %p['%s']: Camera video information.\n%s", context, video_name.c_str(),
+	     log.c_str());
 }
 
 void PLSMonitorCameraVideo::SaveStatisticsLog(uint64_t seconds)
@@ -136,16 +129,15 @@ void PLSMonitorCameraVideo::SaveStatisticsLog(uint64_t seconds)
 	double min_fps = 0xffff;
 	double max_fps = 0;
 
-	std::for_each(fps_list.begin(), fps_list.end(),
-		      [&avg_fps, &min_fps, &max_fps](const auto &fps) {
-			      avg_fps += fps;
-			      if (fps < min_fps) {
-				      min_fps = fps;
-			      }
-			      if (fps > max_fps) {
-				      max_fps = fps;
-			      }
-		      });
+	std::for_each(fps_list.begin(), fps_list.end(), [&avg_fps, &min_fps, &max_fps](const auto &fps) {
+		avg_fps += fps;
+		if (fps < min_fps) {
+			min_fps = fps;
+		}
+		if (fps > max_fps) {
+			max_fps = fps;
+		}
+	});
 
 	avg_fps /= double(fps_list.size());
 
@@ -154,16 +146,15 @@ void PLSMonitorCameraVideo::SaveStatisticsLog(uint64_t seconds)
 	uint64_t late_frames = 0;
 	uint64_t total_frames = late_list.size();
 
-	std::for_each(late_list.begin(), late_list.end(),
-		      [&total_late, &max_late, &late_frames](const auto &late) {
-			      total_late += late;
-			      if (late > max_late) {
-				      max_late = late;
-			      }
-			      if (late > 0) {
-				      ++late_frames;
-			      }
-		      });
+	std::for_each(late_list.begin(), late_list.end(), [&total_late, &max_late, &late_frames](const auto &late) {
+		total_late += late;
+		if (late > max_late) {
+			max_late = late;
+		}
+		if (late > 0) {
+			++late_frames;
+		}
+	});
 
 	double avg_late = double(total_late) / double(late_list.size());
 
@@ -186,8 +177,8 @@ void PLSMonitorCameraVideo::SaveStatisticsLog(uint64_t seconds)
 	snprintf(
 		log.data(), log.size(),
 		"%s+%llus FPS:%.2f minFPS:%.2f maxFPS:%.2f avgFPS:%.2f maxLate:%llums avgLate:%.2fms lateFrames:%llu/%llu",
-		bufTime.data(), seconds, expect_fps, min_fps, max_fps, avg_fps,
-		max_late, avg_late, late_frames, total_frames);
+		bufTime.data(), seconds, expect_fps, min_fps, max_fps, avg_fps, max_late, avg_late, late_frames,
+		total_frames);
 
 	log_list.emplace_back(log.data());
 

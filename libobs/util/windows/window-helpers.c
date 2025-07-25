@@ -20,8 +20,7 @@ static inline char *decode_str(const char *src)
 	return str.array;
 }
 
-void ms_build_window_strings(const char *str, char **class, char **title,
-			     char **exe)
+void ms_build_window_strings(const char *str, char **class, char **title, char **exe)
 {
 	char **strlist;
 
@@ -63,8 +62,7 @@ static void insert_preserved_val(obs_property_t *p, const char *val, size_t idx)
 	bfree(executable);
 }
 
-bool ms_check_window_property_setting(obs_properties_t *ppts, obs_property_t *p,
-				      obs_data_t *settings, const char *val,
+bool ms_check_window_property_setting(obs_properties_t *ppts, obs_property_t *p, obs_data_t *settings, const char *val,
 				      size_t idx)
 {
 	const char *cur_val;
@@ -104,14 +102,13 @@ static HMODULE kernel32(void)
 	return kernel32_handle;
 }
 
-static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
-				  DWORD process_id)
+static inline HANDLE open_process(DWORD desired_access, bool inherit_handle, DWORD process_id)
 {
 	typedef HANDLE(WINAPI * PFN_OpenProcess)(DWORD, BOOL, DWORD);
 	static PFN_OpenProcess open_process_proc = NULL;
 	if (!open_process_proc)
-		open_process_proc = (PFN_OpenProcess)ms_get_obfuscated_func(
-			kernel32(), "B}caZyah`~q", 0x2D5BEBAF6DDULL);
+		open_process_proc =
+			(PFN_OpenProcess)ms_get_obfuscated_func(kernel32(), "B}caZyah`~q", 0x2D5BEBAF6DDULL);
 
 	return open_process_proc(desired_access, inherit_handle, process_id);
 }
@@ -153,8 +150,43 @@ fail:
 	return true;
 }
 
+//PRISM/wangshaohui/20250305/PRISM_PC_NELO-167/fix API hang
+#define BLOCK_TIMEOUT_MS 2000 // in ms
+#define DEFAULT_BUFFER_SIZE 1024
+
 void ms_get_window_title(struct dstr *name, HWND hwnd)
 {
+	//PRISM/wangshaohui/20250305/PRISM_PC_NELO-167/fix API hang --------------- start
+	ULONG_PTR len = 0; // does not include size of "\0"
+	LRESULT res = 0;
+
+	res = SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, BLOCK_TIMEOUT_MS, &len);
+	if (res != 0 && len > 0) {
+		wchar_t *temp_heap = NULL;
+		wchar_t temp_stack[DEFAULT_BUFFER_SIZE + 1];
+		wchar_t *dest_buffer = temp_stack;
+
+		if (len > DEFAULT_BUFFER_SIZE) {
+			temp_heap = malloc(sizeof(wchar_t) * (len + 1));
+			if (!temp_heap)
+				return;
+
+			dest_buffer = temp_heap;
+		}
+
+		ULONG_PTR copy_size = 0;
+		res = SendMessageTimeoutW(hwnd, WM_GETTEXT,
+					  len + 1, // +1: should copy "\0"
+					  (LPARAM)dest_buffer, SMTO_ABORTIFHUNG, BLOCK_TIMEOUT_MS, &copy_size);
+
+		if (res != 0 && copy_size > 0)
+			dstr_from_wcs(name, dest_buffer);
+
+		if (temp_heap)
+			free(temp_heap);
+	}
+
+	/* code of obs may be blocked, we reimplement this function. So we comment all code of obs
 	int len;
 
 	len = GetWindowTextLengthW(hwnd);
@@ -177,7 +209,8 @@ void ms_get_window_title(struct dstr *name, HWND hwnd)
 
 		if (GetWindowTextW(hwnd, temp, len + 1))
 			dstr_from_wcs(name, temp);
-	}
+	}*/
+	//PRISM/wangshaohui/20250305/PRISM_PC_NELO-167/fix API hang --------------- end
 }
 
 void ms_get_window_class(struct dstr *class, HWND hwnd)
@@ -225,8 +258,7 @@ static bool is_microsoft_internal_window_exe(const char *exe)
 			return true;
 	}
 
-	for (const char **vals = internal_microsoft_exes_partial; *vals;
-	     vals++) {
+	for (const char **vals = internal_microsoft_exes_partial; *vals; vals++) {
 		if (astrcmpi_n(exe, *vals, strlen(*vals)) == 0)
 			return true;
 	}
@@ -289,8 +321,7 @@ static void add_window(obs_property_t *p, HWND hwnd, add_window_cb callback)
 static inline bool IsWindowCloaked(HWND window)
 {
 	DWORD cloaked;
-	HRESULT hr = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked,
-					   sizeof(cloaked));
+	HRESULT hr = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
 	return SUCCEEDED(hr) && cloaked;
 }
 
@@ -299,9 +330,7 @@ static bool check_window_valid(HWND window, enum window_search_mode mode)
 	DWORD styles, ex_styles;
 	RECT rect;
 
-	if (!IsWindowVisible(window) ||
-	    (mode == EXCLUDE_MINIMIZED &&
-	     (IsIconic(window) || IsWindowCloaked(window))))
+	if (!IsWindowVisible(window) || (mode == EXCLUDE_MINIMIZED && (IsIconic(window) || IsWindowCloaked(window))))
 		return false;
 
 	GetClientRect(window, &rect);
@@ -326,7 +355,7 @@ bool ms_is_uwp_window(HWND hwnd)
 	if (!GetClassNameW(hwnd, name, sizeof(name) / sizeof(wchar_t)))
 		return false;
 
-	return wcscmp(name, L"ApplicationFrameWindow") == 0;
+	return wcscmp(name, L"ApplicationFrameWindow") == 0 || wcscmp(name, L"WinUIDesktopWin32WindowClass") == 0;
 }
 
 HWND ms_get_uwp_actual_window(HWND parent)
@@ -350,8 +379,7 @@ HWND ms_get_uwp_actual_window(HWND parent)
 	return NULL;
 }
 
-static HWND next_window(HWND window, enum window_search_mode mode, HWND *parent,
-			bool use_findwindowex)
+static HWND next_window(HWND window, enum window_search_mode mode, HWND *parent, bool use_findwindowex)
 {
 	if (*parent) {
 		window = *parent;
@@ -360,8 +388,7 @@ static HWND next_window(HWND window, enum window_search_mode mode, HWND *parent,
 
 	while (true) {
 		if (use_findwindowex)
-			window = FindWindowEx(GetDesktopWindow(), window, NULL,
-					      NULL);
+			window = FindWindowEx(GetDesktopWindow(), window, NULL, NULL);
 		else
 			window = GetNextWindow(window, GW_HWNDNEXT);
 
@@ -380,8 +407,7 @@ static HWND next_window(HWND window, enum window_search_mode mode, HWND *parent,
 	return window;
 }
 
-static HWND first_window(enum window_search_mode mode, HWND *parent,
-			 bool *use_findwindowex)
+static HWND first_window(enum window_search_mode mode, HWND *parent, bool *use_findwindowex)
 {
 	HWND window = FindWindowEx(GetDesktopWindow(), NULL, NULL, NULL);
 
@@ -402,8 +428,7 @@ static HWND first_window(enum window_search_mode mode, HWND *parent,
 
 			window = GetWindow(GetDesktopWindow(), GW_CHILD);
 			if (!check_window_valid(window, mode))
-				window = next_window(window, mode, parent,
-						     *use_findwindowex);
+				window = next_window(window, mode, parent, *use_findwindowex);
 		}
 	}
 
@@ -418,8 +443,7 @@ static HWND first_window(enum window_search_mode mode, HWND *parent,
 	return window;
 }
 
-void ms_fill_window_list(obs_property_t *p, enum window_search_mode mode,
-			 add_window_cb callback)
+void ms_fill_window_list(obs_property_t *p, enum window_search_mode mode, add_window_cb callback)
 {
 	HWND parent;
 	bool use_findwindowex = false;
@@ -432,9 +456,8 @@ void ms_fill_window_list(obs_property_t *p, enum window_search_mode mode,
 	}
 }
 
-static int window_rating(HWND window, enum window_priority priority,
-			 const char *class, const char *title, const char *exe,
-			 bool uwp_window, bool generic_class)
+static int window_rating(HWND window, enum window_priority priority, const char *class, const char *title,
+			 const char *exe, bool uwp_window, bool generic_class)
 {
 	struct dstr cur_class = {0};
 	struct dstr cur_title = {0};
@@ -499,11 +522,12 @@ static bool is_generic_class(const char *current_class)
 
 static bool is_uwp_class(const char *window_class)
 {
-	return strcmp(window_class, "Windows.UI.Core.CoreWindow") == 0;
+	return strcmp(window_class, "Windows.UI.Core.CoreWindow") == 0 ||
+	       strcmp(window_class, "WinUIDesktopWin32WindowClass") == 0;
 }
 
-HWND ms_find_window(enum window_search_mode mode, enum window_priority priority,
-		    const char *class, const char *title, const char *exe)
+HWND ms_find_window(enum window_search_mode mode, enum window_priority priority, const char *class, const char *title,
+		    const char *exe)
 {
 	HWND parent;
 	bool use_findwindowex = false;
@@ -519,8 +543,7 @@ HWND ms_find_window(enum window_search_mode mode, enum window_priority priority,
 	const bool generic_class = is_generic_class(class);
 
 	while (window) {
-		int rating = window_rating(window, priority, class, title, exe,
-					   uwp_window, generic_class);
+		int rating = window_rating(window, priority, class, title, exe, uwp_window, generic_class);
 		if (rating < best_rating) {
 			best_rating = rating;
 			best_window = window;
@@ -556,22 +579,32 @@ BOOL CALLBACK enum_windows_proc(HWND window, LPARAM lParam)
 	if (IsWindowCloaked(window))
 		return TRUE;
 
-	//PRISM/WangShaohui/20230727/#12206,VOC-829/Sometimes UWP not found
-	const int rating = window_rating(
-		ms_is_uwp_window(window) ? ms_get_uwp_actual_window(window)
-					 : window,
-		data->priority, data->class, data->title, data->exe,
-		data->uwp_window, data->generic_class);
+	const int rating = window_rating(window, data->priority, data->class, data->title, data->exe, data->uwp_window,
+					 data->generic_class);
 	if (rating < data->best_rating) {
 		data->best_rating = rating;
 		data->best_window = window;
 	}
 
-	return rating > 0;
+	//PRISM/chenguoxi/20250513/PRISM_PC-2935/Can not capture WINUI3 gallery window
+	// Only obs failed, we try below method
+	if (rating > 0) {
+		return TRUE;
+	}
+
+	//PRISM/WangShaohui/20230727/#12206,VOC-829/Sometimes UWP not found
+	const int rating2 = window_rating(ms_is_uwp_window(window) ? ms_get_uwp_actual_window(window) : window,
+					 data->priority, data->class, data->title, data->exe, data->uwp_window,
+					 data->generic_class);
+	if (rating2 < data->best_rating) {
+		data->best_rating = rating2;
+		data->best_window = window;
+	}
+
+	return rating2 > 0;
 }
 
-HWND ms_find_window_top_level(enum window_search_mode mode,
-			      enum window_priority priority, const char *class,
+HWND ms_find_window_top_level(enum window_search_mode mode, enum window_priority priority, const char *class,
 			      const char *title, const char *exe)
 {
 	if (!class)

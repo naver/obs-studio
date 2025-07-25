@@ -8,6 +8,8 @@ struct virtualcam_data {
 	video_queue_t *vq;
 	volatile bool active;
 	volatile bool stopping;
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	volatile bool first_video;
 };
 
 static const char *virtualcam_name(void *unused)
@@ -19,17 +21,20 @@ static const char *virtualcam_name(void *unused)
 static void virtualcam_destroy(void *data)
 {
 	struct virtualcam_data *vcam = (struct virtualcam_data *)data;
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	blog(LOG_INFO, "%s-%p", __FUNCTION__, (void *)vcam);
 	video_queue_close(vcam->vq);
 	bfree(data);
 }
 
 static void *virtualcam_create(obs_data_t *settings, obs_output_t *output)
 {
-	struct virtualcam_data *vcam =
-		(struct virtualcam_data *)bzalloc(sizeof(*vcam));
+	struct virtualcam_data *vcam = (struct virtualcam_data *)bzalloc(sizeof(*vcam));
 	vcam->output = output;
 
 	UNUSED_PARAMETER(settings);
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	blog(LOG_INFO, "%s-%p", __FUNCTION__, (void *)vcam);
 	return vcam;
 }
 
@@ -45,17 +50,18 @@ static bool virtualcam_start(void *data)
 	uint64_t interval = ovi.fps_den * 10000000ULL / ovi.fps_num;
 
 	char res[64];
-	snprintf(res, sizeof(res), "%dx%dx%lld", (int)width, (int)height,
-		 (long long)interval);
+	snprintf(res, sizeof(res), "%dx%dx%lld", (int)width, (int)height, (long long)interval);
 
-	char *res_file = os_get_config_path_ptr("obs-virtualcam.txt");
-	os_quick_write_utf8_file_safe(res_file, res, strlen(res), false, "tmp",
-				      NULL);
+	//PRISM/wangshaohui/20250211/none/PRISM should use different file
+	char *res_file = os_get_config_path_ptr("obs-virtualcam-for-prism.txt");
+	os_quick_write_utf8_file_safe(res_file, res, strlen(res), false, "tmp", NULL);
 	bfree(res_file);
 
 	vcam->vq = video_queue_create(width, height, interval);
 	if (!vcam->vq) {
-		blog(LOG_WARNING, "starting virtual-output failed");
+		//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+		//blog(LOG_WARNING, "starting virtual-output failed");
+		blog(LOG_WARNING, "%s-%p: starting virtual-output failed", __FUNCTION__, (void *)vcam);
 		return false;
 	}
 
@@ -67,8 +73,12 @@ static bool virtualcam_start(void *data)
 
 	os_atomic_set_bool(&vcam->active, true);
 	os_atomic_set_bool(&vcam->stopping, false);
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	os_atomic_set_bool(&vcam->first_video, true);
 	blog(LOG_INFO, "Virtual output started");
 	obs_output_begin_data_capture(vcam->output, 0);
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	blog(LOG_INFO, "%s-%p", __FUNCTION__, (void *)vcam);
 	return true;
 }
 
@@ -80,16 +90,24 @@ static void virtualcam_deactive(struct virtualcam_data *vcam)
 
 	os_atomic_set_bool(&vcam->active, false);
 	os_atomic_set_bool(&vcam->stopping, false);
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	os_atomic_set_bool(&vcam->first_video, true);
 
-	blog(LOG_INFO, "Virtual output stopped");
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	//blog(LOG_INFO, "Virtual output stopped");
+	blog(LOG_INFO, "%s-%p: Virtual output stopped", __FUNCTION__, (void *)vcam);
 }
 
 static void virtualcam_stop(void *data, uint64_t ts)
 {
 	struct virtualcam_data *vcam = (struct virtualcam_data *)data;
 	os_atomic_set_bool(&vcam->stopping, true);
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	os_atomic_set_bool(&vcam->first_video, true);
 
-	blog(LOG_INFO, "Virtual output stopping");
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	//blog(LOG_INFO, "Virtual output stopping");
+	blog(LOG_INFO, "%s-%p: Virtual output stopping", __FUNCTION__, (void *)vcam);
 
 	UNUSED_PARAMETER(ts);
 }
@@ -109,8 +127,12 @@ static void virtual_video(void *param, struct video_data *frame)
 		return;
 	}
 
-	video_queue_write(vcam->vq, frame->data, frame->linesize,
-			  frame->timestamp);
+	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
+	if (os_atomic_load_bool(&vcam->first_video)) {
+		blog(LOG_INFO, "%s-%p: first video received.", __FUNCTION__, (void *)vcam);
+		os_atomic_set_bool(&vcam->first_video, false);
+	}
+	video_queue_write(vcam->vq, frame->data, frame->linesize, frame->timestamp);
 }
 
 struct obs_output_info virtualcam_info = {

@@ -9,17 +9,14 @@
 //PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 #include <pls/pls-base.h>
 
-#define do_log(level, format, ...)                              \
-	blog(level, "[obs-webrtc] [whip_output: '%s'] " format, \
-	     obs_output_get_name(output), ##__VA_ARGS__)
+#define do_log(level, format, ...) \
+	blog(level, "[obs-webrtc] [whip_output: '%s'] " format, obs_output_get_name(output), ##__VA_ARGS__)
 
 //PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
-#define do_logex(kr, level, fields, field_count, format, ...) \
-	blogex(kr, level, fields, field_count,                \
-	       "[obs-webrtc] [whip_output: '%s'] " format,    \
+#define do_logex(kr, level, fields, field_count, format, ...)                              \
+	blogex(kr, level, fields, field_count, "[obs-webrtc] [whip_output: '%s'] " format, \
 	       obs_output_get_name(output), ##__VA_ARGS__)
 //PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
-
 
 static uint32_t generate_random_u32()
 {
@@ -37,11 +34,9 @@ static std::string trim_string(const std::string &source)
 	return ret;
 }
 
-static std::string value_for_header(const std::string &header,
-				    const std::string &val)
+static std::string value_for_header(const std::string &header, const std::string &val)
 {
-	if (val.size() <= header.size() ||
-	    astrcmpi_n(header.c_str(), val.c_str(), header.size()) != 0) {
+	if (val.size() <= header.size() || astrcmpi_n(header.c_str(), val.c_str(), header.size()) != 0) {
 		return "";
 	}
 
@@ -53,8 +48,7 @@ static std::string value_for_header(const std::string &header,
 	return val.substr(delimiter + 1);
 }
 
-static size_t curl_writefunction(char *data, size_t size, size_t nmemb,
-				 void *priv_data)
+static size_t curl_writefunction(char *data, size_t size, size_t nmemb, void *priv_data)
 {
 	auto read_buffer = static_cast<std::string *>(priv_data);
 
@@ -64,8 +58,7 @@ static size_t curl_writefunction(char *data, size_t size, size_t nmemb,
 	return real_size;
 }
 
-static size_t curl_header_function(char *data, size_t size, size_t nmemb,
-				   void *priv_data)
+static size_t curl_header_function(char *data, size_t size, size_t nmemb, void *priv_data)
 {
 	auto header_buffer = static_cast<std::vector<std::string> *>(priv_data);
 	header_buffer->push_back(trim_string(std::string(data, size * nmemb)));

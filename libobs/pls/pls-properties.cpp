@@ -50,8 +50,7 @@ const char *pls_property_get_placeholder(obs_property_t *p)
 	return prop.placeholder;
 }
 
-void pls_property_set_ignore_callback_when_refresh(obs_property_t *p,
-						   bool ignored)
+void pls_property_set_ignore_callback_when_refresh(obs_property_t *p, bool ignored)
 {
 	lock_guard _(g_mutexPRISMProperty);
 

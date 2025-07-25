@@ -1,6 +1,7 @@
 #pragma once
 
 #include "obs.h"
+#include "obs-hotkey.h"
 
 #define ID_IS_VERTICAL "is_vertical"
 
@@ -13,7 +14,7 @@ extern "C" {
 EXPORT video_t *pls_vertical_view_add(struct obs_video_info *ovi);
 
 /** Remove view means turning off dual output */
-EXPORT void pls_vertical_view_remove();
+EXPORT int pls_vertical_view_remove();
 
 EXPORT void pls_render_vertical_main_texture_src_color_only();
 
@@ -36,46 +37,46 @@ EXPORT bool pls_get_vertical_video_info(struct obs_video_info *ovi);
 
 EXPORT struct obs_core_video_mix *pls_get_vertical_mix();
 
-EXPORT video_t *pls_get_vertical_video_t(); 
+EXPORT video_t *pls_get_vertical_video_t();
 
-EXPORT obs_sceneitem_t *pls_vertical_scene_add(obs_scene_t *scene,
-					       obs_source_t *source,
-					       obs_sceneitem_t *insert_after,
+EXPORT obs_sceneitem_t *pls_vertical_scene_add(obs_scene_t *scene, obs_source_t *source, obs_sceneitem_t *insert_after,
 					       obs_data_t *settings);
 
 EXPORT bool pls_is_vertical_sceneitem(obs_sceneitem_t *item);
 
+EXPORT obs_sceneitem_t *pls_vertical_sceneitem_get_parent_group(obs_scene_t *scene_v, obs_sceneitem_t *group_subitem_v);
+
 EXPORT bool pls_is_vertical_scene_or_group(obs_source_t *source);
 
 /** Enumerates sources include landscape and vertical */
-EXPORT obs_data_array_t *pls_save_sources_filtered_all(obs_save_source_filter_cb cb,
-						void *data_);
+EXPORT obs_data_array_t *pls_save_sources_filtered_all(obs_save_source_filter_cb cb, void *data_);
 
 EXPORT obs_data_t *pls_save_source_smart(obs_source_t *source, bool bypass_vertical);
 
 /** Enumerates sources within a scene include landscape and vertical */
-EXPORT void pls_scene_enum_items_all(obs_scene_t *scene,
-				     bool (*callback)(obs_scene_t *,
-						      obs_sceneitem_t *,
-						      void *),
+EXPORT void pls_scene_enum_items_all(obs_scene_t *scene, bool (*callback)(obs_scene_t *, obs_sceneitem_t *, void *),
 				     void *param);
 
-EXPORT obs_data_t *pls_scene_save_transform_states_all(obs_scene_t *scene,
-						       bool all_items);
+EXPORT obs_data_t *pls_scene_save_transform_states_all(obs_scene_t *scene, bool all_items);
 
-
-EXPORT void pls_sceneitem_group_enum_items_all(
-	obs_sceneitem_t *group,
-	bool (*callback)(obs_scene_t *, obs_sceneitem_t *, void *),
-	void *param);
+EXPORT void pls_sceneitem_group_enum_items_all(obs_sceneitem_t *group,
+					       bool (*callback)(obs_scene_t *, obs_sceneitem_t *, void *), void *param);
 
 EXPORT void pls_enum_hotkeys_all(obs_hotkey_enum_func func, void *data);
 
+EXPORT void pls_enum_hotkey_bindings_all(obs_hotkey_binding_enum_func func, void *data);
 
-EXPORT void pls_enum_hotkey_bindings_all(obs_hotkey_binding_enum_func func,
-				     void *data);
+EXPORT void pls_obs_hotkey_load_bindings(obs_hotkey_id id, obs_key_combination_t *combinations, size_t num);
+
+EXPORT void pls_obs_sceneitem_move_hotkeys(obs_scene_t *parent, obs_sceneitem_t *item);
 
 EXPORT bool pls_is_vertical_hotkey(obs_hotkey_t *hotkey);
+
+EXPORT bool pls_is_vertical_hotkey_id(obs_hotkey_id id);
+
+EXPORT bool pls_is_sceneitem_hotkey(obs_hotkey_t *hotkey);
+
+EXPORT bool pls_is_sceneitem_hotkey_id(obs_hotkey_id id);
 
 /** pls_scene_save_all: save all include vertical */
 /** scene_save: only save landscape */
@@ -88,6 +89,10 @@ EXPORT uint32_t pls_source_get_vertical_height(obs_source_t *source);
 /** Only for rendering*/
 EXPORT bool pls_get_video_info_current(struct obs_video_info *ovi);
 
+EXPORT void pls_set_dual_output_current_check_on();
+
+EXPORT void pls_set_dual_output_current_check_off();
+
 /** Only for rendering*/
 EXPORT bool pls_sceneitem_is_rendering(obs_sceneitem_t *item);
 
@@ -97,17 +102,46 @@ EXPORT bool pls_vertical_canvas_is_rendering();
 /** Only for rendering*/
 EXPORT bool pls_landscape_canvas_is_rendering();
 
+EXPORT bool pls_is_vertical_ovi(struct obs_video_info_v2 *ovi_v2);
+
+EXPORT bool pls_is_same_canvas(struct obs_video_info_v2 *ovi_v2_a, struct obs_video_info_v2 *ovi_v2_b);
+
 /** Create dual output scene **/
 EXPORT obs_scene_t *pls_create_vertical_scene(const char *name);
 
+EXPORT bool pls_bind_vertical_scene(obs_scene_t *real_scene, obs_scene_t *fake_scene);
+
+EXPORT obs_scene_t *pls_vertical_scene_get_real_scene(obs_scene_t *scene);
+
 /** Enum scenes list (including vertical scenes)**/
-EXPORT void pls_enum_all_scenes(bool (*enum_proc)(void *, obs_source_t *),
-				void *param);
+EXPORT void pls_enum_all_scenes(bool (*enum_proc)(void *, obs_source_t *), void *param);
+
+EXPORT void pls_enum_vertical_scenes(bool (*enum_proc)(void *, obs_source_t *), void *param);
 
 /** Check if a scene is used for dual output*/
 EXPORT bool pls_is_vertical_scene(obs_scene_t *scene);
 
+EXPORT bool pls_is_vertical_scene2(obs_source_t *source);
+
+EXPORT bool pls_is_vertical_group(obs_sceneitem_t *item);
+
 EXPORT bool pls_obs_is_rendering();
+
+EXPORT struct obs_scene_item *pls_scene_load_item(struct obs_scene *scene, obs_data_t *item_data,
+						  obs_source_t *item_source, obs_sceneitem_t *insert_after);
+
+EXPORT void pls_scene_save_item(obs_data_t *item_data, struct obs_scene_item *item);
+
+typedef struct PLS_SCENEITEM_HOTKEY_IDS {
+	obs_hotkey_id hotkey_id_0;
+	obs_hotkey_id hotkey_id_1;
+	obs_hotkey_pair_id hotkey_pair_id;
+} PLS_SCENEITEM_HOTKEY_IDS;
+
+EXPORT void pls_get_sceneitem_hotkey_ids(struct obs_scene_item *item, PLS_SCENEITEM_HOTKEY_IDS *ids);
+
+EXPORT void pls_obs_sceneitem_group_add_item(obs_sceneitem_t *group, obs_sceneitem_t *item,
+					     obs_sceneitem_t *insert_after);
 
 #ifdef __cplusplus
 }

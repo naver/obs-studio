@@ -339,7 +339,7 @@ RTMP_TLS_LoadCerts(RTMP *r) {
 
     CFRelease(anchors);
 
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
     if (mbedtls_x509_crt_parse_path(chain, "/etc/ssl/certs/") < 0) {
         RTMP_Log(RTMP_LOGERROR, "mbedtls_x509_crt_parse_path: Couldn't parse "
             "/etc/ssl/certs");
@@ -1015,14 +1015,17 @@ RTMP_Connect1(RTMP *r, RTMPPacket *cp)
         }
         r->m_msgCounter = 0;
     }
-    RTMP_Log(RTMP_LOGDEBUG, "%s, ... connected, handshaking", __FUNCTION__);
+     //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+    RTMP_Log(RTMP_LOGINFO, "%s, ... [rtmp io] connected, handshaking", __FUNCTION__);
+
     if (!HandShake(r, TRUE))
     {
-        RTMP_Log(RTMP_LOGERROR, "%s, handshake failed.", __FUNCTION__);
+        RTMP_Log(RTMP_LOGERROR, "%s, [rtmp io] handshake failed.", __FUNCTION__);
         RTMP_Close(r);
         return FALSE;
     }
-    RTMP_Log(RTMP_LOGDEBUG, "%s, handshaked", __FUNCTION__);
+     //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+    RTMP_Log(RTMP_LOGINFO, "%s, [rtmp io] handshaked", __FUNCTION__);
 
     if (!SendConnectPacket(r, cp))
     {
@@ -1106,6 +1109,11 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp)
                     __FUNCTION__, socketerror(err), err);
         r->last_error_code = err;
         goto fail;
+    }
+    
+	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
+    if (he_result == 0) {
+            RTMP_Log(RTMP_LOGINFO, "[rtmp io] successed to connect rtmp server");
     }
 
     happy_eyeballs_get_remote_addr(happy_ctx, &r->m_sb.sb_addr);
@@ -1309,6 +1317,12 @@ RTMP_GetNextMediaPacket(RTMP *r, RTMPPacket *packet)
 int
 RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
 {
+	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
+    if (packet->m_packetType != RTMP_PACKET_TYPE_INVOKE  && packet->m_packetType != RTMP_PACKET_TYPE_FLEX_MESSAGE)
+    {
+        RTMP_Log(RTMP_LOGINFO, "[rtmp io] server->client 0x%X", packet->m_packetType);
+    }
+  
     int bHasMediaPacket = 0;
     switch (packet->m_packetType)
     {
@@ -1597,7 +1611,8 @@ WriteN(RTMP *r, const char *buffer, int n)
         if (nBytes < 0)
         {
             int sockerr = GetSockError();
-            RTMP_Log(RTMP_LOGERROR, "%s, RTMP send error %d (%d bytes)", __FUNCTION__,
+            //PRISM/wangshaohui/20250106/noissue/add log for rtmp
+            RTMP_Log(RTMP_LOGERROR, "[rtmp io] %s, RTMP send error %d (%d bytes)", __FUNCTION__,
                      sockerr, n);
 
             if (sockerr == EINTR && !RTMP_ctrlC)
@@ -1620,7 +1635,11 @@ WriteN(RTMP *r, const char *buffer, int n)
         }
 
         if (nBytes == 0)
+        {
+            //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+            RTMP_Log(RTMP_LOGWARNING, "[rtmp io] %s, RTMP send 0 byte, socketerror:%d", __FUNCTION__, GetSockError());
             break;
+        }
 
         n -= nBytes;
         ptr += nBytes;
@@ -3128,7 +3147,10 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
     AMF_Dump(&obj);
     AMFProp_GetString(AMF_GetProp(&obj, NULL, 0), &method);
     txn = AMFProp_GetNumber(AMF_GetProp(&obj, NULL, 1));
-    RTMP_Log(RTMP_LOGDEBUG, "%s, server invoking <%s>", __FUNCTION__, method.av_val);
+
+	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
+    //RTMP_Log(RTMP_LOGDEBUG, "%s, server invoking <%s>", __FUNCTION__, method.av_val);
+    RTMP_Log(RTMP_LOGINFO, "[rtmp io] server->client 0x%X method=%s", RTMP_PACKET_TYPE_INVOKE, method.av_val ? method.av_val : "unknown");
 
     if (AVMATCH(&method, &av__result))
     {
@@ -4085,9 +4107,51 @@ RTMP_SendChunk(RTMP *r, RTMPChunk *chunk)
     return wrote;
 }
 
+//PRISM/wangshaohui/20250106/noissue/add log for rtmp
+static void LogSendPacket(RTMP *r, RTMPPacket *packet)
+{
+    if (packet->m_packetType != RTMP_PACKET_TYPE_INVOKE  && packet->m_packetType != RTMP_PACKET_TYPE_FLEX_MESSAGE)
+    {
+        if (packet->m_packetType == RTMP_PACKET_TYPE_AUDIO)
+        {
+            if (r->m_bFirstAudioArrived)
+                return;
+            else
+                r->m_bFirstAudioArrived = 1;
+        }
+        else if (packet->m_packetType == RTMP_PACKET_TYPE_VIDEO)
+        {
+            if (r->m_bFirstVideoArrived)
+                return;
+            else
+                r->m_bFirstVideoArrived = 1;
+        }
+    
+        RTMP_Log(RTMP_LOGINFO, "[rtmp io] client->server 0x%X", packet->m_packetType);
+        return;
+    }
+
+    // ------------------------------ handler for invoke packets ------------------------------ 
+    if (packet->m_body[0] != 0x02)		/* make sure it is a string method name we start with */
+        return;
+    
+    AMFObject obj;
+    int nRes = AMF_Decode(&obj, packet->m_body, packet->m_nBodySize, FALSE);
+    if (nRes < 0)
+        return;
+
+    AVal method;
+    AMFProp_GetString(AMF_GetProp(&obj, NULL, 0), &method);
+    
+    RTMP_Log(RTMP_LOGINFO, "[rtmp io] client->server 0x%X method=%s", packet->m_packetType, method.av_val ? method.av_val : "unknown");
+}
+
 int
 RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 {
+	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
+    LogSendPacket(r, packet);
+
     const RTMPPacket *prevPacket;
     uint32_t last = 0;
     int nSize;
@@ -4483,8 +4547,8 @@ RTMPSockBuf_Fill(RTMPSockBuf *sb)
         }
         else if (nBytes == 0)
         {
-            RTMP_Log(RTMP_LOGERROR, "%s, remote host closed connection",
-                     __FUNCTION__);
+            //PRISM/wangshaohui/20250106/noissue/add log for rtmp
+            RTMP_Log(RTMP_LOGERROR, "[rtmp io] %s, remote host closed connection", __FUNCTION__);
         }
         else
         {
@@ -4494,8 +4558,8 @@ RTMPSockBuf_Fill(RTMPSockBuf *sb)
                 level = RTMP_LOGDEBUG;
             else
                 level = RTMP_LOGERROR;
-            RTMP_Log(level, "%s, recv returned %d. GetSockError(): %d (%s)",
-                     __FUNCTION__, nBytes, sockerr, socketerror(sockerr));
+            //PRISM/wangshaohui/20250106/noissue/add log for rtmp
+            RTMP_Log(level, "[rtmp io] %s, recv returned %d. GetSockError(): %d (%s)", __FUNCTION__, nBytes, sockerr, socketerror(sockerr));
             if (sockerr == EINTR && !RTMP_ctrlC)
                 continue;
 

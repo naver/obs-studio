@@ -1,0 +1,79 @@
+ source/dshow-enum.cpp | 58 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/source/dshow-enum.cpp b/source/dshow-enum.cpp
+index 6a7548b..c5c53b3 100644
+--- a/source/dshow-enum.cpp
++++ b/source/dshow-enum.cpp
+@@ -30,6 +30,42 @@
+ 
+ #include "external/IVideoCaptureFilter.h"
+ 
++//PRISM/Xiewei/20231123/#2859/Only enumerate prism lens vcam devices.begin
++#include <mutex>
++#include <chrono>
++std::mutex g_device_mutex;
++std::wstring g_device_name;
++std::wstring g_device_path;
++std::chrono::steady_clock::time_point g_enum_start_time;
++static const int waitEnumTimeoutS = 10;
++extern "C" __declspec(dllexport) void pls_set_enum_device_info(const wchar_t* name, const wchar_t* path, int64_t start_time_point)
++{
++	std::lock_guard locker(g_device_mutex);
++	g_device_name = std::wstring(name ? name : L"");
++	g_device_path = std::wstring(path ? path : L"");
++	g_enum_start_time = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(start_time_point));
++}
++
++extern "C" __declspec(dllexport) bool pls_enum_timeout_device_name(wchar_t *buffer, size_t size)
++{
++	if (!buffer || 0 == size)
++		return false;
++
++	memset(buffer, 0, size);
++
++	std::lock_guard locker(g_device_mutex);
++	if (g_device_name.empty())
++		return false;
++
++	if (std::chrono::steady_clock::now() - g_enum_start_time > std::chrono::seconds(waitEnumTimeoutS)) {
++		_snwprintf(buffer, size, L"%ls", g_device_name.c_str());
++		return true;
++	}
++
++	return false;
++}
++//PRISM/Xiewei/20231123/#2859/Only enumerate prism lens vcam devices.end
++
+ namespace DShow {
+ using namespace std;
+ 
+@@ -474,6 +510,28 @@ static bool EnumDevice(const GUID &type, IMoniker *deviceInfo,
+ 
+ 	propertyData->Read(L"DevicePath", &devicePath, NULL);
+ 
++	//PRISM/Xiewei/20231123/#2859/modify libdshowcapture enumeration logic start.
++	struct ScopeCall {
++		ScopeCall(const std::wstring &name) : deviceName(name) {
++			startTime = std::chrono::steady_clock::now();
++			pls_set_enum_device_info(
++				deviceName.c_str(), nullptr,
++				startTime.time_since_epoch()
++					.count());
++			DShow::Info(L"[dshow-enum] enumerate device: '%s' start.", deviceName.c_str());
++		}
++		~ScopeCall()
++		{
++			pls_set_enum_device_info(NULL, NULL, 0);
++			DShow::Info(
++				L"[dshow-enum] enumerate device: '%s' end. (%lld ms)",
++				deviceName.c_str(), std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startTime).count());
++		};
++		std::wstring deviceName;
++		std::chrono::steady_clock::time_point startTime;
++	} autoCall(std::wstring(deviceName.bstrVal ? deviceName.bstrVal : L""));
++	//PRISM/Xiewei/20231123/#2859/modify libdshowcapture enumeration logic end.
++
+ 	hr = deviceInfo->BindToObject(NULL, 0, IID_IBaseFilter,
+ 				      (void **)&filter);
+ 	if (SUCCEEDED(hr)) {

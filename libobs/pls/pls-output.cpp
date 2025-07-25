@@ -4,6 +4,7 @@
 #include <mutex>
 #include <chrono>
 #include <optional>
+#include <string>
 
 std::recursive_mutex mutex;
 std::map<void *, std::chrono::steady_clock::time_point> g_logTimeGap;
@@ -16,9 +17,7 @@ static std::optional<uint64_t> getTimeGapMs(void *rtmp)
 
 	if (auto iter = g_logTimeGap.find(rtmp); iter != g_logTimeGap.end()) {
 		auto now = std::chrono::steady_clock::now();
-		value = std::chrono::duration_cast<std::chrono::milliseconds>(
-				now - (*iter).second)
-				.count();
+		value = std::chrono::duration_cast<std::chrono::milliseconds>(now - (*iter).second).count();
 	}
 
 	return value;
@@ -39,11 +38,16 @@ void pls_rtmp_log_event_time_gap(void *rtmp, void *output, const char *event)
 	if (rtmp && output && event) {
 		if (auto gap = getTimeGapMs(rtmp); gap.has_value()) {
 			//PRISM/Xiewei/20241104/PRISM_PC-1673/Add logs
-			const char *fields[][2] = {
-				{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
-			blogex(false, LOG_INFO, fields, 1,
-			       "output=%p rtmp=%p Connection rtmp <-> %s. time gap: %lld ms",
-			       output, rtmp, event, gap.value());
+			char pointer_buf[50] = {0};
+			snprintf(pointer_buf, sizeof(pointer_buf), "%p", output);
+			auto gap_s = std::to_string(gap.value());
+			const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
+						   {"output", pointer_buf},
+						   "rtmpTimeGap",
+						   gap_s.c_str()};
+			blogex(false, LOG_INFO, fields, 3,
+			       "output=%p rtmp=%p Connection rtmp <-> %s. time gap: %lld ms", output, rtmp, event,
+			       gap.value());
 		}
 	}
 }

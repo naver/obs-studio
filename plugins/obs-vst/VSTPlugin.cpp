@@ -45,9 +45,7 @@ ScanVstInfo::ScanVstInfo(std::string vst)
 
 ScanVstInfo::~ScanVstInfo() {}
 
-ScanVstThread::ScanVstThread(VSTPlugin *p, void *s)
-	: plugin(p),
-	  sourceContext(s)
+ScanVstThread::ScanVstThread(VSTPlugin *p, void *s) : plugin(p), sourceContext(s)
 {
 	qRegisterMetaType<SCAN_VST_INFO_PTR>("SCAN_VST_INFO_PTR");
 
@@ -62,8 +60,7 @@ ScanVstThread::~ScanVstThread()
 void ScanVstThread::run()
 {
 	scanProcess = new QProcess(this);
-	connect(scanProcess, &QProcess::stateChanged, this,
-		&ScanVstThread::ScanStateChanged);
+	connect(scanProcess, &QProcess::stateChanged, this, &ScanVstThread::ScanStateChanged);
 	this->exec();
 }
 
@@ -85,19 +82,16 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 
 	char *exe_path = os_get_executable_path_ptr(VST_CHECK);
 
-	QString vst_path = QStringLiteral("--vst-path=") +
-			   QString::fromUtf8(info->path.c_str());
+	QString vst_path = QStringLiteral("--vst-path=") + QString::fromUtf8(info->path.c_str());
 #if defined(_WIN32)
 	char *m = pls_get_module_file_name_ptr("obs-vst.dll");
-	QString module_file_name = QStringLiteral("--vst-module-path=") +
-				   QString::fromUtf8(m ? m : "");
+	QString module_file_name = QStringLiteral("--vst-module-path=") + QString::fromUtf8(m ? m : "");
 	if (m)
 		bfree(m);
 #elif defined(__APPLE__)
 	auto pluginPath = getVstLibraryPath();
 	QString module_file_name =
-		QStringLiteral("--vst-module-path=") +
-		QString::fromUtf8(pluginPath.c_str(), pluginPath.length());
+		QStringLiteral("--vst-module-path=") + QString::fromUtf8(pluginPath.c_str(), pluginPath.length());
 #endif
 
 	if (scanProcess->state() == QProcess::Running)
@@ -106,18 +100,16 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 	auto st = os_gettime_ns();
 
 #if defined(_WIN32)
-	scanProcess->setCreateProcessArgumentsModifier(
-		[](QProcess::CreateProcessArguments *args) {
-			STARTUPINFO si = {};
-			si.cb = sizeof(STARTUPINFO);
-			si.dwFlags = STARTF_FORCEOFFFEEDBACK;
-			si.wShowWindow = SW_HIDE;
-			memcpy(args->startupInfo, &si, sizeof(STARTUPINFO));
-		});
+	scanProcess->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+		STARTUPINFO si = {};
+		si.cb = sizeof(STARTUPINFO);
+		si.dwFlags = STARTF_FORCEOFFFEEDBACK;
+		si.wShowWindow = SW_HIDE;
+		memcpy(args->startupInfo, &si, sizeof(STARTUPINFO));
+	});
 #endif
 
-	scanProcess->start(QString::fromUtf8(exe_path),
-			   {vst_path, module_file_name});
+	scanProcess->start(QString::fromUtf8(exe_path), {vst_path, module_file_name});
 	if (exe_path)
 		bfree(exe_path);
 
@@ -132,8 +124,7 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 		scanProcess->kill();
 
 		auto tm = os_gettime_ns() - st;
-		info("Scan process exit code: %u, take time: %llu ms", exitCode,
-		     tm / 1000000);
+		info("Scan process exit code: %u, take time: %llu ms", exitCode, tm / 1000000);
 
 		if (exitStatus == QProcess::CrashExit) {
 			warn("VST scan process crashed");
@@ -141,14 +132,12 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 		} else {
 			if (exitCode < VST_STATUS_SCAN_RESULT_END) {
 				result = (enum obs_vst_verify_state)exitCode;
-			} else if (exitCode >
-				   VST_STATUS_PROCESS_UNKNOWN_ERROR) {
+			} else if (exitCode > VST_STATUS_PROCESS_UNKNOWN_ERROR) {
 				warn("Scan process return unknown exit code: %u, it will be treated as CRASH",
 				     exitCode);
 				result = VST_STATUS_CRASH;
 			} else {
-				warn("Scan process return unknown exit code: %u",
-				     exitCode);
+				warn("Scan process return unknown exit code: %u", exitCode);
 				result = (enum obs_vst_verify_state)exitCode;
 				assert(false);
 			}
@@ -194,14 +183,12 @@ void ScanVstThread::startScanVST(SCAN_VST_INFO_PTR info)
 			warn("No vst check result, set it to unknown error.");
 			info->state = VST_STATUS_UNKNOWN_ERROR;
 		}
-		QMetaObject::invokeMethod(plugin, "scanFinish",
-					  Q_ARG(SCAN_VST_INFO_PTR, info));
+		QMetaObject::invokeMethod(plugin, "scanFinish", Q_ARG(SCAN_VST_INFO_PTR, info));
 	}
 }
 
-intptr_t VSTPlugin::hostCallback_static(AEffect *effect, int32_t opcode,
-					int32_t index, intptr_t value,
-					void *ptr, float opt)
+intptr_t VSTPlugin::hostCallback_static(AEffect *effect, int32_t opcode, int32_t index, intptr_t value, void *ptr,
+					float opt)
 {
 	UNUSED_PARAMETER(opt);
 
@@ -290,8 +277,7 @@ VSTPlugin::~VSTPlugin()
 
 void VSTPlugin::NotifyStop()
 {
-	QMetaObject::invokeMethod(scanThread, "stopScanVST",
-				  Qt::QueuedConnection);
+	QMetaObject::invokeMethod(scanThread, "stopScanVST", Qt::QueuedConnection);
 }
 
 void VSTPlugin::createChannelBuffers(size_t count)
@@ -299,17 +285,15 @@ void VSTPlugin::createChannelBuffers(size_t count)
 	cleanupChannelBuffers();
 
 	int blocksize = BLOCK_SIZE;
-	numChannels = (std::max)((size_t)0, count);
+	numChannels = std::max((size_t)0, count);
 
 	if (numChannels > 0) {
 		inputs = (float **)malloc(sizeof(float *) * numChannels);
 		outputs = (float **)malloc(sizeof(float *) * numChannels);
 		channelrefs = (float **)malloc(sizeof(float *) * numChannels);
 		for (size_t channel = 0; channel < numChannels; channel++) {
-			inputs[channel] =
-				(float *)malloc(sizeof(float) * blocksize);
-			outputs[channel] =
-				(float *)malloc(sizeof(float) * blocksize);
+			inputs[channel] = (float *)malloc(sizeof(float) * blocksize);
+			outputs[channel] = (float *)malloc(sizeof(float) * blocksize);
 		}
 	}
 }
@@ -347,13 +331,11 @@ void VSTPlugin::checkActionLog(const std::string &path)
 
 	{
 		std::lock_guard<std::recursive_mutex> lock(lockPlugin);
-		pushActionLog = (!pluginPath.empty() && !path.empty() &&
-				 pluginPath != path);
+		pushActionLog = (!pluginPath.empty() && !path.empty() && pluginPath != path);
 	}
 
 	if (pushActionLog) {
-		std::string target =
-			QFileInfo(path.c_str()).fileName().toStdString();
+		std::string target = QFileInfo(path.c_str()).fileName().toStdString();
 
 		obs_data_t *log = obs_data_create();
 		obs_data_set_string(log, "vstPlugin", target.c_str());
@@ -407,8 +389,7 @@ void VSTPlugin::updateVst(std::string path, bool openUIWhenActive)
 		return;
 
 	} else {
-		info("User selected new VST plugin: '%s'",
-		     qUtf8Printable(fileName));
+		info("User selected new VST plugin: '%s'", qUtf8Printable(fileName));
 	}
 
 	unloadEffect();
@@ -435,8 +416,7 @@ void VSTPlugin::updateVst(std::string path, bool openUIWhenActive)
 
 		if (cache.dllHash.length() > 0) {
 			currentScanInfo->state = cache.state;
-			info("Find cached scan result for: '%s'",
-			     qUtf8Printable(fileName));
+			info("Find cached scan result for: '%s'", qUtf8Printable(fileName));
 			scanFinish(currentScanInfo);
 			return;
 		}
@@ -446,8 +426,7 @@ void VSTPlugin::updateVst(std::string path, bool openUIWhenActive)
 
 	pls_vst_state_changed(sourceContext, path.c_str(), VST_STATUS_CHECKING);
 
-	QMetaObject::invokeMethod(scanThread, "startScanVST",
-				  Q_ARG(SCAN_VST_INFO_PTR, currentScanInfo));
+	QMetaObject::invokeMethod(scanThread, "startScanVST", Q_ARG(SCAN_VST_INFO_PTR, currentScanInfo));
 }
 
 void VSTPlugin::clearVst()
@@ -471,9 +450,7 @@ void VSTPlugin::clearVst()
 	}
 }
 
-void VSTPlugin::realUpdateVst(const std::string &path,
-			      enum obs_vst_verify_state &state,
-			      const QString &hash)
+void VSTPlugin::realUpdateVst(const std::string &path, enum obs_vst_verify_state &state, const QString &hash)
 {
 	loadEffectFromPath(path, state, hash);
 
@@ -485,15 +462,12 @@ void VSTPlugin::realUpdateVst(const std::string &path,
 	obs_data_t *settings = obs_source_get_settings(sourceContext);
 	const char *chunkData = obs_data_get_string(settings, "chunk_data");
 	const char *chunkHash = obs_data_get_string(settings, "chunk_hash");
-	if (chunkData && (*chunkData) && chunkHash && (*chunkHash) &&
-	    (hash == QString(chunkHash)))
+	if (chunkData && (*chunkData) && chunkHash && (*chunkHash) && (hash == QString(chunkHash)))
 		setChunk(std::string(chunkData));
 	obs_data_release(settings);
 }
 
-void VSTPlugin::loadEffectFromPath(const std::string &path,
-				   enum obs_vst_verify_state state,
-				   const QString &hash)
+void VSTPlugin::loadEffectFromPath(const std::string &path, enum obs_vst_verify_state state, const QString &hash)
 {
 	checkActionLog(path);
 
@@ -544,8 +518,7 @@ void VSTPlugin::loadEffectFromPath(const std::string &path,
 
 	// PRISM/WangShaohui/20211124/noissue/modify vst init code, refer to
 	// https://github.com/audacity/audacity
-	if ((effect->flags & effFlagsIsSynth) ||
-	    !(effect->flags & effFlagsCanReplacing)) {
+	if ((effect->flags & effFlagsIsSynth) || !(effect->flags & effFlagsCanReplacing)) {
 		warn("flag is bad");
 		return;
 	}
@@ -568,14 +541,12 @@ void VSTPlugin::loadEffectFromPath(const std::string &path,
 	mTimeInfo.tempo = 120.0;
 	mTimeInfo.timeSigNumerator = 4;
 	mTimeInfo.timeSigDenominator = 4;
-	mTimeInfo.flags = kVstTempoValid | kVstNanosValid |
-			  kVstTransportPlaying;
+	mTimeInfo.flags = kVstTempoValid | kVstNanosValid | kVstTransportPlaying;
 
 	// PRISM/WangShaohui/20211124/noissue/modify vst init code, refer to
 	// https://github.com/audacity/audacity
 	effect->dispatcher(effect, effSetSampleRate, 0, 0, nullptr, sampleRate);
-	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr,
-			   0.0f);
+	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr, 0.0f);
 
 	// Ask the plugin to identify itself...might be needed for older plugins
 	effect->dispatcher(effect, effIdentify, 0, 0, nullptr, 0.0f);
@@ -584,8 +555,7 @@ void VSTPlugin::loadEffectFromPath(const std::string &path,
 
 	// Set some default properties
 	effect->dispatcher(effect, effSetSampleRate, 0, 0, nullptr, sampleRate);
-	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr,
-			   0.0f);
+	effect->dispatcher(effect, effSetBlockSize, 0, BLOCK_SIZE, nullptr, 0.0f);
 
 	effect->dispatcher(effect, effMainsChanged, 0, 1, nullptr, 0);
 
@@ -619,32 +589,24 @@ void VSTPlugin::process(struct obs_audio_data *audio)
 		uint passes = (audio->frames + BLOCK_SIZE - 1) / BLOCK_SIZE;
 		uint extra = audio->frames % BLOCK_SIZE;
 		for (uint pass = 0; pass < passes; pass++) {
-			uint frames = pass == passes - 1 && extra ? extra
-								  : BLOCK_SIZE;
+			uint frames = pass == passes - 1 && extra ? extra : BLOCK_SIZE;
 			silenceChannel(outputs, numChannels, BLOCK_SIZE);
 
 			for (size_t d = 0; d < numChannels; d++) {
-				if (d < MAX_AV_PLANES &&
-				    audio->data[d] != nullptr) {
-					channelrefs[d] =
-						((float *)audio->data[d]) +
-						(pass * BLOCK_SIZE);
+				if (d < MAX_AV_PLANES && audio->data[d] != nullptr) {
+					channelrefs[d] = ((float *)audio->data[d]) + (pass * BLOCK_SIZE);
 				} else {
 					channelrefs[d] = inputs[d];
 				}
 			};
 
-			effect->processReplacing(effect, channelrefs, outputs,
-						 frames);
+			effect->processReplacing(effect, channelrefs, outputs, frames);
 
 			// only copy back the channels the plugin may have generated
-			for (size_t c = 0; c < (size_t)effect->numOutputs &&
-					   c < MAX_AV_PLANES;
-			     c++) {
+			for (size_t c = 0; c < (size_t)effect->numOutputs && c < MAX_AV_PLANES; c++) {
 				if (audio->data[c]) {
 					for (size_t i = 0; i < frames; i++) {
-						channelrefs[c][i] =
-							outputs[c][i];
+						channelrefs[c][i] = outputs[c][i];
 					}
 				}
 			}
@@ -663,10 +625,8 @@ void VSTPlugin::unloadEffect()
 		effectReady = false;
 
 		if (effect) {
-			effect->dispatcher(effect, effMainsChanged, 0, 0,
-					   nullptr, 0);
-			effect->dispatcher(effect, effClose, 0, 0, nullptr,
-					   0.0f);
+			effect->dispatcher(effect, effMainsChanged, 0, 0, nullptr, 0);
+			effect->dispatcher(effect, effClose, 0, 0, nullptr, 0.0f);
 		}
 
 		effect = nullptr;
@@ -683,11 +643,72 @@ void VSTPlugin::onEditorClosed()
 	editorWidget->deleteLater();
 	editorWidget = nullptr;
 
-	if (effect && editorOpenned) {
-		editorOpenned = false;
+	if (effect && editorOpened) {
+		editorOpened = false;
 		effect->dispatcher(effect, effEditClose, 0, 0, nullptr, 0);
 	}
 }
+
+void VSTPlugin::openEditor()
+{
+	if (effect && effectReady) {
+		if (!(effect->flags & effFlagsHasEditor)) {
+			warn("Can't support edit feature");
+			return;
+		}
+
+		//PRISM/yoann.xie/20250423/Upgrade to obs 31 start
+		if (editorWidget) {
+			if (Qt::WindowMinimized & editorWidget->windowState()) {
+				editorWidget->setWindowState(editorWidget->windowState() ^ Qt::WindowMinimized |
+							     Qt::WindowActive);
+			}
+#if defined(_WIN32)
+			::SetActiveWindow((HWND)editorWidget->winId());
+#elif defined(_APPLE_)
+			QApplication::setAcviveWindow(editorWidget);
+#endif
+			return;
+		}
+		//PRISM/yoann.xie/20250423/Upgrade to obs 31 end
+
+		editorOpened = true;
+		editorWidget = new EditorWidget(nullptr, this, sourceContext);
+		editorWidget->buildEffectContainer(effect);
+
+		if (sourceName.empty()) {
+			sourceName = "VST 2.x";
+		}
+
+		if (filterName.empty()) {
+			editorWidget->setWindowTitle(QString("%1 - %2").arg(sourceName.c_str(), effectName));
+		} else {
+			editorWidget->setWindowTitle(
+				QString("%1: %2 - %3").arg(sourceName.c_str(), filterName.c_str(), effectName));
+		}
+
+		//PRISM/yoann.xie/20250423/if modal widget is showing, lower the vst interface.
+		auto modalWidget = QApplication::activeModalWidget();
+		if (modalWidget) {
+			editorWidget->show();
+			modalWidget->raise();
+		} else {
+			editorWidget->show();
+		}
+	}
+}
+
+void VSTPlugin::closeEditor()
+{
+	if (editorWidget)
+		editorWidget->close();
+}
+
+//PRISM/yoann.xie/20250423/Upgrade to obs 31, we don't need this function anymore
+//std::string VSTPlugin::getEffectPath()
+//{
+//	return pluginPath;
+//}
 
 std::string VSTPlugin::getChunk()
 {
@@ -698,8 +719,7 @@ std::string VSTPlugin::getChunk()
 	if (effect->flags & effFlagsProgramChunks) {
 		void *buf = nullptr;
 
-		intptr_t chunkSize = effect->dispatcher(effect, effGetChunk, 1,
-							0, &buf, 0.0);
+		intptr_t chunkSize = effect->dispatcher(effect, effGetChunk, 1, 0, &buf, 0.0);
 
 		QByteArray data = QByteArray((char *)buf, chunkSize);
 		return QString(data.toBase64()).toStdString();
@@ -711,8 +731,7 @@ std::string VSTPlugin::getChunk()
 		}
 
 		const char *bytes = reinterpret_cast<const char *>(&params[0]);
-		QByteArray data =
-			QByteArray(bytes, (int)(sizeof(float) * params.size()));
+		QByteArray data = QByteArray(bytes, (int)(sizeof(float) * params.size()));
 		std::string encoded = QString(data.toBase64()).toStdString();
 		return encoded;
 	}
@@ -725,21 +744,17 @@ void VSTPlugin::setChunk(std::string data)
 	}
 
 	if (effect->flags & effFlagsProgramChunks) {
-		QByteArray base64Data =
-			QByteArray(data.c_str(), (int)data.length());
+		QByteArray base64Data = QByteArray(data.c_str(), (int)data.length());
 		QByteArray chunkData = QByteArray::fromBase64(base64Data);
 		void *buf = nullptr;
 		buf = chunkData.data();
-		effect->dispatcher(effect, effSetChunk, 1, chunkData.length(),
-				   buf, 0);
+		effect->dispatcher(effect, effSetChunk, 1, chunkData.length(), buf, 0);
 	} else {
-		QByteArray base64Data =
-			QByteArray(data.c_str(), (int)data.length());
+		QByteArray base64Data = QByteArray(data.c_str(), (int)data.length());
 		QByteArray paramData = QByteArray::fromBase64(base64Data);
 
 		const char *p_chars = paramData.data();
-		const float *p_floats =
-			reinterpret_cast<const float *>(p_chars);
+		const float *p_floats = reinterpret_cast<const float *>(p_chars);
 
 		auto size = paramData.length() / sizeof(float);
 
@@ -760,64 +775,6 @@ void VSTPlugin::getSourceNames()
 	/* Only call inside the vst_filter_audio function! */
 	sourceName = obs_source_get_name(obs_filter_get_parent(sourceContext));
 	filterName = obs_source_get_name(sourceContext);
-}
-
-void VSTPlugin::openEditor()
-{
-	if (effect && effectReady) {
-		if (!(effect->flags & effFlagsHasEditor)) {
-			warn("Can't support edit feature");
-			return;
-		}
-
-		if (editorWidget) {
-			if (Qt::WindowMinimized & editorWidget->windowState()) {
-				editorWidget->setWindowState(
-					editorWidget->windowState() ^
-						Qt::WindowMinimized |
-					Qt::WindowActive);
-			}
-#if defined(_WIN32)
-			::SetActiveWindow((HWND)editorWidget->winId());
-#elif defined(_APPLE_)
-			QApplication::setAcviveWindow(editorWidget);
-#endif
-			return;
-		}
-
-		editorOpenned = true;
-		editorWidget = new EditorWidget(nullptr, this, sourceContext);
-		editorWidget->buildEffectContainer(effect);
-
-		if (sourceName.empty()) {
-			sourceName = "VST 2.x";
-		}
-
-		if (filterName.empty()) {
-			editorWidget->setWindowTitle(QString("%1 - %2").arg(
-				sourceName.c_str(), effectName));
-		} else {
-			editorWidget->setWindowTitle(
-				QString("%1: %2 - %3")
-					.arg(sourceName.c_str(),
-					     filterName.c_str(), effectName));
-		}
-
-		// if modal widget is showing, lower the vst interface.
-		auto modalWidget = QApplication::activeModalWidget();
-		if (modalWidget) {
-			editorWidget->show();
-			modalWidget->raise();
-		} else {
-			editorWidget->show();
-		}
-	}
-}
-
-void VSTPlugin::closeEditor()
-{
-	if (editorWidget)
-		editorWidget->close();
 }
 
 std::string getStateString(enum obs_vst_verify_state state)
@@ -863,8 +820,7 @@ void VSTPlugin::scanFinish(SCAN_VST_INFO_PTR info)
 
 	auto fileName = vst::getFileName(QString::fromUtf8(info->path.c_str()));
 
-	info("Got scan result for '%s' : %s", qUtf8Printable(fileName),
-	     getStateString(info->state).c_str());
+	info("Got scan result for '%s' : %s", qUtf8Printable(fileName), getStateString(info->state).c_str());
 	realUpdateVst(info->path, info->state, info->dllHash);
 
 	pls_vst_state_changed(sourceContext, info->path.c_str(), info->state);
@@ -880,8 +836,7 @@ void VSTPlugin::scanFinish(SCAN_VST_INFO_PTR info)
 		cache.dllHash = info->dllHash;
 		cache.state = info->state;
 		scanResultList.push_back(cache);
-		info("Push scan result into cache list '%s' : %s",
-		     qUtf8Printable(fileName),
+		info("Push scan result into cache list '%s' : %s", qUtf8Printable(fileName),
 		     getStateString(info->state).c_str());
 		break;
 	}

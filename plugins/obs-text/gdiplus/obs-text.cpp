@@ -16,15 +16,12 @@
 using namespace std;
 using namespace Gdiplus;
 
-#define warning(format, ...)                                           \
-	blog(LOG_WARNING, "[%s] " format, obs_source_get_name(source), \
-	     ##__VA_ARGS__)
+#define warning(format, ...) blog(LOG_WARNING, "[%s] " format, obs_source_get_name(source), ##__VA_ARGS__)
 
-#define warn_stat(call)                                                   \
-	do {                                                              \
-		if (stat != Ok)                                           \
-			warning("%s: %s failed (%d)", __FUNCTION__, call, \
-				(int)stat);                               \
+#define warn_stat(call)                                                               \
+	do {                                                                          \
+		if (stat != Ok)                                                       \
+			warning("%s: %s failed (%d)", __FUNCTION__, call, (int)stat); \
 	} while (false)
 
 #ifndef clamp
@@ -276,8 +273,7 @@ struct TextSource {
 
 	/* --------------------------- */
 
-	inline TextSource(obs_source_t *source_, obs_data_t *settings,
-			  bool old_extents_)
+	inline TextSource(obs_source_t *source_, obs_data_t *settings, bool old_extents_)
 		: source(source_),
 		  hdc(CreateCompatibleDC(nullptr)),
 		  graphics(hdc),
@@ -298,10 +294,8 @@ struct TextSource {
 	void UpdateFont();
 	void GetStringFormat(StringFormat &format);
 	void RemoveNewlinePadding(const StringFormat &format, RectF &box);
-	void CalculateTextSizes(const StringFormat &format, RectF &bounding_box,
-				SIZE &text_size);
-	void RenderOutlineText(Graphics &graphics, const GraphicsPath &path,
-			       const Brush &brush);
+	void CalculateTextSizes(const StringFormat &format, RectF &bounding_box, SIZE &text_size);
+	void RenderOutlineText(Graphics &graphics, const GraphicsPath &path, const Brush &brush);
 	void RenderText();
 	void LoadFileText();
 	void TransformText();
@@ -352,26 +346,29 @@ void TextSource::UpdateFont()
 			result = FindFontInInstalledCollection(lf);
 		}
 
+		char faceName[512] = {0};
+		if (lf.lfFaceName) {
+			size_t len = wcslen(lf.lfFaceName);
+			os_wcs_to_utf8(lf.lfFaceName, len, faceName, 512);
+		}
+
 		if (result) {
-			blog(LOG_INFO, "%p-%p: '%s' Load custom font: '%ls'.",
-			     (void *)source, (void *)this,
-			     obs_source_get_name(source), lf.lfFaceName);
+			blog(LOG_INFO, "%p-%p: '%s' Load custom font: '%s'.", (void *)source, (void *)this,
+			     obs_source_get_name(source), faceName);
 			return;
 		}
 
 		if (!pls_design_mode()) {
-			blog(LOG_INFO,
-			     "%p-%p: '%s' Failed to load custom font: '%ls'.",
-			     (void *)source, (void *)this,
-			     obs_source_get_name(source), lf.lfFaceName);
+
+			blog(LOG_INFO, "%p-%p: '%s' Failed to load custom font: '%s'.", (void *)source, (void *)this,
+			     obs_source_get_name(source), faceName);
 		} else {
 			wchar_t tip[256];
 			swprintf_s(
 				tip,
-				L"[Design-mode] Failed to load font: '%s', please ensure that you installed it into system.",
+				L"[Design-mode] Failed to load font: '%ls', please ensure that you installed it into system.",
 				lf.lfFaceName);
-			MessageBox(nullptr, tip, L"Text font error",
-				   MB_ICONWARNING);
+			MessageBox(nullptr, tip, L"Text font error", MB_ICONWARNING);
 		}
 	}
 	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts end
@@ -393,9 +390,15 @@ void TextSource::UpdateFont()
 			pls_enter_font_collection();
 			auto result = FindFontInPrivateCollection(lf);
 			pls_leave_font_collection();
-			blog(LOG_INFO,
-			     "Failed to load font: '%ls' by GDI+, find it in private collection. result: %d",
-			     lf.lfFaceName, result);
+
+			char faceName[512] = {0};
+			if (lf.lfFaceName) {
+				size_t len = wcslen(lf.lfFaceName);
+				os_wcs_to_utf8(lf.lfFaceName, len, faceName, 512);
+			}
+
+			blog(LOG_INFO, "Failed to load font: '%s' by GDI+, find it in private collection. result: %d",
+			     faceName, result);
 		} else {
 			fontFamily.reset(new FontFamily);
 			font->GetFamily(fontFamily.get());
@@ -412,8 +415,7 @@ void TextSource::GetStringFormat(StringFormat &format)
 		flags |= StringFormatFlagsMeasureTrailingSpaces;
 
 	if (vertical)
-		flags |= StringFormatFlagsDirectionVertical |
-			 StringFormatFlagsDirectionRightToLeft;
+		flags |= StringFormatFlagsDirectionVertical | StringFormatFlagsDirectionRightToLeft;
 
 	format.SetFormatFlags(flags);
 	format.SetTrimming(StringTrimmingWord);
@@ -469,12 +471,10 @@ void TextSource::RemoveNewlinePadding(const StringFormat &format, RectF &box)
 	RectF after;
 	Status stat;
 
-	stat = graphics.MeasureString(L"W", 2, font.get(), PointF(0.0f, 0.0f),
-				      &format, &before);
+	stat = graphics.MeasureString(L"W", 2, font.get(), PointF(0.0f, 0.0f), &format, &before);
 	warn_stat("MeasureString (without newline)");
 
-	stat = graphics.MeasureString(L"W\n", 3, font.get(), PointF(0.0f, 0.0f),
-				      &format, &after);
+	stat = graphics.MeasureString(L"W\n", 3, font.get(), PointF(0.0f, 0.0f), &format, &after);
 	warn_stat("MeasureString (with newline)");
 
 	float offset_cx = after.Width - before.Width;
@@ -502,8 +502,7 @@ void TextSource::RemoveNewlinePadding(const StringFormat &format, RectF &box)
 	box.Height -= offset_cy;
 }
 
-void TextSource::CalculateTextSizes(const StringFormat &format,
-				    RectF &bounding_box, SIZE &text_size)
+void TextSource::CalculateTextSizes(const StringFormat &format, RectF &bounding_box, SIZE &text_size)
 {
 	RectF layout_box;
 	RectF temp_box;
@@ -520,17 +519,14 @@ void TextSource::CalculateTextSizes(const StringFormat &format,
 				layout_box.Height -= outline_size;
 			}
 
-			stat = graphics.MeasureString(text.c_str(),
-						      (int)text.size() + 1,
-						      font.get(), layout_box,
+			stat = graphics.MeasureString(text.c_str(), (int)text.size() + 1, font.get(), layout_box,
 						      &format, &bounding_box);
 			warn_stat("MeasureString (wrapped)");
 
 			temp_box = bounding_box;
 		} else {
-			stat = graphics.MeasureString(
-				text.c_str(), (int)text.size() + 1, font.get(),
-				PointF(0.0f, 0.0f), &format, &bounding_box);
+			stat = graphics.MeasureString(text.c_str(), (int)text.size() + 1, font.get(),
+						      PointF(0.0f, 0.0f), &format, &bounding_box);
 			warn_stat("MeasureString (non-wrapped)");
 
 			temp_box = bounding_box;
@@ -573,19 +569,15 @@ void TextSource::CalculateTextSizes(const StringFormat &format,
 
 		if (!old_extents && !wrap) {
 			if (align == Align::Center) {
-				bounding_box.X +=
-					(extents_cx - bounding_box.Width) / 2;
+				bounding_box.X += (extents_cx - bounding_box.Width) / 2;
 			} else if (align == Align::Right) {
-				bounding_box.X +=
-					extents_cx - bounding_box.Width;
+				bounding_box.X += extents_cx - bounding_box.Width;
 			}
 
 			if (valign == VAlign::Center) {
-				bounding_box.Y +=
-					(extents_cy - bounding_box.Height) / 2;
+				bounding_box.Y += (extents_cy - bounding_box.Height) / 2;
 			} else if (valign == VAlign::Bottom) {
-				bounding_box.Y +=
-					extents_cy - bounding_box.Height;
+				bounding_box.Y += extents_cy - bounding_box.Height;
 			}
 		}
 	}
@@ -613,8 +605,7 @@ void TextSource::CalculateTextSizes(const StringFormat &format,
 	bounding_box.Height = temp_box.Height;
 }
 
-void TextSource::RenderOutlineText(Graphics &graphics, const GraphicsPath &path,
-				   const Brush &brush)
+void TextSource::RenderOutlineText(Graphics &graphics, const GraphicsPath &path, const Brush &brush)
 {
 	DWORD outline_rgba = calc_color(outline_color, outline_opacity);
 	Status stat;
@@ -642,14 +633,11 @@ void TextSource::RenderText()
 	CalculateTextSizes(format, box, size);
 
 	unique_ptr<uint8_t[]> bits(new uint8_t[size.cx * size.cy * 4]);
-	Bitmap bitmap(size.cx, size.cy, 4 * size.cx, PixelFormat32bppARGB,
-		      bits.get());
+	Bitmap bitmap(size.cx, size.cy, 4 * size.cx, PixelFormat32bppARGB, bits.get());
 
 	Graphics graphics_bitmap(&bitmap);
-	LinearGradientBrush brush(RectF(0, 0, (float)size.cx, (float)size.cy),
-				  Color(calc_color(color, opacity)),
-				  Color(calc_color(color2, opacity2)),
-				  gradient_dir, 1);
+	LinearGradientBrush brush(RectF(0, 0, (float)size.cx, (float)size.cy), Color(calc_color(color, opacity)),
+				  Color(calc_color(color2, opacity2)), gradient_dir, 1);
 	DWORD full_bk_color = bk_color & 0xFFFFFF;
 
 	if (!text.empty() || use_extents)
@@ -681,22 +669,17 @@ void TextSource::RenderText()
 			//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
 			//font->GetFamily(&family);
 			if (!fontFamily) {
-				blog(LOG_INFO,
-				     "Failed to use_outline: Invalid fontFamily!");
+				blog(LOG_INFO, "Failed to use_outline: Invalid fontFamily!");
 				return;
 			}
-			stat = path.AddString(text.c_str(), (int)text.size(),
-					      fontFamily.get(),
-					      font->GetStyle(), font->GetSize(),
-					      box, &format);
+			stat = path.AddString(text.c_str(), (int)text.size(), fontFamily.get(), font->GetStyle(),
+					      font->GetSize(), box, &format);
 			warn_stat("path.AddString");
 
 			RenderOutlineText(graphics_bitmap, path, brush);
 		} else {
-			stat = graphics_bitmap.DrawString(text.c_str(),
-							  (int)text.size(),
-							  font.get(), box,
-							  &format, &brush);
+			stat = graphics_bitmap.DrawString(text.c_str(), (int)text.size(), font.get(), box, &format,
+							  &brush);
 			warn_stat("graphics_bitmap.DrawString");
 		}
 	}
@@ -707,8 +690,7 @@ void TextSource::RenderText()
 			gs_texture_destroy(tex);
 
 		const uint8_t *data = (uint8_t *)bits.get();
-		tex = gs_texture_create(size.cx, size.cy, GS_BGRA, 1, &data,
-					GS_DYNAMIC);
+		tex = gs_texture_create(size.cx, size.cy, GS_BGRA, 1, &data, GS_DYNAMIC);
 
 		obs_leave_graphics();
 
@@ -767,8 +749,7 @@ void TextSource::TransformText()
 		f.tolower(&text[0], &text[0] + text.size());
 	else if (text_transform == S_TRANSFORM_STARTCASE) {
 		bool upper = true;
-		for (wstring::iterator it = text.begin(); it != text.end();
-		     ++it) {
+		for (wstring::iterator it = text.begin(); it != text.end(); ++it) {
 			const wchar_t upper_char = f.toupper(*it);
 			const wchar_t lower_char = f.tolower(*it);
 			if (upper && lower_char != upper_char) {
@@ -786,8 +767,7 @@ void TextSource::TransformText()
 void TextSource::SetAntiAliasing(Graphics &graphics_bitmap)
 {
 	if (!antialiasing) {
-		graphics_bitmap.SetTextRenderingHint(
-			TextRenderingHintSingleBitPerPixel);
+		graphics_bitmap.SetTextRenderingHint(TextRenderingHintSingleBitPerPixel);
 		graphics_bitmap.SetSmoothingMode(SmoothingModeNone);
 		return;
 	}
@@ -849,9 +829,8 @@ inline void TextSource::Update(obs_data_t *s)
 
 	wstring new_face = to_wide(font_face);
 
-	if (new_face != face || face_size != font_size || new_bold != bold ||
-	    new_italic != italic || new_underline != underline ||
-	    new_strikeout != strikeout) {
+	if (new_face != face || face_size != font_size || new_bold != bold || new_italic != italic ||
+	    new_underline != underline || new_strikeout != strikeout) {
 
 		face = new_face;
 		face_size = font_size;
@@ -941,8 +920,7 @@ inline void TextSource::Update(obs_data_t *s)
 			blog(LOG_INFO,
 			     "['%s'] (%p) plugin: %p update settings: \n"
 			     "%s",
-			     obs_source_get_name(source), (void *)source,
-			     (void *)this, json);
+			     obs_source_get_name(source), (void *)source, (void *)this, json);
 		}
 	}
 	//PRISM/Xiewei/20240325/#4640/add log
@@ -991,8 +969,7 @@ inline void TextSource::Render()
 	gs_technique_begin(tech);
 	gs_technique_begin_pass(tech, 0);
 
-	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"),
-				   tex);
+	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), tex);
 	gs_draw_sprite(tex, 0, cx, cy);
 
 	gs_technique_end_pass(tech);
@@ -1004,8 +981,7 @@ inline void TextSource::Render()
 //PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. start
 bool TextSource::FindFontInPrivateCollection(LOGFONT lf)
 {
-	auto privateFontCollection = static_cast<PrivateFontCollection *>(
-		pls_get_private_font_collection());
+	auto privateFontCollection = static_cast<PrivateFontCollection *>(pls_get_private_font_collection());
 	if (!privateFontCollection)
 		return false;
 
@@ -1017,8 +993,7 @@ bool TextSource::FindFontInInstalledCollection(LOGFONT lf)
 	return UpdateFontStyle(lf, &installed_fonts);
 }
 
-bool TextSource::UpdateFontStyle(LOGFONT lf,
-				 const FontCollection *fontCollection)
+bool TextSource::UpdateFontStyle(LOGFONT lf, const FontCollection *fontCollection)
 {
 	if (!fontCollection)
 		return false;
@@ -1030,21 +1005,16 @@ bool TextSource::UpdateFontStyle(LOGFONT lf,
 	int fontstyle = Gdiplus::FontStyleRegular;
 	if (bold && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold))
 		fontstyle = Gdiplus::FontStyleBold;
-	if (lf.lfItalic &&
-	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
+	if (lf.lfItalic && fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
 		fontstyle = Gdiplus::FontStyleItalic;
-	if (bold && lf.lfItalic &&
-	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold) &&
+	if (bold && lf.lfItalic && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold) &&
 	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
 		fontstyle = Gdiplus::FontStyleBoldItalic;
-	if (lf.lfUnderline &&
-	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleUnderline))
+	if (lf.lfUnderline && fontFamily->IsStyleAvailable(Gdiplus::FontStyleUnderline))
 		fontstyle |= Gdiplus::FontStyleUnderline;
-	if (lf.lfStrikeOut &&
-	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleStrikeout))
+	if (lf.lfStrikeOut && fontFamily->IsStyleAvailable(Gdiplus::FontStyleStrikeout))
 		fontstyle |= Gdiplus::FontStyleStrikeout;
-	font.reset(new Font(fontFamily.get(), static_cast<REAL>(lf.lfHeight),
-			    fontstyle, Gdiplus::UnitPixel));
+	font.reset(new Font(fontFamily.get(), static_cast<REAL>(lf.lfHeight), fontstyle, Gdiplus::UnitPixel));
 	if (font->GetLastStatus() != Gdiplus::Ok)
 		return false;
 	return true;
@@ -1068,8 +1038,7 @@ MODULE_EXPORT const char *obs_module_description(void)
 		obs_property_set_visible(p, var == show); \
 	} while (false)
 
-static bool use_file_changed(obs_properties_t *props, obs_property_t *p,
-			     obs_data_t *s)
+static bool use_file_changed(obs_properties_t *props, obs_property_t *p, obs_data_t *s)
 {
 	bool use_file = obs_data_get_bool(s, S_USE_FILE);
 
@@ -1078,8 +1047,7 @@ static bool use_file_changed(obs_properties_t *props, obs_property_t *p,
 	return true;
 }
 
-static bool outline_changed(obs_properties_t *props, obs_property_t *p,
-			    obs_data_t *s)
+static bool outline_changed(obs_properties_t *props, obs_property_t *p, obs_data_t *s)
 {
 	bool outline = obs_data_get_bool(s, S_OUTLINE);
 
@@ -1089,8 +1057,7 @@ static bool outline_changed(obs_properties_t *props, obs_property_t *p,
 	return true;
 }
 
-static bool chatlog_mode_changed(obs_properties_t *props, obs_property_t *p,
-				 obs_data_t *s)
+static bool chatlog_mode_changed(obs_properties_t *props, obs_property_t *p, obs_data_t *s)
 {
 	bool chatlog_mode = obs_data_get_bool(s, S_CHATLOG_MODE);
 
@@ -1098,8 +1065,7 @@ static bool chatlog_mode_changed(obs_properties_t *props, obs_property_t *p,
 	return true;
 }
 
-static bool gradient_changed(obs_properties_t *props, obs_property_t *p,
-			     obs_data_t *s)
+static bool gradient_changed(obs_properties_t *props, obs_property_t *p, obs_data_t *s)
 {
 	bool gradient = obs_data_get_bool(s, S_GRADIENT);
 
@@ -1109,8 +1075,7 @@ static bool gradient_changed(obs_properties_t *props, obs_property_t *p,
 	return true;
 }
 
-static bool extents_modified(obs_properties_t *props, obs_property_t *p,
-			     obs_data_t *s)
+static bool extents_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *s)
 {
 	bool use_extents = obs_data_get_bool(s, S_EXTENTS);
 
@@ -1152,53 +1117,40 @@ static obs_properties_t *get_properties(void *data)
 	}
 
 	obs_properties_add_text(props, S_TEXT, T_TEXT, OBS_TEXT_MULTILINE);
-	obs_properties_add_path(props, S_FILE, T_FILE, OBS_PATH_FILE,
-				filter.c_str(), path.c_str());
+	obs_properties_add_path(props, S_FILE, T_FILE, OBS_PATH_FILE, filter.c_str(), path.c_str());
 
 	obs_properties_add_bool(props, S_ANTIALIASING, T_ANTIALIASING);
 
-	p = obs_properties_add_list(props, S_TRANSFORM, T_TRANSFORM,
-				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	p = obs_properties_add_list(props, S_TRANSFORM, T_TRANSFORM, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(p, T_TRANSFORM_NONE, S_TRANSFORM_NONE);
-	obs_property_list_add_int(p, T_TRANSFORM_UPPERCASE,
-				  S_TRANSFORM_UPPERCASE);
-	obs_property_list_add_int(p, T_TRANSFORM_LOWERCASE,
-				  S_TRANSFORM_LOWERCASE);
-	obs_property_list_add_int(p, T_TRANSFORM_STARTCASE,
-				  S_TRANSFORM_STARTCASE);
+	obs_property_list_add_int(p, T_TRANSFORM_UPPERCASE, S_TRANSFORM_UPPERCASE);
+	obs_property_list_add_int(p, T_TRANSFORM_LOWERCASE, S_TRANSFORM_LOWERCASE);
+	obs_property_list_add_int(p, T_TRANSFORM_STARTCASE, S_TRANSFORM_STARTCASE);
 
 	obs_properties_add_bool(props, S_VERTICAL, T_VERTICAL);
 
 	obs_properties_add_color(props, S_COLOR, T_COLOR);
-	p = obs_properties_add_int_slider(props, S_OPACITY, T_OPACITY, 0, 100,
-					  1);
+	p = obs_properties_add_int_slider(props, S_OPACITY, T_OPACITY, 0, 100, 1);
 	obs_property_int_set_suffix(p, "%");
 
 	p = obs_properties_add_bool(props, S_GRADIENT, T_GRADIENT);
 	obs_property_set_modified_callback(p, gradient_changed);
 
 	obs_properties_add_color(props, S_GRADIENT_COLOR, T_GRADIENT_COLOR);
-	p = obs_properties_add_int_slider(props, S_GRADIENT_OPACITY,
-					  T_GRADIENT_OPACITY, 0, 100, 1);
+	p = obs_properties_add_int_slider(props, S_GRADIENT_OPACITY, T_GRADIENT_OPACITY, 0, 100, 1);
 	obs_property_int_set_suffix(p, "%");
-	obs_properties_add_float_slider(props, S_GRADIENT_DIR, T_GRADIENT_DIR,
-					0, 360, 0.1);
+	obs_properties_add_float_slider(props, S_GRADIENT_DIR, T_GRADIENT_DIR, 0, 360, 0.1);
 
 	obs_properties_add_color(props, S_BKCOLOR, T_BKCOLOR);
-	p = obs_properties_add_int_slider(props, S_BKOPACITY, T_BKOPACITY, 0,
-					  100, 1);
+	p = obs_properties_add_int_slider(props, S_BKOPACITY, T_BKOPACITY, 0, 100, 1);
 	obs_property_int_set_suffix(p, "%");
 
-	p = obs_properties_add_list(props, S_ALIGN, T_ALIGN,
-				    OBS_COMBO_TYPE_LIST,
-				    OBS_COMBO_FORMAT_STRING);
+	p = obs_properties_add_list(props, S_ALIGN, T_ALIGN, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(p, T_ALIGN_LEFT, S_ALIGN_LEFT);
 	obs_property_list_add_string(p, T_ALIGN_CENTER, S_ALIGN_CENTER);
 	obs_property_list_add_string(p, T_ALIGN_RIGHT, S_ALIGN_RIGHT);
 
-	p = obs_properties_add_list(props, S_VALIGN, T_VALIGN,
-				    OBS_COMBO_TYPE_LIST,
-				    OBS_COMBO_FORMAT_STRING);
+	p = obs_properties_add_list(props, S_VALIGN, T_VALIGN, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(p, T_VALIGN_TOP, S_VALIGN_TOP);
 	obs_property_list_add_string(p, T_VALIGN_CENTER, S_VALIGN_CENTER);
 	obs_property_list_add_string(p, T_VALIGN_BOTTOM, S_VALIGN_BOTTOM);
@@ -1208,15 +1160,13 @@ static obs_properties_t *get_properties(void *data)
 
 	obs_properties_add_int(props, S_OUTLINE_SIZE, T_OUTLINE_SIZE, 1, 20, 1);
 	obs_properties_add_color(props, S_OUTLINE_COLOR, T_OUTLINE_COLOR);
-	p = obs_properties_add_int_slider(props, S_OUTLINE_OPACITY,
-					  T_OUTLINE_OPACITY, 0, 100, 1);
+	p = obs_properties_add_int_slider(props, S_OUTLINE_OPACITY, T_OUTLINE_OPACITY, 0, 100, 1);
 	obs_property_int_set_suffix(p, "%");
 
 	p = obs_properties_add_bool(props, S_CHATLOG_MODE, T_CHATLOG_MODE);
 	obs_property_set_modified_callback(p, chatlog_mode_changed);
 
-	obs_properties_add_int(props, S_CHATLOG_LINES, T_CHATLOG_LINES, 1, 1000,
-			       1);
+	obs_properties_add_int(props, S_CHATLOG_LINES, T_CHATLOG_LINES, 1, 1000, 1);
 
 	p = obs_properties_add_bool(props, S_EXTENTS, T_EXTENTS);
 	obs_property_set_modified_callback(p, extents_modified);
@@ -1256,7 +1206,7 @@ static void defaults(obs_data_t *settings, int ver)
 	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
 	if (pls_design_mode()) {
 		obs_data_set_default_bool(settings, S_CUSTOM_FONT, true);
-	}else{
+	} else {
 		obs_data_set_default_bool(settings, S_CUSTOM_FONT, false);
 	}
 
@@ -1281,8 +1231,7 @@ bool obs_module_load(void)
 	obs_source_info si = {};
 	si.id = "text_gdiplus";
 	si.type = OBS_SOURCE_TYPE_INPUT;
-	si.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-			  OBS_SOURCE_CAP_OBSOLETE | OBS_SOURCE_SRGB;
+	si.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_CAP_OBSOLETE | OBS_SOURCE_SRGB;
 	si.get_properties = get_properties;
 	si.icon_type = OBS_ICON_TYPE_TEXT;
 
@@ -1325,11 +1274,8 @@ bool obs_module_load(void)
 
 		if (read && strcmp(path, "") != 0) {
 			if (!os_file_exists(path)) {
-				obs_missing_file_t *file =
-					obs_missing_file_create(
-						path, missing_file_callback,
-						OBS_MISSING_FILE_SOURCE,
-						s->source, NULL);
+				obs_missing_file_t *file = obs_missing_file_create(
+					path, missing_file_callback, OBS_MISSING_FILE_SOURCE, s->source, NULL);
 
 				obs_missing_files_add_file(files, file);
 			}

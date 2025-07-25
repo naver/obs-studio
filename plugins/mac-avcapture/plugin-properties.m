@@ -250,27 +250,31 @@ bool properties_update_device(OBSAVCapture *capture, obs_property_t *property, o
     AVCaptureDeviceDiscoverySession *muxedDiscoverySession =
         [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:deviceTypes mediaType:AVMediaTypeMuxed
                                                                 position:AVCaptureDevicePositionUnspecified];
-	
-	NSArray *allDevices = [videoDiscoverySession.devices arrayByAddingObjectsFromArray:muxedDiscoverySession.devices];
-	
-	NSArray *filteredDevices;
-	
-	// Do not sort devices for Capture Card source.
-	if (capture.isFastPath) {
-		filteredDevices = allDevices;
-	} else {
-		NSArray<NSString *> *priorityNames = @[@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3];
-		
-		NSArray *filteredArray = [allDevices filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF.localizedName != 'PRISM Live Studio'"]];
-		
-		NSArray<AVCaptureDevice *> *sortedDevices = [filteredArray sortedArrayUsingComparator:^NSComparisonResult(id  _Nonnull obj1, id  _Nonnull obj2) {
-			NSNumber *index1 = [[NSNumber alloc] initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *)obj1).localizedName]];
-			NSNumber *index2 = [[NSNumber alloc] initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *)obj2).localizedName]];
-			return [index1 compare:index2];
-		}];
-		
-		filteredDevices = sortedDevices;
-	}
+
+    NSArray *allDevices = [videoDiscoverySession.devices arrayByAddingObjectsFromArray:muxedDiscoverySession.devices];
+
+    NSArray *filteredDevices;
+
+    // Do not sort devices for Capture Card source.
+    if (capture.isFastPath) {
+        filteredDevices = allDevices;
+    } else {
+        NSArray<NSString *> *priorityNames = @[@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3];
+
+        NSArray *filteredArray = [allDevices
+            filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF.localizedName != 'PRISM Live Studio'"]];
+
+        NSArray<AVCaptureDevice *> *sortedDevices =
+            [filteredArray sortedArrayUsingComparator:^NSComparisonResult(id _Nonnull obj1, id _Nonnull obj2) {
+                NSNumber *index1 = [[NSNumber alloc]
+                    initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *) obj1).localizedName]];
+                NSNumber *index2 = [[NSNumber alloc]
+                    initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *) obj2).localizedName]];
+                return [index1 compare:index2];
+            }];
+
+        filteredDevices = sortedDevices;
+    }
 
     for (AVCaptureDevice *device in filteredDevices) {
         obs_property_list_add_string(property, device.localizedName.UTF8String, device.uniqueID.UTF8String);
@@ -525,41 +529,41 @@ bool properties_update_config(OBSAVCapture *capture, obs_properties_t *propertie
                     prop_color_space, [OBSAVCapture stringFromColorspace:color_space].UTF8String, color_space);
                 obs_property_list_item_disable(prop_color_space, index, true);
             }
-			//PRISM/cao.kewei/20240902/PRISM_PC-1085
+            //PRISM/cao.kewei/20240902/PRISM_PC-1085
         } else {
-			if (input_format == 0 || !hasFoundInputFormat) {
-				input_format = obs_property_list_item_int(prop_input_format, 0);
-				obs_data_set_int(settings, "input_format", input_format);
-			}
+            if (input_format == 0 || !hasFoundInputFormat) {
+                input_format = obs_property_list_item_int(prop_input_format, 0);
+                obs_data_set_int(settings, "input_format", input_format);
+            }
 
-			if (media_frames_per_second_is_valid(fps) == false || !hasFoundFramerate) {
-				for (AVCaptureDeviceFormat *format in device.formats) {
-					FourCharCode subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription);
-					int device_format = [OBSAVCapture formatFromSubtype:subtype];
+            if (media_frames_per_second_is_valid(fps) == false || !hasFoundFramerate) {
+                for (AVCaptureDeviceFormat *format in device.formats) {
+                    FourCharCode subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription);
+                    int device_format = [OBSAVCapture formatFromSubtype:subtype];
 
-					if (device_format == input_format) {
-						AVFrameRateRange *range = format.videoSupportedFrameRateRanges.firstObject;
+                    if (device_format == input_format) {
+                        AVFrameRateRange *range = format.videoSupportedFrameRateRanges.firstObject;
 
-						struct media_frames_per_second default_fps = {
-							.numerator = (uint32_t) clamp_Uint(range.minFrameDuration.timescale, 0, UINT32_MAX),
-							.denominator = (uint32_t) clamp_Uint(range.minFrameDuration.value, 0, UINT32_MAX)};
-						struct media_frames_per_second simple_default_fps;
-						simple_default_fps.numerator = default_fps.numerator / default_fps.denominator;
-						simple_default_fps.denominator = 1;
+                        struct media_frames_per_second default_fps = {
+                            .numerator = (uint32_t) clamp_Uint(range.minFrameDuration.timescale, 0, UINT32_MAX),
+                            .denominator = (uint32_t) clamp_Uint(range.minFrameDuration.value, 0, UINT32_MAX)};
+                        struct media_frames_per_second simple_default_fps;
+                        simple_default_fps.numerator = default_fps.numerator / default_fps.denominator;
+                        simple_default_fps.denominator = 1;
 
-						if (media_frames_per_second_is_valid(simple_default_fps)) {
-							obs_data_set_frames_per_second(settings, "frame_rate", simple_default_fps, NULL);
-							break;
-						}
-					}
-				}
-			}
+                        if (media_frames_per_second_is_valid(simple_default_fps)) {
+                            obs_data_set_frames_per_second(settings, "frame_rate", simple_default_fps, NULL);
+                            break;
+                        }
+                    }
+                }
+            }
 
-			if ((resolution.width == 0 || resolution.height == 0) || !hasFoundResolution) {
-				const char *default_resolution = obs_property_list_item_string(prop_resolution, 0);
-				obs_data_set_string(settings, "resolution", default_resolution);
-			}
-    	}
+            if ((resolution.width == 0 || resolution.height == 0) || !hasFoundResolution) {
+                const char *default_resolution = obs_property_list_item_string(prop_resolution, 0);
+                obs_data_set_string(settings, "resolution", default_resolution);
+            }
+        }
 
         if (!hasFoundResolution) {
             NSDictionary *resolutionData = @{@"width": @(resolution.width), @"height": @(resolution.height)};

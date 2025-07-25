@@ -21,8 +21,8 @@ static void *av_capture_create(obs_data_t *settings, obs_source_t *source)
     capture_data->isFastPath = false;
     capture_data->settings = settings;
     capture_data->source = source;
-    capture_data->videoFrame = bmalloc(sizeof(OBSAVCaptureVideoFrame));
-    capture_data->audioFrame = bmalloc(sizeof(OBSAVCaptureAudioFrame));
+    capture_data->videoFrame = bzalloc(sizeof(OBSAVCaptureVideoFrame));
+    capture_data->audioFrame = bzalloc(sizeof(OBSAVCaptureAudioFrame));
 
     OBSAVCapture *capture = [[OBSAVCapture alloc] initWithCaptureInfo:capture_data];
 
@@ -126,12 +126,12 @@ static void av_capture_update(void *av_capture, obs_data_t *settings)
     OBSAVCapture *capture = (__bridge OBSAVCapture *) (av_capture);
     capture.captureInfo->settings = settings;
 
-	//PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
-	obs_source_t *strong_source = obs_source_get_ref(capture.captureInfo->source);
-	if (strong_source) {
-		[capture updateSessionwithError:NULL];
-		obs_source_release(strong_source);
-	}
+    //PRISM/cao.kewei/20241030/PRISM_PC_NELO-3
+    obs_source_t *strong_source = obs_source_get_ref(capture.captureInfo->source);
+    if (strong_source) {
+        [capture updateSessionwithError:NULL];
+        obs_source_release(strong_source);
+    }
 }
 
 static void av_fast_capture_tick(void *av_capture, float seconds __unused)
@@ -234,33 +234,36 @@ static void av_capture_destroy(void *av_capture)
     if (!capture) {
         return;
     }
+    /// It is possible that the source's serial queue is still creating this source, so perform destruction
+    /// synchronously on that queue to ensure the source is fully initialized before being destroyed.
+    dispatch_sync(capture.sessionQueue, ^{
+        OBSAVCaptureInfo *capture_info = capture.captureInfo;
 
-    OBSAVCaptureInfo *capture_info = capture.captureInfo;
+        [capture stopCaptureSession];
+        [capture.deviceInput.device unlockForConfiguration];
 
-    [capture stopCaptureSession];
-    [capture.deviceInput.device unlockForConfiguration];
+        if (capture_info->isFastPath) {
+            pthread_mutex_destroy(&capture_info->mutex);
+        }
 
-    if (capture_info->isFastPath) {
-        pthread_mutex_destroy(&capture_info->mutex);
-    }
+        if (capture_info->videoFrame) {
+            bfree(capture_info->videoFrame);
+            capture_info->videoFrame = NULL;
+        }
 
-    if (capture_info->videoFrame) {
-        bfree(capture_info->videoFrame);
-        capture_info->videoFrame = NULL;
-    }
+        if (capture_info->audioFrame) {
+            bfree(capture_info->audioFrame);
+            capture_info->audioFrame = NULL;
+        }
 
-    if (capture_info->audioFrame) {
-        bfree(capture_info->audioFrame);
-        capture_info->audioFrame = NULL;
-    }
+        if (capture_info->sampleBufferDescription) {
+            capture_info->sampleBufferDescription = NULL;
+        }
 
-    if (capture_info->sampleBufferDescription) {
-        capture_info->sampleBufferDescription = NULL;
-    }
+        bfree(capture_info);
 
-    bfree(capture_info);
-
-    CFBridgingRelease((__bridge CFTypeRef _Nullable)(capture));
+        CFBridgingRelease((__bridge CFTypeRef _Nullable)(capture));
+    });
 }
 
 #pragma mark - OBS Module API
@@ -306,7 +309,7 @@ bool obs_module_load(void)
         .get_width = av_fast_capture_get_width,
         .get_height = av_fast_capture_get_height,
         //PRISM/cao.kewei/20240902/capture card source icon
-        .icon_type = (enum obs_icon_type)PLS_ICON_TYPE_CAPTURE_CARD,
+        .icon_type = (enum obs_icon_type) PLS_ICON_TYPE_CAPTURE_CARD,
     };
 
     obs_register_source(&av_capture_sync_info);

@@ -10,13 +10,11 @@ struct pls_load_all_callback_info {
 };
 
 //PRISM/Zhangdewen/20230117/#/load with filter
-static void pls_load_all_callback(void *param,
-				  const struct obs_module_info2 *info)
+static void pls_load_all_callback(void *param, const struct obs_module_info2 *info)
 {
 	struct pls_load_all_callback_info *laci = param;
 	if (laci->filter && !laci->filter(info->bin_path)) {
-		blog(LOG_INFO, "Should ignore loading module file '%s'",
-		     info->bin_path);
+		blog(LOG_INFO, "Should ignore loading module file '%s'", info->bin_path);
 		return;
 	}
 
@@ -52,8 +50,7 @@ void pls_load_all_modules(pls_load_module_filter_t filter)
 static const char *pls_load_all_modules2_name = "pls_load_all_modules2";
 
 //PRISM/Zhangdewen/20230117/#/load with filter
-void pls_load_all_modules2(struct obs_module_failure_info *mfi,
-			   pls_load_module_filter_t filter)
+void pls_load_all_modules2(struct obs_module_failure_info *mfi, pls_load_module_filter_t filter)
 {
 	struct pls_load_all_callback_info laci;
 	memset(&laci, 0, sizeof(laci));
@@ -72,8 +69,7 @@ void pls_load_all_modules2(struct obs_module_failure_info *mfi,
 	profile_end(pls_load_all_modules2_name);
 
 	mfi->count = laci.fi.fail_count;
-	mfi->failed_modules =
-		strlist_split(laci.fi.fail_modules.array, ';', false);
+	mfi->failed_modules = strlist_split(laci.fi.fail_modules.array, ';', false);
 	dstr_free(&laci.fi.fail_modules);
 }
 
@@ -83,9 +79,7 @@ static bool has_pls_export(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 {
 	__try {
 		PIMAGE_DATA_DIRECTORY data_dir;
-		data_dir =
-			&nt_headers->OptionalHeader
-				 .DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+		data_dir = &nt_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
 
 		if (data_dir->Size == 0)
 			return false;
@@ -97,8 +91,7 @@ static bool has_pls_export(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 		/* find the section that contains the export directory */
 		int i;
 		for (i = 0; i < nt_headers->FileHeader.NumberOfSections; i++) {
-			if (section->VirtualAddress <=
-			    data_dir->VirtualAddress) {
+			if (section->VirtualAddress <= data_dir->VirtualAddress) {
 				last_section = section;
 				section++;
 				continue;
@@ -116,9 +109,7 @@ static bool has_pls_export(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 
 		/* get a pointer to the export directory */
 		PIMAGE_EXPORT_DIRECTORY export;
-		export = (PIMAGE_EXPORT_DIRECTORY)((byte *)base +
-						   data_dir->VirtualAddress -
-						   section->VirtualAddress +
+		export = (PIMAGE_EXPORT_DIRECTORY)((byte *)base + data_dir->VirtualAddress - section->VirtualAddress +
 						   section->PointerToRawData);
 
 		if (export->NumberOfNames == 0)
@@ -126,8 +117,7 @@ static bool has_pls_export(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 
 		/* get a pointer to the export directory names */
 		DWORD *names_ptr;
-		names_ptr = (DWORD *)((byte *)base + export->AddressOfNames -
-				      section->VirtualAddress +
+		names_ptr = (DWORD *)((byte *)base + export->AddressOfNames - section->VirtualAddress +
 				      section->PointerToRawData);
 
 		/* iterate through each name and see if its an obs plugin */
@@ -135,9 +125,7 @@ static bool has_pls_export(VOID *base, PIMAGE_NT_HEADERS nt_headers)
 		size_t j;
 		for (j = 0; j < export->NumberOfNames; j++) {
 
-			name = (CHAR *)base + names_ptr[j] -
-			       section->VirtualAddress +
-			       section->PointerToRawData;
+			name = (CHAR *)base + names_ptr[j] - section->VirtualAddress + section->PointerToRawData;
 
 			if (!strcmp(name, "obs_is_internal_module")) {
 				return true;
@@ -177,16 +165,14 @@ void pls_get_plugin_info(const char *path, bool *is_pls_plugin)
 
 	dstr_free(&dll_name);
 
-	hFile = CreateFileW(wpath, GENERIC_READ, FILE_SHARE_READ, NULL,
-			    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+	hFile = CreateFileW(wpath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 
 	bfree(wpath);
 
 	if (hFile == INVALID_HANDLE_VALUE)
 		goto cleanup;
 
-	hFileMapping =
-		CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+	hFileMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
 	if (hFileMapping == NULL)
 		goto cleanup;
 
@@ -202,8 +188,7 @@ void pls_get_plugin_info(const char *path, bool *is_pls_plugin)
 		if (dos_header->e_magic != IMAGE_DOS_SIGNATURE)
 			goto cleanup;
 
-		nt_headers = (PIMAGE_NT_HEADERS)((byte *)dos_header +
-						 dos_header->e_lfanew);
+		nt_headers = (PIMAGE_NT_HEADERS)((byte *)dos_header + dos_header->e_lfanew);
 
 		if (nt_headers->Signature != IMAGE_NT_SIGNATURE)
 			goto cleanup;

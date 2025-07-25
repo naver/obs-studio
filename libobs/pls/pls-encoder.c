@@ -27,9 +27,7 @@ void obs_encoder_on_encoded_frame(obs_encoder_t *encoder, bool keyframe)
 		long new_value = os_atomic_inc_long(&encoder->keyframe_cnt);
 		if (new_value <= 5) {
 			const char *id = obs_encoder_get_id(encoder);
-			blog(LOG_INFO,
-			     "encoded keyframe %ld > encoder=%p id=%s",
-			     new_value, encoder, id ? id : "");
+			blog(LOG_INFO, "encoded keyframe %ld > encoder=%p id=%s", new_value, encoder, id ? id : "");
 		}
 	}
 }

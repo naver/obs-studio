@@ -332,6 +332,9 @@ typedef struct av_capture_info {
 /// Error domain identifier used for [NSError](https://developer.apple.com/documentation/foundation/nserror?language=objc) instances
 @property (readonly) NSString *errorDomain;
 
+//PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
+@property (atomic) BOOL configurating;
+
 @end
 
 #pragma mark - Static helper functions

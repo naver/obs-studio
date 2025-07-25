@@ -1,36 +1,26 @@
-# Related Issue 
-Issue Link
+# Why need commit this PR?
+Reason: XXXXXXXXXXXXXXX.
 
+Please refer to the Issue Number with #. OR Task Number with #. for details
+
+# Solution Description
+How to resolve or develop
+
+# Information for QA/PM
+Add reproduce step if QA not provide (Nelo issue or Dev improve)
+Step 1: XXXXXX
+Step 2: XXXXXX
+Expected Result: XXXXXX
+
+Affected Module Range for QA Test
+#What detailed cases need QA to test
+
+Affected UX/UI or User Experience:
+#What is changed comparing with previous version on user side
+
+Is it a significant modification with high risk? (Y/N)
 # Related PRISM PR link
 If has PRISM PR together, paste link here Link
 
-# Related Module
-- [ ] Windows platform affected
-- [ ] MAC platform affected
-- Please include relevant module and context.
-
-# Reproduce Step
-Add reproduce step if QA not provide
-
-# Modify Reason
-Why it must be modified in OBS
-
-# Modify OBS code inside or another individual module
-OBS inside/Individual module/Both
-
-# If need submit issue on OBS github
-Yes/No
-
-# Checklist:
-
-- [ ] The codes could be complied successfully both on Windows and MacOS
-- [ ] I have performed a self-review of my own code
-- [ ] I have performed a self-test of my own code
-- [ ] My code has been run through clang-format in local
-- [ ] My code has been run through sonarqube in local
-- [ ] I have filled all the necessary comments above
-
-
-# Attachment
-If it involves ui or others, please add relevant image or video
-
+# Self-Test Video/Image
+MUST

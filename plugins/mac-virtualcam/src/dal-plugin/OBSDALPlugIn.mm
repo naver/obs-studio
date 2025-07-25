@@ -58,7 +58,8 @@ typedef enum {
 - (instancetype)init
 {
     if (self = [super init]) {
-        _stateQueue = dispatch_queue_create("com.prismlive.prismlivestudio.mac-camera-extension.dal.state", DISPATCH_QUEUE_SERIAL); //PRISM/Zhongling/20231123/#/VCAM
+        _stateQueue = dispatch_queue_create("com.prismlive.prismlivestudio.mac-camera-extension.dal.state",
+                                            DISPATCH_QUEUE_SERIAL);  //PRISM/Zhongling/20231123/#/VCAM
 
         _timeoutTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _stateQueue);
         __weak __typeof(self) weakSelf = self;
@@ -171,7 +172,7 @@ typedef enum {
 {
     switch (address.mSelector) {
         case kCMIOObjectPropertyName:
-            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio Plugin"); //PRISM/Zhongling/20231123/#/VCAM
+            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio Plugin");  //PRISM/Zhongling/20231123/#/VCAM
             *dataUsed = sizeof(CFStringRef);
             return;
         default:

@@ -72,8 +72,7 @@ static int interrupt_callback(void *data)
 		return true;
 	}
 
-	if (mi->io_open_ts > 0 &&
-	    (ts - mi->io_open_ts) > FFMPEG_OPEN_TIMEOUT_NS) {
+	if (mi->io_open_ts > 0 && (ts - mi->io_open_ts) > FFMPEG_OPEN_TIMEOUT_NS) {
 		pthread_mutex_unlock(&mi->mutex);
 		blog(LOG_INFO, "[mi] FFmpeg interrupt for avio openning.");
 		return true;
@@ -81,8 +80,7 @@ static int interrupt_callback(void *data)
 
 	if (mi->abort) {
 		pthread_mutex_unlock(&mi->mutex);
-		blog(LOG_WARNING,
-		     "[mi] FFmpeg interrupt (due to abort) for openning.");
+		blog(LOG_WARNING, "[mi] FFmpeg interrupt (due to abort) for openning.");
 		return true;
 	}
 
@@ -114,33 +112,26 @@ static bool mi_open_internal(media_info_t *mi)
 	mi->open_ts = os_gettime_ns();
 	pthread_mutex_unlock(&mi->mutex);
 
-	blog(LOG_DEBUG, "[mi] %s opening media.",
-	     mi->open_mode == MI_OPEN_DEFER ? "Defer" : "Directly");
-	int ret = avformat_open_input(&mi->fmt, mi->path, NULL,
-				      opts ? &opts : NULL);
+	blog(LOG_DEBUG, "[mi] %s opening media.", mi->open_mode == MI_OPEN_DEFER ? "Defer" : "Directly");
+	int ret = avformat_open_input(&mi->fmt, mi->path, NULL, opts ? &opts : NULL);
 	pthread_mutex_lock(&mi->mutex);
 	mi->open_ts = 0;
 	pthread_mutex_unlock(&mi->mutex);
 	av_dict_free(&opts);
 
 	if (ret < 0) {
-		blog(LOG_WARNING, "[mi] Failed to open media : [%d] '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_WARNING, "[mi] Failed to open media : [%d] '%s'", ret, av_err2str(ret));
 		return false;
 	}
 
 	ret = avformat_find_stream_info(mi->fmt, NULL);
 	if (ret < 0) {
-		blog(LOG_WARNING,
-		     "[mi] Failed to find stream info for : [%d] '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_WARNING, "[mi] Failed to find stream info for : [%d] '%s'", ret, av_err2str(ret));
 		return false;
 	}
 
-	mi->video_index = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_VIDEO, -1,
-					      -1, NULL, 0);
-	mi->audio_index = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_AUDIO, -1,
-					      -1, NULL, 0);
+	mi->video_index = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+	mi->audio_index = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
 	mi->opened = true;
 
 	return true;
@@ -148,8 +139,7 @@ static bool mi_open_internal(media_info_t *mi)
 
 static bool check_defer_open(media_info_t *mi)
 {
-	if (mi->open_mode == MI_OPEN_DEFER && !mi->opened &&
-	    !mi_open_internal(mi)) {
+	if (mi->open_mode == MI_OPEN_DEFER && !mi->opened && !mi_open_internal(mi)) {
 		mi_free(mi);
 		return false;
 	}
@@ -174,11 +164,9 @@ static long long estimate_frame_count(media_info_t *mi)
 	if (!mi || !mi->fmt)
 		return 0;
 
-	int ret = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL,
-				      0);
+	int ret = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
 	if (ret < 0) {
-		blog(LOG_INFO, "[mi] NO video stream: [%d] '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_INFO, "[mi] NO video stream: [%d] '%s'", ret, av_err2str(ret));
 		return 0;
 	}
 
@@ -186,12 +174,9 @@ static long long estimate_frame_count(media_info_t *mi)
 
 	if (stream->nb_frames > 0)
 		return stream->nb_frames;
-	else if (stream->avg_frame_rate.den &&
-		 mi->fmt->duration != AV_NOPTS_VALUE) {
-		return (int64_t)ceil((double)mi->fmt->duration /
-				     (double)AV_TIME_BASE *
-				     (double)stream->avg_frame_rate.num /
-				     (double)stream->avg_frame_rate.den);
+	else if (stream->avg_frame_rate.den && mi->fmt->duration != AV_NOPTS_VALUE) {
+		return (int64_t)ceil((double)mi->fmt->duration / (double)AV_TIME_BASE *
+				     (double)stream->avg_frame_rate.num / (double)stream->avg_frame_rate.den);
 	} else
 		return 0;
 }
@@ -234,15 +219,13 @@ static enum AVCodecID get_codec_id(media_info_t *mi, bool video)
 		if (mi->video_index < 0) {
 			return AV_CODEC_ID_NONE;
 		} else {
-			return mi->fmt->streams[mi->video_index]
-				->codecpar->codec_id;
+			return mi->fmt->streams[mi->video_index]->codecpar->codec_id;
 		}
 	} else {
 		if (mi->audio_index < 0) {
 			return AV_CODEC_ID_NONE;
 		} else {
-			return mi->fmt->streams[mi->audio_index]
-				->codecpar->codec_id;
+			return mi->fmt->streams[mi->audio_index]->codecpar->codec_id;
 		}
 	}
 }
@@ -252,11 +235,9 @@ static bool has_cover(media_info_t *mi)
 	if (!mi || !mi->fmt)
 		return false;
 
-	int ret = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL,
-				      0);
+	int ret = av_find_best_stream(mi->fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
 	if (ret < 0) {
-		blog(LOG_INFO, "[mi] NO video stream (cover): [%d] '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_INFO, "[mi] NO video stream (cover): [%d] '%s'", ret, av_err2str(ret));
 		return false;
 	}
 
@@ -277,8 +258,7 @@ static bool mi_try_init_decoder(media_info_t *mi, enum AVMediaType type)
 
 	ret = av_find_best_stream(mi->fmt, type, -1, -1, NULL, 0);
 	if (ret < 0) {
-		blog(LOG_INFO, "MP: No %s stream.",
-		     av_get_media_type_string(type));
+		blog(LOG_INFO, "MP: No %s stream.", av_get_media_type_string(type));
 		return false;
 	}
 
@@ -286,15 +266,13 @@ static bool mi_try_init_decoder(media_info_t *mi, enum AVMediaType type)
 	id = stream->codecpar->codec_id;
 	codec = avcodec_find_decoder(id);
 	if (!codec) {
-		blog(LOG_WARNING, "MP: Failed to find %s codec",
-		     av_get_media_type_string(type));
+		blog(LOG_WARNING, "MP: Failed to find %s codec", av_get_media_type_string(type));
 		return false;
 	}
 
 	c = avcodec_alloc_context3(codec);
 	if (!c) {
-		blog(LOG_WARNING, "MP: Failed to allocate context for %s",
-		     av_get_media_type_string(type));
+		blog(LOG_WARNING, "MP: Failed to allocate context for %s", av_get_media_type_string(type));
 		return false;
 	}
 
@@ -302,16 +280,13 @@ static bool mi_try_init_decoder(media_info_t *mi, enum AVMediaType type)
 	if (ret < 0)
 		goto fail;
 
-	if (c->thread_count == 1 && c->codec_id != AV_CODEC_ID_PNG &&
-	    c->codec_id != AV_CODEC_ID_TIFF &&
-	    c->codec_id != AV_CODEC_ID_JPEG2000 &&
-	    c->codec_id != AV_CODEC_ID_MPEG4 && c->codec_id != AV_CODEC_ID_WEBP)
+	if (c->thread_count == 1 && c->codec_id != AV_CODEC_ID_PNG && c->codec_id != AV_CODEC_ID_TIFF &&
+	    c->codec_id != AV_CODEC_ID_JPEG2000 && c->codec_id != AV_CODEC_ID_MPEG4 && c->codec_id != AV_CODEC_ID_WEBP)
 		c->thread_count = 0;
 
 	ret = avcodec_open2(c, codec, NULL);
 	if (ret < 0)
-		blog(LOG_WARNING, "MP: Failed to open %s decoder: %s",
-		     av_get_media_type_string(type), av_err2str(ret));
+		blog(LOG_WARNING, "MP: Failed to open %s decoder: %s", av_get_media_type_string(type), av_err2str(ret));
 fail:
 	avcodec_free_context(&c);
 	return ret < 0 ? false : true;
@@ -473,13 +448,10 @@ static bool init_decoder(media_info_t *mi, int stream_index)
 	const AVCodec *codec = NULL;
 	if (id == AV_CODEC_ID_VP8 || id == AV_CODEC_ID_VP9) {
 		AVDictionaryEntry *tag = NULL;
-		tag = av_dict_get(stream->metadata, "alpha_mode", tag,
-				  AV_DICT_IGNORE_SUFFIX);
+		tag = av_dict_get(stream->metadata, "alpha_mode", tag, AV_DICT_IGNORE_SUFFIX);
 
 		if (tag && strcmp(tag->value, "1") == 0) {
-			const char *codec_str = (id == AV_CODEC_ID_VP8)
-							? "libvpx"
-							: "libvpx-vp9";
+			const char *codec_str = (id == AV_CODEC_ID_VP8) ? "libvpx" : "libvpx-vp9";
 			codec = avcodec_find_decoder_by_name(codec_str);
 		}
 	}
@@ -500,9 +472,7 @@ static bool init_decoder(media_info_t *mi, int stream_index)
 
 	int ret = avcodec_parameters_to_context(ctx, stream->codecpar);
 	if (ret < 0) {
-		blog(LOG_WARNING,
-		     "[mi] Failed to pass parameters to context: %d, '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_WARNING, "[mi] Failed to pass parameters to context: %d, '%s'", ret, av_err2str(ret));
 		goto fail;
 	}
 
@@ -511,9 +481,7 @@ static bool init_decoder(media_info_t *mi, int stream_index)
 	ret = avcodec_open2(ctx, codec, &opts);
 	av_dict_free(&opts);
 	if (ret < 0) {
-		blog(LOG_WARNING,
-		     "[mi] Failed to open codec context : %d, '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_WARNING, "[mi] Failed to open codec context : %d, '%s'", ret, av_err2str(ret));
 		goto fail;
 	}
 
@@ -525,46 +493,35 @@ fail:
 	return false;
 }
 
-static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
-			    int *out_size)
+static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out, int *out_size)
 {
-    UNUSED_PARAMETER(mi);
-    
+	UNUSED_PARAMETER(mi);
+
 	uint8_t *buffer[MAX_AV_PLANES] = {0};
 	int linesizes[MAX_AV_PLANES] = {0};
 
-	int ret = av_image_alloc(buffer, linesizes, frame->width, frame->height,
-				 AV_PIX_FMT_RGBA, 32);
+	int ret = av_image_alloc(buffer, linesizes, frame->width, frame->height, AV_PIX_FMT_RGBA, 32);
 	if (ret < 0) {
-		blog(LOG_WARNING,
-		     "[mi] Failed to alloc image buffer : %d, '%s'", ret,
-		     av_err2str(ret));
+		blog(LOG_WARNING, "[mi] Failed to alloc image buffer : %d, '%s'", ret, av_err2str(ret));
 		return false;
 	}
 
 	int size = ret;
 
 	if (frame->format != AV_PIX_FMT_RGBA) {
-		struct SwsContext *swsctx = sws_getContext(
-			frame->width, frame->height, frame->format,
-			frame->width, frame->height, AV_PIX_FMT_RGBA, SWS_POINT,
-			NULL, NULL, NULL);
+		struct SwsContext *swsctx = sws_getContext(frame->width, frame->height, frame->format, frame->width,
+							   frame->height, AV_PIX_FMT_RGBA, SWS_POINT, NULL, NULL, NULL);
 		if (!swsctx) {
-			blog(LOG_WARNING,
-			     "[mi] Failed to create scale context : %d, '%s'",
-			     ret, av_err2str(ret));
+			blog(LOG_WARNING, "[mi] Failed to create scale context : %d, '%s'", ret, av_err2str(ret));
 			goto fail;
 		}
 
-		ret = sws_scale(swsctx, (const uint8_t *const *)frame->data,
-				frame->linesize, 0, frame->height, buffer,
-			linesizes);
+		ret = sws_scale(swsctx, (const uint8_t *const *)frame->data, frame->linesize, 0, frame->height, buffer,
+				linesizes);
 		sws_freeContext(swsctx);
 		swsctx = NULL;
 		if (ret < 0) {
-			blog(LOG_WARNING,
-			     "[mi] Failed to create scale context : %d, '%s'",
-			     ret, av_err2str(ret));
+			blog(LOG_WARNING, "[mi] Failed to create scale context : %d, '%s'", ret, av_err2str(ret));
 			goto fail;
 		}
 
@@ -572,13 +529,12 @@ static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
 		*out_size = (size_t)frame->height * (size_t)frame->width * 4;
 		*out = av_malloc(frame->height * linesize);
 		if (!(*out)) {
-			blog(LOG_WARNING,
-			     "[mi] Failed to Allocate a memory block size: %d. width: %d, height: %d",
+			blog(LOG_WARNING, "[mi] Failed to Allocate a memory block size: %d. width: %d, height: %d",
 			     *out_size, frame->width, frame->height);
 			goto fail;
 		}
-		const uint8_t* src = buffer[0];
-		uint8_t* dst = (uint8_t*)*out;
+		const uint8_t *src = buffer[0];
+		uint8_t *dst = (uint8_t *)*out;
 
 		if (linesize != (size_t)linesizes[0]) {
 			for (size_t y = 0; y < (size_t)frame->height; y++) {
@@ -586,22 +542,18 @@ static bool convert_to_rgba(media_info_t *mi, AVFrame *frame, char **out,
 				dst += linesize;
 				src += linesizes[0];
 			}
-		}
-		else {
+		} else {
 			memcpy(dst, src, linesize * frame->height);
 		}
 		av_freep(&buffer);
 		return true;
 
 	} else {
-		ret = av_image_copy_to_buffer(
-			buffer[0], size, (const uint8_t *const *)frame->data,
-			(const int *)frame->linesize, frame->format,
-			frame->width, frame->height, 1);
+		ret = av_image_copy_to_buffer(buffer[0], size, (const uint8_t *const *)frame->data,
+					      (const int *)frame->linesize, frame->format, frame->width, frame->height,
+					      1);
 		if (ret < 0) {
-			blog(LOG_WARNING,
-			     "[mi] Can not copy image to buffer : %d, '%s'",
-			     ret, av_err2str(ret));
+			blog(LOG_WARNING, "[mi] Can not copy image to buffer : %d, '%s'", ret, av_err2str(ret));
 			goto fail;
 		}
 	}
@@ -615,8 +567,7 @@ fail:
 	return false;
 }
 
-static bool decode_video(media_info_t *mi, int stream_index,
-			 struct mi_video_frame *out)
+static bool decode_video(media_info_t *mi, int stream_index, struct mi_video_frame *out)
 {
 	AVPacket *packet;
 	packet = av_packet_alloc();
@@ -640,9 +591,8 @@ static bool decode_video(media_info_t *mi, int stream_index,
 					packet->size = 0;
 					packet->stream_index = stream_index;
 				} else {
-					blog(LOG_WARNING,
-					     "[mi] Failed to read image frame : %d, '%s'",
-					     ret, av_err2str(ret));
+					blog(LOG_WARNING, "[mi] Failed to read image frame : %d, '%s'", ret,
+					     av_err2str(ret));
 					goto fail;
 				}
 			}
@@ -653,13 +603,11 @@ static bool decode_video(media_info_t *mi, int stream_index,
 			ret = avcodec_receive_frame(mi->codec_ctx, frame);
 			if (ret < 0) {
 				if (ret != AVERROR(EAGAIN)) {
-					blog(LOG_WARNING,
-					     "[mi] Failed to decode frame : %d, '%s'",
-					     ret, av_err2str(ret));
+					blog(LOG_WARNING, "[mi] Failed to decode frame : %d, '%s'", ret,
+					     av_err2str(ret));
 					goto fail;
 				} else if (eof) {
-					blog(LOG_WARNING,
-					     "[mi] Can not decode one frame before EOF.");
+					blog(LOG_WARNING, "[mi] Can not decode one frame before EOF.");
 					goto fail;
 				}
 
@@ -750,10 +698,8 @@ static mi_obj get_metadata(media_info_t *mi)
 
 static bool id3v2_match(const uint8_t *buf, const char *magic)
 {
-	return buf[0] == magic[0] && buf[1] == magic[1] && buf[2] == magic[2] &&
-	       buf[3] != 0xff && buf[4] != 0xff && (buf[6] & 0x80) == 0 &&
-	       (buf[7] & 0x80) == 0 && (buf[8] & 0x80) == 0 &&
-	       (buf[9] & 0x80) == 0;
+	return buf[0] == magic[0] && buf[1] == magic[1] && buf[2] == magic[2] && buf[3] != 0xff && buf[4] != 0xff &&
+	       (buf[6] & 0x80) == 0 && (buf[7] & 0x80) == 0 && (buf[8] & 0x80) == 0 && (buf[9] & 0x80) == 0;
 }
 
 static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
@@ -767,8 +713,7 @@ static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
 	pthread_mutex_lock(&mi->mutex);
 	mi->io_open_ts = os_gettime_ns();
 	pthread_mutex_unlock(&mi->mutex);
-	int ret = avio_open2(&io, mi->path, AVIO_FLAG_READ, &io_interrupt_cb,
-			     NULL);
+	int ret = avio_open2(&io, mi->path, AVIO_FLAG_READ, &io_interrupt_cb, NULL);
 	pthread_mutex_lock(&mi->mutex);
 	mi->io_open_ts = 0;
 	pthread_mutex_unlock(&mi->mutex);
@@ -785,8 +730,7 @@ static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
 
 	ret = avio_read(io, header, ID3V2_HEADER_SIZE);
 	if (ret < ID3V2_HEADER_SIZE) {
-		blog(LOG_WARNING, "[mi] Fail to read ID3V2 header, ret %d.",
-		     ret);
+		blog(LOG_WARNING, "[mi] Fail to read ID3V2 header, ret %d.", ret);
 		goto fail;
 	}
 
@@ -795,9 +739,8 @@ static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
 		goto fail;
 	}
 
-	size_t body_size = ((header[6] & 0x7f) << 21) |
-			   ((header[7] & 0x7f) << 14) |
-			   ((header[8] & 0x7f) << 7) | (header[9] & 0x7f);
+	size_t body_size = ((header[6] & 0x7f) << 21) | ((header[7] & 0x7f) << 14) | ((header[8] & 0x7f) << 7) |
+			   (header[9] & 0x7f);
 	if (body_size <= 0) {
 		blog(LOG_WARNING, "[mi] Wrong body size.");
 		goto fail;
@@ -819,8 +762,7 @@ static mi_obj get_id3v2_from_ffmpeg(media_info_t *mi)
 	}
 	mi->id3v2.data = (char *)buffer;
 	mi->id3v2.size = (int)size;
-	blog(LOG_INFO, "[mi] Succeed to get ID3 : version %d, size %d.",
-	     header[3], mi->id3v2.size);
+	blog(LOG_INFO, "[mi] Succeed to get ID3 : version %d, size %d.", header[3], mi->id3v2.size);
 	succeed = true;
 	mi->id3v2_ready = true;
 fail:
@@ -1008,13 +950,10 @@ static inline bool init_input(media_remux_t *mr, const char *in_filename)
 	else
 		seek_flags = AVSEEK_FLAG_BACKWARD;
 
-	int ret = avformat_seek_file(mi->fmt, stream_index, INT64_MIN,
-				     0 + stream->start_time, INT64_MAX,
-				     seek_flags);
+	int ret = avformat_seek_file(mi->fmt, stream_index, INT64_MIN, 0 + stream->start_time, INT64_MAX, seek_flags);
 
 	if (ret < 0) {
-		blog(LOG_WARNING, "[mi] remux: Failed to seek: %s",
-		     av_err2str(ret));
+		blog(LOG_WARNING, "[mi] remux: Failed to seek: %s", av_err2str(ret));
 		return false;
 	}
 
@@ -1036,16 +975,13 @@ static inline bool init_output(media_remux_t *mr, const char *out_filename)
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 40, 101)
 		AVCodecContext *c = avcodec_alloc_context3(NULL);
 		if (!c) {
-			blog(LOG_ERROR,
-			     "[mi] remux : Failed to allocate context");
+			blog(LOG_ERROR, "[mi] remux : Failed to allocate context");
 			return false;
 		}
 		avcodec_parameters_to_context(c, in_stream->codecpar);
-		AVStream *out_stream =
-			avformat_new_stream(mr->ofmt_ctx, c->codec);
+		AVStream *out_stream = avformat_new_stream(mr->ofmt_ctx, c->codec);
 #else
-		AVStream *out_stream = avformat_new_stream(
-			mr->ofmt_ctx, in_stream->codec->codec);
+		AVStream *out_stream = avformat_new_stream(mr->ofmt_ctx, in_stream->codec->codec);
 #endif
 		if (!out_stream) {
 			blog(LOG_ERROR, "[mi] remux : Failed to allocate output"
@@ -1059,8 +995,7 @@ static inline bool init_output(media_remux_t *mr, const char *out_filename)
 		AVCodecParameters *par = avcodec_parameters_alloc();
 		ret = avcodec_parameters_from_context(par, c);
 		if (ret == 0)
-			ret = avcodec_parameters_copy(out_stream->codecpar,
-						      par);
+			ret = avcodec_parameters_copy(out_stream->codecpar, par);
 		avcodec_parameters_free(&par);
 #else
 		ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
@@ -1074,12 +1009,10 @@ static inline bool init_output(media_remux_t *mr, const char *out_filename)
 		av_dict_copy(&out_stream->metadata, in_stream->metadata, 0);
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 101)
 		if (in_stream->codecpar->codec_tag != 0) {
-			out_stream->codecpar->codec_tag =
-				in_stream->codecpar->codec_tag;
+			out_stream->codecpar->codec_tag = in_stream->codecpar->codec_tag;
 		} else if (in_stream->codecpar->codec_id == AV_CODEC_ID_HEVC) {
 			// Tag HEVC files with industry standard HVC1 tag for wider device compatibility
-			out_stream->codecpar->codec_tag =
-				MKTAG('h', 'v', 'c', '1');
+			out_stream->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
 		} else {
 			out_stream->codecpar->codec_tag = 0;
 		}
@@ -1095,8 +1028,7 @@ static inline bool init_output(media_remux_t *mr, const char *out_filename)
 #endif
 
 	if (!(mr->ofmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-		ret = avio_open(&mr->ofmt_ctx->pb, out_filename,
-				AVIO_FLAG_WRITE);
+		ret = avio_open(&mr->ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
 		if (ret < 0) {
 			blog(LOG_ERROR, "[mi] remux : Failed to open output.");
 			return false;
@@ -1109,9 +1041,8 @@ static bool valid_extension(const char *ext)
 {
 	if (!ext)
 		return false;
-	return astrcmpi(ext, ".bmp") == 0 || astrcmpi(ext, ".tga") == 0 ||
-	       astrcmpi(ext, ".png") == 0 || astrcmpi(ext, ".jpeg") == 0 ||
-	       astrcmpi(ext, ".jpg") == 0 || astrcmpi(ext, ".gif") == 0;
+	return astrcmpi(ext, ".bmp") == 0 || astrcmpi(ext, ".tga") == 0 || astrcmpi(ext, ".png") == 0 ||
+	       astrcmpi(ext, ".jpeg") == 0 || astrcmpi(ext, ".jpg") == 0 || astrcmpi(ext, ".gif") == 0;
 }
 
 static inline int sort_path(const void *l, const void *r)
@@ -1119,8 +1050,7 @@ static inline int sort_path(const void *l, const void *r)
 	return strcmp(((struct dstr *)l)->array, ((struct dstr *)r)->array);
 }
 
-static inline bool init_files(media_remux_t *mr, const char *in_files,
-			      const char *out_filename)
+static inline bool init_files(media_remux_t *mr, const char *in_files, const char *out_filename)
 {
 	os_dir_t *dir = os_opendir(in_files);
 	if (dir) {
@@ -1178,8 +1108,7 @@ static bool remux_internal(media_remux_t *mr)
 {
 	int ret = avformat_write_header(mr->ofmt_ctx, NULL);
 	if (ret < 0) {
-		blog(LOG_ERROR, "[mi] remux : Error opening output file: %s",
-		     av_err2str(ret));
+		blog(LOG_ERROR, "[mi] remux : Error opening output file: %s", av_err2str(ret));
 		return false;
 	}
 
@@ -1207,9 +1136,7 @@ static bool remux_internal(media_remux_t *mr)
 			av_packet_unref(&pkt);
 
 			if (ret < 0) {
-				blog(LOG_ERROR,
-				     "[mi] remux : Error muxing packet: %s",
-				     av_err2str(ret));
+				blog(LOG_ERROR, "[mi] remux : Error muxing packet: %s", av_err2str(ret));
 				break;
 			}
 		}
@@ -1220,8 +1147,7 @@ static bool remux_internal(media_remux_t *mr)
 
 	ret = av_write_trailer(mr->ofmt_ctx);
 	if (ret < 0) {
-		blog(LOG_ERROR, "[mi] remux : av_write_trailer: %s",
-		     av_err2str(ret));
+		blog(LOG_ERROR, "[mi] remux : av_write_trailer: %s", av_err2str(ret));
 		return false;
 	}
 
@@ -1246,11 +1172,9 @@ void mi_remux_free(media_remux_t *mr)
 	da_free(mr->mis);
 }
 
-bool mi_remux_do(const char *in_path, const char *out_filename,
-		 unsigned int fps)
+bool mi_remux_do(const char *in_path, const char *out_filename, unsigned int fps)
 {
-	if (!in_path || !out_filename || !strlen(in_path) ||
-	    !strlen(out_filename))
+	if (!in_path || !out_filename || !strlen(in_path) || !strlen(out_filename))
 		return false;
 
 	bool success = false;

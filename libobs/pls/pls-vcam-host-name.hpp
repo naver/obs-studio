@@ -19,8 +19,7 @@ static int CreateFolder(const std::wstring &folder)
 	DWORD last_error;
 	if (CreateDirectory(folder.c_str(), NULL)) {
 		return 0;
-	} else if (last_error = GetLastError();
-		   ERROR_ALREADY_EXISTS == last_error) {
+	} else if (last_error = GetLastError(); ERROR_ALREADY_EXISTS == last_error) {
 		return 0;
 	}
 
@@ -30,12 +29,9 @@ static int CreateFolder(const std::wstring &folder)
 static std::wstring GetDataPath()
 {
 	std::array<wchar_t, MAX_PATH> data_path;
-	SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT,
-			 data_path.data());
+	SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, data_path.data());
 	std::wstring path(data_path.data());
-	path.append(VIRTUAL_CAM_HOST_PROC_PATH_W)
-		.append(VIRTUAL_CAM_HOST_PROC_FOLDER_NAME_W)
-		.append(L"\\");
+	path.append(VIRTUAL_CAM_HOST_PROC_PATH_W).append(VIRTUAL_CAM_HOST_PROC_FOLDER_NAME_W).append(L"\\");
 	return path;
 }
 
@@ -57,16 +53,14 @@ bool LogHostProcessName(const std::wstring &executeFile)
 	CreateFolder(data_path);
 
 	/* create a txt file named by host process name */
-	HANDLE hFile = CreateFileW(
-		data_path.append(appName.data()).append(L".txt").c_str(),
-		GENERIC_READ, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+	HANDLE hFile = CreateFileW(data_path.append(appName.data()).append(L".txt").c_str(), GENERIC_READ, 0, NULL,
+				   CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile) {
 		CloseHandle(hFile);
 		return true;
 	}
 
-	if (hFile == INVALID_HANDLE_VALUE &&
-	    GetLastError() == ERROR_FILE_EXISTS)
+	if (hFile == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_EXISTS)
 		return true;
 
 	return false;

@@ -158,13 +158,13 @@ void gl_platform_cleanup_swapchain(struct gs_swap_chain *swap)
     gs_texture_destroy(swap->wi->texture);
     glFlush();
     [NSOpenGLContext clearCurrentContext];
-	//PRISM/Zhongling/20231129/#2976/scene collection switch start
+    //PRISM/Zhongling/20231129/#2976/scene collection switch start
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-	[swap->wi->context setView:NULL];
+    [swap->wi->context setView:NULL];
 #pragma clang diagnostic pop
-	[swap->wi->context release];
-	//PRISM/Zhongling/20231129/#2976/scene collection switch end
+    [swap->wi->context release];
+    //PRISM/Zhongling/20231129/#2976/scene collection switch end
     swap->wi->context = nil;
 
     CGLUnlockContext(parent_obj);
@@ -201,22 +201,22 @@ void gl_windowinfo_destroy(struct gl_windowinfo *wi)
 
 void gl_update(gs_device_t *device)
 {
-	//PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
-	gs_swapchain_t *swap = device->cur_swap; // `cur_swap` changed on video thread
-	if (swap)
-		swap->is_updating = true;
-	//PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
-	dispatch_async(dispatch_get_main_queue(), ^() {
-		if (pls_get_obs_exiting()) {
-			return;
-		}
-		if (!swap || !swap->wi) {
-			return;
-		}
-		//PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
-		NSOpenGLContext *parent = device->plat->context; // `plat` changed on main thread
-		NSOpenGLContext *context = swap->wi->context; // `wi` changed on main thread
-		//PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
+    //PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
+    gs_swapchain_t *swap = device->cur_swap;  // `cur_swap` changed on video thread
+    if (swap)
+        swap->is_updating = true;
+    //PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
+    dispatch_async(dispatch_get_main_queue(), ^() {
+        if (pls_get_obs_exiting()) {
+            return;
+        }
+        if (!swap || !swap->wi) {
+            return;
+        }
+        //PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
+        NSOpenGLContext *parent = device->plat->context;  // `plat` changed on main thread
+        NSOpenGLContext *context = swap->wi->context;     // `wi` changed on main thread
+                                                          //PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
 
         CGLContextObj parent_obj = [parent CGLContextObj];
         CGLLockContext(parent_obj);
@@ -228,19 +228,20 @@ void gl_update(gs_device_t *device)
         [context update];
         struct gs_init_data *info = &swap->info;
         gs_texture_t *previous = swap->wi->texture;
-		//PRISM/Zhongling/20231122/#3023/add trace log start
-		gs_texture_t *new_texture = device_texture_create(device, info->cx, info->cy, info->format, 1, NULL, GS_RENDER_TARGET);
-		if (!new_texture) {
-			blog(LOG_WARNING, "device_texture_create nil");
-			glFlush();
-			[NSOpenGLContext clearCurrentContext];
-			CGLUnlockContext(context_obj);
-			CGLUnlockContext(parent_obj);
-			swap->is_updating = false;
-			return;
-		}
-		swap->wi->texture = new_texture;
-		//PRISM/Zhongling/20231122/#3023/add trace log end
+        //PRISM/Zhongling/20231122/#3023/add trace log start
+        gs_texture_t *new_texture =
+            device_texture_create(device, info->cx, info->cy, info->format, 1, NULL, GS_RENDER_TARGET);
+        if (!new_texture) {
+            blog(LOG_WARNING, "device_texture_create nil");
+            glFlush();
+            [NSOpenGLContext clearCurrentContext];
+            CGLUnlockContext(context_obj);
+            CGLUnlockContext(parent_obj);
+            swap->is_updating = false;
+            return;
+        }
+        swap->wi->texture = new_texture;
+        //PRISM/Zhongling/20231122/#3023/add trace log end
         gl_bind_framebuffer(GL_FRAMEBUFFER, swap->wi->fbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, swap->wi->texture->texture, 0);
         gl_success("glFrameBufferTexture2D");
@@ -252,9 +253,9 @@ void gl_update(gs_device_t *device)
 
         CGLUnlockContext(parent_obj);
 
-		//PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
-		swap->is_updating = false;
-		//PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
+        //PRISM/Zhongling/20230816/#2251/crash on `gl_update` start
+        swap->is_updating = false;
+        //PRISM/Zhongling/20230816/#2251/crash on `gl_update` end
     });
 }
 

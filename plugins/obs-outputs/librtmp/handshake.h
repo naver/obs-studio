@@ -740,11 +740,19 @@ HandShake(RTMP * r, int FP9HandShake)
     RTMP_LogHex(RTMP_LOGDEBUG, clientsig, RTMP_SIG_SIZE);
 #endif
 
-    if (!WriteN(r, (char *)clientsig-1, RTMP_SIG_SIZE + 1))
+    if (!WriteN(r, (char*)clientsig - 1, RTMP_SIG_SIZE + 1))
+    {
+        //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+        RTMP_Log(RTMP_LOGERROR, "%s: failed to send C0/C1", __FUNCTION__);
         return FALSE;
+    }
 
     if (ReadN(r, (char *)&type, 1) != 1)	/* 0x03 or 0x06 */
+    {
+        //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+        RTMP_Log(RTMP_LOGERROR, "%s: failed to recv S0", __FUNCTION__);
         return FALSE;
+    }
 
     RTMP_Log(RTMP_LOGDEBUG, "%s: Type Answer   : %02X", __FUNCTION__, type);
 
@@ -753,7 +761,11 @@ HandShake(RTMP * r, int FP9HandShake)
                  __FUNCTION__, clientsig[-1], type);
 
     if (ReadN(r, (char *)serversig, RTMP_SIG_SIZE) != RTMP_SIG_SIZE)
+    {
+        //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+        RTMP_Log(RTMP_LOGERROR, "%s: failed to recv S1", __FUNCTION__);
         return FALSE;
+    }
 
     /* decode server response */
     memcpy(&uptime, serversig, 4);
@@ -866,11 +878,19 @@ HandShake(RTMP * r, int FP9HandShake)
     RTMP_LogHex(RTMP_LOGDEBUG, reply, RTMP_SIG_SIZE);
 #endif
     if (!WriteN(r, (char *)reply, RTMP_SIG_SIZE))
+    {
+        //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+        RTMP_Log(RTMP_LOGERROR, "%s: failed to send C2", __FUNCTION__);
         return FALSE;
+    }
 
     /* 2nd part of handshake */
     if (ReadN(r, (char *)serversig, RTMP_SIG_SIZE) != RTMP_SIG_SIZE)
+    {
+        //PRISM/wangshaohui/20250306/noissue/add log for rtmp
+        RTMP_Log(RTMP_LOGERROR, "%s: failed to recv S2", __FUNCTION__);
         return FALSE;
+    }
 
 #ifdef _DEBUG
     RTMP_Log(RTMP_LOGDEBUG, "%s: 2nd handshake: ", __FUNCTION__);

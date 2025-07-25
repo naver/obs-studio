@@ -21,8 +21,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 EditorWidget::EditorWidget(QWidget *parent, VSTPlugin *plugin, void *s)
 	: QWidget(parent),
-	  plugin(plugin), 
-      sourceContext(s)
+	  plugin(plugin),
+	  sourceContext(s)
 {
 	setWindowFlags(this->windowFlags() |= Qt::MSWindowsFixedSizeDialogHint);
 }

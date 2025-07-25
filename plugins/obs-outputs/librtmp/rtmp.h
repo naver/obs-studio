@@ -398,7 +398,11 @@ extern "C"
     typedef int (*CUSTOMSEND)(RTMPSockBuf*, const char *, int, void*);
 
     typedef struct RTMP
-    {
+    {	
+        //PRISM/wangshaohui/20250106/noissue/add log for rtmp
+        char m_bFirstAudioArrived;
+        char m_bFirstVideoArrived;
+
         int m_inChunkSize;
         int m_outChunkSize;
         int m_nBWCheckCounter;

@@ -217,15 +217,16 @@ int os_sem_wait(os_sem_t *sem)
 }
 
 //PRISM/cao.kewei/20240110/#3907/SCK Block
-int os_sem_timedwait(os_sem_t *sem, unsigned int seconds) {
+int os_sem_timedwait(os_sem_t *sem, unsigned int seconds)
+{
 	if (!sem) {
 		return -1;
 	}
-	
+
 	mach_timespec_t timeout;
-	timeout.tv_sec = seconds;  // Timeout in seconds
+	timeout.tv_sec = seconds; // Timeout in seconds
 	timeout.tv_nsec = 0;
-	
+
 	return semaphore_timedwait(sem->sem, timeout);
 }
 //PRISM/cao.kewei/20240110/#3907/SCK Block

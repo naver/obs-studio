@@ -46,50 +46,52 @@ static void add_path_fonts(NSFileManager *file_manager, NSString *path)
 }
 
 // PRISM/cao.kewei/20240426/#5231/font path
-NSString *pathForFontNamed(NSString *fontName) {
-	// Create a font descriptor with the provided name
-	CTFontDescriptorRef fontDescriptor = CTFontDescriptorCreateWithNameAndSize((CFStringRef)fontName, 0.0f);
-	if (!fontDescriptor) {
-		return nil;
-	}
-	
-	// Extract the font URL attribute (if it exists)
-	CFURLRef fontURL = (CFURLRef)CTFontDescriptorCopyAttribute(fontDescriptor, kCTFontURLAttribute);
-	
-	// Release the font descriptor
-	CFRelease(fontDescriptor);
-	
-	// Check if URL exists and convert to NSString
-	if (fontURL) {
-		NSString *path = [(__bridge_transfer NSURL *)fontURL path];
-		return path;
-	} else {
-		return nil;
-	}
+NSString *pathForFontNamed(NSString *fontName)
+{
+    // Create a font descriptor with the provided name
+    CTFontDescriptorRef fontDescriptor = CTFontDescriptorCreateWithNameAndSize((CFStringRef) fontName, 0.0f);
+    if (!fontDescriptor) {
+        return nil;
+    }
+
+    // Extract the font URL attribute (if it exists)
+    CFURLRef fontURL = (CFURLRef) CTFontDescriptorCopyAttribute(fontDescriptor, kCTFontURLAttribute);
+
+    // Release the font descriptor
+    CFRelease(fontDescriptor);
+
+    // Check if URL exists and convert to NSString
+    if (fontURL) {
+        NSString *path = [(__bridge_transfer NSURL *) fontURL path];
+        return path;
+    } else {
+        return nil;
+    }
 }
 
 void load_os_font_list(void)
 {
     @autoreleasepool {
-      //PRISM/cao.kewei/20240426/#5231/font path
-      __block BOOL isDir;
+        //PRISM/cao.kewei/20240426/#5231/font path
+        __block BOOL isDir;
 
-      NSFontManager *fontManager = [NSFontManager sharedFontManager];
-      [fontManager.availableFonts enumerateObjectsUsingBlock:^(NSString * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
-        UNUSED_PARAMETER(idx);
-        UNUSED_PARAMETER(stop);
+        NSFontManager *fontManager = [NSFontManager sharedFontManager];
+        [fontManager.availableFonts
+            enumerateObjectsUsingBlock:^(NSString *_Nonnull obj, NSUInteger idx, BOOL *_Nonnull stop) {
+                UNUSED_PARAMETER(idx);
+                UNUSED_PARAMETER(stop);
 
-        NSString *fontPath = pathForFontNamed(obj);
-        if (fontPath) {
-          BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:fontPath isDirectory:&isDir];
+                NSString *fontPath = pathForFontNamed(obj);
+                if (fontPath) {
+                    BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:fontPath isDirectory:&isDir];
 
-          if (fileExists && !isDir) {
-            add_path_font(fontPath.UTF8String);
-          }
-        }
-      }];
+                    if (fileExists && !isDir) {
+                        add_path_font(fontPath.UTF8String);
+                    }
+                }
+            }];
 
-      save_font_list();
+        save_font_list();
     }
 }
 
@@ -120,33 +122,35 @@ uint32_t get_font_checksum(void)
     __block uint32_t checksum = 0;
 
     @autoreleasepool {
-      //PRISM/cao.kewei/20240426/#5231/font path
-      __block BOOL isDir;
+        //PRISM/cao.kewei/20240426/#5231/font path
+        __block BOOL isDir;
 
-      NSFileManager *fileManager = [NSFileManager defaultManager];
-      NSFontManager *fontManager = [NSFontManager sharedFontManager];
-      [fontManager.availableFonts enumerateObjectsUsingBlock:^(NSString * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
-        UNUSED_PARAMETER(idx);
-        UNUSED_PARAMETER(stop);
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        NSFontManager *fontManager = [NSFontManager sharedFontManager];
+        [fontManager.availableFonts
+            enumerateObjectsUsingBlock:^(NSString *_Nonnull obj, NSUInteger idx, BOOL *_Nonnull stop) {
+                UNUSED_PARAMETER(idx);
+                UNUSED_PARAMETER(stop);
 
-        NSString *fontPath = pathForFontNamed(obj);
-        if (fontPath) {
-          BOOL fileExists = [fileManager fileExistsAtPath:fontPath isDirectory:&isDir];
+                NSString *fontPath = pathForFontNamed(obj);
+                if (fontPath) {
+                    BOOL fileExists = [fileManager fileExistsAtPath:fontPath isDirectory:&isDir];
 
-          if (fileExists && !isDir) {
-			  checksum = add_font_checksum(checksum, fontPath.UTF8String);
-          }
-        }
-      }];
+                    if (fileExists && !isDir) {
+                        checksum = add_font_checksum(checksum, fontPath.UTF8String);
+                    }
+                }
+            }];
     }
 
     return checksum;
 }
 
 //PRISM/cao.kewei/20240524/custom font path
-void load_custom_font(const char *path) {
-	if (path == NULL) {
-		return;
-	}
-	add_path_font(path);
+void load_custom_font(const char *path)
+{
+    if (path == NULL) {
+        return;
+    }
+    add_path_font(path);
 }

@@ -100,7 +100,7 @@
 {
     switch (address.mSelector) {
         case kCMIOObjectPropertyName:
-            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio"); //PRISM/Zhongling/20231123/#/VCAM
+            *static_cast<CFStringRef *>(data) = CFSTR("PRISM Live Studio");  //PRISM/Zhongling/20231123/#/VCAM
             *dataUsed = sizeof(CFStringRef);
             break;
         case kCMIOObjectPropertyManufacturer:
@@ -120,11 +120,11 @@
             *dataUsed = sizeof(CMIOObjectID);
             break;
         case kCMIODevicePropertyDeviceUID:
-            *static_cast<CFStringRef *>(data) = CFSTR("prism-virtual-cam-device"); //PRISM/Zhongling/20231123/#/VCAM
+            *static_cast<CFStringRef *>(data) = CFSTR("prism-virtual-cam-device");  //PRISM/Zhongling/20231123/#/VCAM
             *dataUsed = sizeof(CFStringRef);
             break;
         case kCMIODevicePropertyModelUID:
-            *static_cast<CFStringRef *>(data) = CFSTR("prism-virtual-cam-model"); //PRISM/Zhongling/20231123/#/VCAM
+            *static_cast<CFStringRef *>(data) = CFSTR("prism-virtual-cam-model");  //PRISM/Zhongling/20231123/#/VCAM
             *dataUsed = sizeof(CFStringRef);
             break;
         case kCMIODevicePropertyTransportType:
