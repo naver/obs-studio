@@ -380,6 +380,9 @@ int audio_output_open(audio_t **audio, struct audio_output_info *info)
 	if (!out)
 		goto fail0;
 
+	//PRISM/wangshaohui/20250811/none/add more logs for audio
+	blog(LOG_INFO, "%s is called, audio=%p", __FUNCTION__, out);
+
 	memcpy(&out->info, info, sizeof(struct audio_output_info));
 	out->channels = get_audio_channels(info->speakers);
 	out->planes = planar ? out->channels : 1;
@@ -410,6 +413,9 @@ fail0:
 //PRISM/fanzirong/20240704/none/separate stop and free
 EXPORT void stop_audio_thread(audio_t *audio)
 {
+	//PRISM/wangshaohui/20250811/none/add more logs for audio
+	blog(LOG_INFO, "%s is called, audio=%p, initialized=%d", __FUNCTION__, audio, audio->initialized);
+
 	if (audio->initialized) {
 		audio->initialized = false;
 
@@ -427,6 +433,9 @@ void audio_output_close(audio_t *audio)
 
 	if (!audio)
 		return;
+
+	//PRISM/wangshaohui/20250811/none/add more logs for audio
+	blog(LOG_INFO, "%s is called, audio=%p", __FUNCTION__, audio);
 
 	//PRISM/fanzirong/20240704/none/separate stop and free--------- start
 	stop_audio_thread(audio);
@@ -449,6 +458,9 @@ void audio_output_close(audio_t *audio)
 		da_free(mix->inputs);
 	}
 	bfree(audio);
+
+	//PRISM/wangshaohui/20250811/none/add more logs for audio
+	blog(LOG_INFO, "%s exited, audio is deleted, audio=%p", __FUNCTION__, audio);
 }
 
 const struct audio_output_info *audio_output_get_info(const audio_t *audio)

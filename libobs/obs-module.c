@@ -27,6 +27,8 @@
 
 extern const char *get_module_extension(void);
 
+obs_module_t *current_load_module;
+
 static inline int req_func_not_found(const char *name, const char *path)
 {
 	blog(LOG_DEBUG,
@@ -158,8 +160,13 @@ bool obs_init_module(obs_module_t *module)
 	const char *profile_name =
 		profile_store_name(obs_get_profiler_name_store(), "obs_init_module(%s)", module->file);
 	profile_start(profile_name);
-
+	
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	pls_add_getstring_pointer_module_map(module->get_string, module);
+	current_load_module = module;
 	module->loaded = module->load();
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	current_load_module = NULL;
 	if (!module->loaded)
 		blog(LOG_WARNING, "Failed to initialize module '%s'", module->file);
 
@@ -640,6 +647,12 @@ void free_module(struct obs_module *mod)
 
 	if (obs->first_module == mod)
 		obs->first_module = mod->next;
+	
+	
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	pls_remove_id_module_map_by_value(mod);
+	pls_remove_module_lookup_map_by_key(mod);
+	pls_remove_getstring_pointer_module_map_by_value(mod);
 
 	bfree(mod->mod_name);
 	bfree(mod->bin_path);
@@ -671,7 +684,10 @@ lookup_t *obs_module_load_locale(obs_module_t *module, const char *default_local
 		blog(LOG_WARNING, "Failed to load '%s' text for module: '%s'", default_locale, module->file);
 		goto cleanup;
 	}
-
+	
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	pls_add_module_lookup_map(module, lookup);
+	
 	if (astrcmpi(locale, default_locale) == 0)
 		goto cleanup;
 
@@ -831,7 +847,12 @@ void obs_register_source_s(const struct obs_source_info *info, size_t size)
 		CHECK_REQUIRED_VAL_(info, audio_render, obs_register_source);
 	}
 #undef CHECK_REQUIRED_VAL_
-
+	
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	if (current_load_module) {
+		pls_add_id_module_map(info->id, current_load_module);
+	}
+	
 	/* version-related stuff */
 	data.unversioned_id = data.id;
 	if (data.version) {
@@ -886,6 +907,10 @@ void obs_register_output_s(const struct obs_output_info *info, size_t size)
 	}
 #undef CHECK_REQUIRED_VAL_
 
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	if (current_load_module)
+		pls_add_id_module_map(info->id, current_load_module);
+
 	REGISTER_OBS_DEF(size, obs_output_info, obs->output_types, info);
 
 	if (info->flags & OBS_OUTPUT_SERVICE) {
@@ -939,6 +964,10 @@ void obs_register_encoder_s(const struct obs_encoder_info *info, size_t size)
 		CHECK_REQUIRED_VAL_(info, get_frame_size, obs_register_encoder);
 #undef CHECK_REQUIRED_VAL_
 
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	if (current_load_module)
+		pls_add_id_module_map(info->id, current_load_module);
+
 	REGISTER_OBS_DEF(size, obs_encoder_info, obs->encoder_types, info);
 	return;
 
@@ -961,6 +990,10 @@ void obs_register_service_s(const struct obs_service_info *info, size_t size)
 	CHECK_REQUIRED_VAL_(info, destroy, obs_register_service);
 	CHECK_REQUIRED_VAL_(info, get_protocol, obs_register_service);
 #undef CHECK_REQUIRED_VAL_
+
+	//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+	if (current_load_module)
+		pls_add_id_module_map(info->id, current_load_module);
 
 	REGISTER_OBS_DEF(size, obs_service_info, obs->service_types, info);
 	return;

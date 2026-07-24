@@ -30,6 +30,9 @@ extern "C" {
 #define hlog_verbose(...) (void)0
 #endif
 
+//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
+#include "pls/pls-c-util.h"
+
 extern void hlog(const char *format, ...);
 extern void hlog_hr(const char *text, HRESULT hr);
 static inline const char *get_process_name(void);
@@ -261,9 +264,6 @@ static inline bool should_passthrough()
 	return false;
 #endif
 }
-
-//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
-void send_game_render_type(const char *type);
 
 #ifdef __cplusplus
 }

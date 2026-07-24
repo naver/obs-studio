@@ -150,43 +150,8 @@ fail:
 	return true;
 }
 
-//PRISM/wangshaohui/20250305/PRISM_PC_NELO-167/fix API hang
-#define BLOCK_TIMEOUT_MS 2000 // in ms
-#define DEFAULT_BUFFER_SIZE 1024
-
 void ms_get_window_title(struct dstr *name, HWND hwnd)
 {
-	//PRISM/wangshaohui/20250305/PRISM_PC_NELO-167/fix API hang --------------- start
-	ULONG_PTR len = 0; // does not include size of "\0"
-	LRESULT res = 0;
-
-	res = SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, BLOCK_TIMEOUT_MS, &len);
-	if (res != 0 && len > 0) {
-		wchar_t *temp_heap = NULL;
-		wchar_t temp_stack[DEFAULT_BUFFER_SIZE + 1];
-		wchar_t *dest_buffer = temp_stack;
-
-		if (len > DEFAULT_BUFFER_SIZE) {
-			temp_heap = malloc(sizeof(wchar_t) * (len + 1));
-			if (!temp_heap)
-				return;
-
-			dest_buffer = temp_heap;
-		}
-
-		ULONG_PTR copy_size = 0;
-		res = SendMessageTimeoutW(hwnd, WM_GETTEXT,
-					  len + 1, // +1: should copy "\0"
-					  (LPARAM)dest_buffer, SMTO_ABORTIFHUNG, BLOCK_TIMEOUT_MS, &copy_size);
-
-		if (res != 0 && copy_size > 0)
-			dstr_from_wcs(name, dest_buffer);
-
-		if (temp_heap)
-			free(temp_heap);
-	}
-
-	/* code of obs may be blocked, we reimplement this function. So we comment all code of obs
 	int len;
 
 	len = GetWindowTextLengthW(hwnd);
@@ -209,8 +174,7 @@ void ms_get_window_title(struct dstr *name, HWND hwnd)
 
 		if (GetWindowTextW(hwnd, temp, len + 1))
 			dstr_from_wcs(name, temp);
-	}*/
-	//PRISM/wangshaohui/20250305/PRISM_PC_NELO-167/fix API hang --------------- end
+	}
 }
 
 void ms_get_window_class(struct dstr *class, HWND hwnd)

@@ -1,5 +1,8 @@
 #include <obs-module.h>
 
+//PRISM/chenguoxi/20260121/none/ui action log
+#include <pls/pls-source.h>
+
 struct color_source {
 	struct vec4 color;
 	struct vec4 color_srgb;
@@ -27,6 +30,8 @@ static void color_source_update(void *data, obs_data_t *settings)
 	vec4_from_rgba_srgb(&context->color_srgb, color);
 	context->width = width;
 	context->height = height;
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(context->src);
 }
 
 static void *color_source_create(obs_data_t *settings, obs_source_t *source)
@@ -94,6 +99,9 @@ static void color_source_render(void *data, gs_effect_t *effect)
 		color_source_render_helper(context, &context->color);
 
 	gs_enable_framebuffer_srgb(previous);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_render(context->src, 0);
 }
 
 static uint32_t color_source_getwidth(void *data)

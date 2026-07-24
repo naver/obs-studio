@@ -31,6 +31,9 @@
 
 #include "gl-helpers.h"
 
+//PRISM/ai.guanghua/20260105/PRISM_PC-4834/resolve mac sampler release crash
+#include "pls/pls-source.h"
+
 struct gl_platform;
 struct gl_windowinfo;
 
@@ -437,8 +440,11 @@ static inline void samplerstate_addref(gs_samplerstate_t *ss)
 
 static inline void samplerstate_release(gs_samplerstate_t *ss)
 {
-	if (os_atomic_dec_long(&ss->ref) == 0)
+	//PRISM/ai.guanghua/20260105/PRISM_PC-4834/resolve mac sampler release crash
+	if (os_atomic_dec_long(&ss->ref) == 0 && pls_sampler_is_alive(ss)) {
 		bfree(ss);
+		pls_remove_sampler_alive(ss);
+	}
 }
 
 struct gs_timer {

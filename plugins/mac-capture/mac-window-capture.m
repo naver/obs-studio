@@ -7,6 +7,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "window-utils.h"
+#include <pls/pls-obs-api.h>
 
 struct window_capture {
     obs_source_t *source;
@@ -31,8 +32,9 @@ static CGImageRef get_image(struct window_capture *wc)
     NSArray *arr = (NSArray *) CGWindowListCreate(kCGWindowListOptionIncludingWindow, wc->window.window_id);
     [arr autorelease];
 
-    if (!arr.count && !find_window(&wc->window, NULL, false))
+    if (!arr.count && !find_window(&wc->window, NULL, false)) {
         return NULL;
+    }
 
     return CGWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, wc->window.window_id,
                                    wc->image_option);
@@ -42,14 +44,20 @@ static inline void capture_frame(struct window_capture *wc)
 {
     uint64_t ts = os_gettime_ns();
     CGImageRef img = get_image(wc);
-    if (!img)
+    if (!img) {
+        //PRISM/sam.zhang/20251105/notify capture error
+        pls_source_send_notify(wc->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
         return;
+    }
 
     size_t width = CGImageGetWidth(img);
     size_t height = CGImageGetHeight(img);
 
     if (!width || !height || CGImageGetBitsPerPixel(img) != 32 || CGImageGetBitsPerComponent(img) != 8) {
         CGImageRelease(img);
+        //PRISM/sam.zhang/20251105/notify capture error
+        pls_source_send_notify(wc->source, OBS_SOURCE_FAILED_STATUS,
+                               OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_PERMISSION);
         return;
     }
 
@@ -66,6 +74,9 @@ static inline void capture_frame(struct window_capture *wc)
     };
 
     obs_source_output_video(wc->source, &frame);
+
+    //PRISM/sam.zhang/20251105/notify capture error
+    pls_source_send_notify(wc->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_STATUS_SUCCESS);
 
     CGImageRelease(img);
     CFRelease(data);

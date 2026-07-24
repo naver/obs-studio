@@ -69,7 +69,12 @@ enum {
 	/**
 	 * Debug message to be used mostly by developers.
 	 */
-	LOG_DEBUG = 400
+	LOG_DEBUG = 400,
+
+	/**
+	 * UI action log for PLS_UI_ACTION support.
+	 */
+	LOG_UI_ACTION = 500
 };
 
 typedef void (*log_handler_t)(int lvl, const char *msg, va_list args, void *p);

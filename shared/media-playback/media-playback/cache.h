@@ -80,6 +80,9 @@ struct mp_cache {
 	int64_t media_duration;
 
 	mp_media_t m;
+
+	//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+	volatile bool is_deconnected;
 };
 
 typedef struct mp_cache mp_cache_t;
@@ -95,3 +98,6 @@ extern int64_t mp_cache_get_current_time(mp_cache_t *c);
 extern void mp_cache_seek(mp_cache_t *c, int64_t pos);
 extern int64_t mp_cache_get_frames(mp_cache_t *c);
 extern int64_t mp_cache_get_duration(mp_cache_t *c);
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+extern void mp_cache_disconnect(mp_cache_t *c);

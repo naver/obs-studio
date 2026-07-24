@@ -220,7 +220,9 @@ void video_frame_init(struct video_frame *frame, enum video_format format, uint3
 	}
 
 	/* allocate memory */
-	frame->data[0] = bmalloc(size);
+	//PRISM/wangshaohui/20250729/#PRISM_PC_NELO-356/check if size is zero
+	//frame->data[0] = bmalloc(size);
+	frame->data[0] = size > 0 ? bmalloc(size) : NULL;
 	frame->linesize[0] = linesizes[0];
 
 	/* apply plane data pointers according to offsets */

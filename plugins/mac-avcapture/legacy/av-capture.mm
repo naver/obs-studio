@@ -24,6 +24,7 @@
 //PRISM/Zhongling/20231101/#/start
 #include <pls/pls-source.h>
 #include <pls/pls-properties.h>
+#include <pls/pls-lens-info.h>
 //PRISM/Zhongling/20231101/#/end
 
 #define NBSP "\xC2\xA0"
@@ -150,6 +151,10 @@ struct av_capture {
     bool enable_audio;
 
     obs_source_t *source;
+
+    //PRISM/sam.zhang/20260302/PRISM_PC-5413
+    uint32_t saved_width = 0;
+    uint32_t saved_height = 0;
 
     obs_source_frame frame;
     obs_source_audio audio;
@@ -695,6 +700,10 @@ static inline bool update_frame(av_capture *capture, obs_source_frame *frame, CM
     frame->width = dims.width;
     frame->height = dims.height;
 
+    //PRISM/sam.zhang/20260302/PRISM_PC-5413
+    capture->saved_width = (uint32_t) dims.width;
+    capture->saved_height = (uint32_t) dims.height;
+
     if (format_is_yuv(format) && !update_colorspace(capture, frame, desc, is_fullrange_yuv(fourcc), vi)) {
         return false;
     } else if (was_yuv == format_is_yuv(format)) {
@@ -860,18 +869,26 @@ static void start_capture(av_capture *capture)
         [capture->session startRunning];
 }
 
-static void clear_capture(av_capture *capture)
+static void clear_capture(av_capture *capture, bool clear_video_frame = true)
 {
     if (capture->session && capture->session.running)
         [capture->session stopRunning];
 
-    obs_source_output_video(capture->source, nullptr);
+    //PRISM/sam.zhang/20260203/PRISM_PC-5226
+    if (clear_video_frame) {
+        capture->saved_width = 0;
+        capture->saved_height = 0;
+        obs_source_output_video(capture->source, nullptr);
+    }
+
     obs_source_output_audio(capture->source, nullptr);
 }
 
 static void remove_device(av_capture *capture)
 {
-    clear_capture(capture);
+    //PRISM/sam.zhang/20260203/PRISM_PC-5226
+    NSString *name = [NSString stringWithUTF8String:obs_source_get_name(capture->source)];
+    clear_capture(capture, ![name hasPrefix:@"take-camera-snapshot"]);
 
     [capture->session removeInput:capture->device_input];
 
@@ -2270,6 +2287,9 @@ static obs_properties_t *av_capture_properties(void *data)
     }
 
     if (isLens || isMobile) {
+        //PRISM/sam.zhang/20260302/PRISM_PC-5413
+        pls_init_lens_resolution();
+
         obs_properties_add_button(props, TEXT_PRISM_LENS_OPEN_KEY, TEXT_PRISM_LENS_OPEN_TEXT, nullptr);
 
         if (isLens) {
@@ -2406,6 +2426,64 @@ static void av_capture_update(void *data, obs_data_t *settings)
 
 //PRISM/Zhongling/20230809/#/lens and mobile plugin start
 
+//PRISM/sam.zhang/20260302/PRISM_PC-5413
+static uint32_t lens_index_from_device(av_capture *capture)
+{
+    NSString *uid = capture->device ? capture->device.uniqueID : nil;
+    if (!uid || uid.length == 0) {
+        obs_data_t *settings = obs_source_get_settings(capture->source);
+        uid = get_string(settings, "device");
+        obs_data_release(settings);
+    }
+    if (!uid || uid.length == 0)
+        return MAX_LENS_COUNT;
+
+    const char *cuid = uid.UTF8String;
+    if (strcmp(cuid, UUID_PRISM_LEN1) == 0)
+        return 0;
+    if (strcmp(cuid, UUID_PRISM_LEN2) == 0)
+        return 1;
+    if (strcmp(cuid, UUID_PRISM_LEN3) == 0)
+        return 2;
+    return MAX_LENS_COUNT;
+}
+
+static uint32_t av_capture_lens_get_width(void *data)
+{
+    av_capture *capture = static_cast<av_capture *>(data);
+    if (!capture || !capture->source)
+        return 0;
+
+    if (capture->saved_width > 0 && capture->saved_height > 0)
+        return capture->saved_width;
+
+    uint32_t index = lens_index_from_device(capture);
+    if (index >= MAX_LENS_COUNT)
+        return 0;
+
+    int width = 0, height = 0;
+    pls_get_lens_resolution(index, &width, &height);
+    return width > 0 ? (uint32_t) width : 0;
+}
+
+static uint32_t av_capture_lens_get_height(void *data)
+{
+    av_capture *capture = static_cast<av_capture *>(data);
+    if (!capture || !capture->source)
+        return 0;
+
+    if (capture->saved_width > 0 && capture->saved_height > 0)
+        return capture->saved_height;
+
+    uint32_t index = lens_index_from_device(capture);
+    if (index >= MAX_LENS_COUNT)
+        return 0;
+
+    int width = 0, height = 0;
+    pls_get_lens_resolution(index, &width, &height);
+    return height > 0 ? (uint32_t) height : 0;
+}
+
 static const char *av_capture_getname_lens(void *)
 {
     return TEXT_PRISM_LENS_NAME;
@@ -2417,19 +2495,26 @@ static const char *av_capture_getname_lens_mobile(void *)
 
 static bool properties_device_changed_lens_or_mobile(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
 {
-    NSString *uid = get_string(settings, "device");
-    AVCaptureDevice *dev = [AVCaptureDevice deviceWithUniqueID:uid];
+//     NSString *uid = get_string(settings, "device");
+//     AVCaptureDevice *dev = [AVCaptureDevice deviceWithUniqueID:uid];
 
-    NSString *name = get_string(settings, "device_name");
-    bool dev_list_updated = update_device_list(p, uid, name, !dev && uid.length);
-    bool autoselect_changed = autoselect_preset(dev, settings);
+//     NSString *name = get_string(settings, "device_name");
+//     bool dev_list_updated = update_device_list(p, uid, name, !dev && uid.length);
+//     bool autoselect_changed = autoselect_preset(dev, settings);
 
-    config_helper conf {settings};
-    bool res_changed = update_resolution_property(props, conf);
-    bool fps_changed = update_frame_rate_property(props, conf);
-    bool if_changed = update_input_format_property(props, conf);
+//     config_helper conf {settings};
+//     bool res_changed = update_resolution_property(props, conf);
+//     bool fps_changed = update_frame_rate_property(props, conf);
+//     bool if_changed = update_input_format_property(props, conf);
 
-    return autoselect_changed || dev_list_updated || res_changed || fps_changed || if_changed;
+    // PRISM: Always return true to ensure RefreshProperties is called when device changes.
+    // This matches Windows behavior where DeviceSelectionChanged always returns true.
+    // Without this, PLSVbChromakey widget may retain stale lensIndex when switching devices.
+    UNUSED_PARAMETER(props);
+    UNUSED_PARAMETER(p);
+    UNUSED_PARAMETER(settings);
+    return true;
+    // Original: return autoselect_changed || dev_list_updated || res_changed || fps_changed || if_changed;
 }
 //PRISM/Zhongling/20230809/#/lens and mobile plugin end
 
@@ -2463,6 +2548,9 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 bool obs_module_load(void)
 {
+    //PRISM/sam.zhang/20260302/PRISM_PC-5413
+    pls_init_lens_resolution();
+
     // Enable iOS device to show up as AVCapture devices
     // From WWDC video 2014 #508 at 5:34
     // https://developer.apple.com/videos/wwdc/2014/#508
@@ -2499,6 +2587,8 @@ bool obs_module_load(void)
     av_capture_info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
     av_capture_info.get_name = av_capture_getname_lens_mobile;
     av_capture_info.get_defaults = av_capture_defaults_lens_mobile;
+    av_capture_info.get_width = av_capture_lens_get_width;
+    av_capture_info.get_height = av_capture_lens_get_height;
     av_capture_info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_MOBILE);
 
     obs_register_source(&av_capture_info);
@@ -2508,6 +2598,8 @@ bool obs_module_load(void)
     av_capture_info.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE;
     av_capture_info.get_name = av_capture_getname_lens;
     av_capture_info.get_defaults = av_capture_defaults_lens;
+    av_capture_info.get_width = av_capture_lens_get_width;
+    av_capture_info.get_height = av_capture_lens_get_height;
     av_capture_info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_LENS);
 
     obs_register_source(&av_capture_info);

@@ -128,10 +128,14 @@ static bool ignore_audio(obs_source_t *source, size_t channels, size_t sample_ra
 	}
 
 	if (!source->audio_pending || num_floats) {
-		blog(LOG_WARNING,
-		     "Source %s audio is lagging (over by %.02f ms) "
-		     "at max audio buffering. Restarting source audio.",
-		     name, (start_ts - source->audio_ts) / 1000000.);
+		//PRISM/fanzirong/20250627/none/reduce audio lag log
+		source->audio_lag_log_count++;
+		if (source->audio_lag_log_count <= 10 || (source->audio_lag_log_count % 2000) == 0) {
+			blog(LOG_WARNING,
+			     "Source %s audio is lagging (over by %.02f ms) "
+			     "at max audio buffering. Restarting source audio. (count: %d)",
+			     name, (start_ts - source->audio_ts) / 1000000., source->audio_lag_log_count);
+		}
 	}
 
 	source->audio_pending = true;
@@ -538,7 +542,19 @@ bool audio_callback(void *param, uint64_t start_ts_in, uint64_t end_ts_in, uint6
 	/* render audio data */
 	for (size_t i = 0; i < audio->render_order.num; i++) {
 		obs_source_t *source = audio->render_order.array[i];
+
+		//PRISM//wangshaohui//20250729/none/add helpful log.
+		bool old_pending = source->audio_pending;
+
 		obs_source_audio_render(source, mixers, channels, sample_rate, audio_size);
+
+		//PRISM//wangshaohui//20250729/none/add helpful log.
+		if (source->audio_pending != old_pending && (source->info.output_flags & OBS_SOURCE_AUDIO)) {
+			blog(LOG_INFO, "%p %s '%s' > audio pending is changed : %s", source,
+			     source->info.id ? source->info.id : "null",
+			     source->context.name ? source->context.name : "unknown",
+			     source->audio_pending ? "audio_abort" : "audio_normal");
+		}
 
 		/* if a source has gone backward in time and we can no
 		 * longer buffer, drop some or all of its audio */

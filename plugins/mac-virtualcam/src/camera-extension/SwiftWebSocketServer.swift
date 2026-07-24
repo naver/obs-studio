@@ -32,7 +32,7 @@ class SwiftWebSocketServer {
 		self.port = p
 		
 		self.parameters = {
-			var paras = NWParameters(tls: nil)
+			let paras = NWParameters(tls: nil)
 			paras.allowLocalEndpointReuse = true
 			paras.includePeerToPeer = true
 			let wsOptions = NWProtocolWebSocket.Options()

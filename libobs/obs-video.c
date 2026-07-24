@@ -49,6 +49,9 @@ static uint64_t tick_sources(uint64_t cur_time, uint64_t last_time)
 	/* ------------------------------------- */
 	/* call tick callbacks                   */
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "tick_callbacks");
+
 	pthread_mutex_lock(&data->draw_callbacks_mutex);
 
 	for (size_t i = data->tick_callbacks.num; i > 0; i--) {
@@ -59,10 +62,16 @@ static uint64_t tick_sources(uint64_t cur_time, uint64_t last_time)
 
 	pthread_mutex_unlock(&data->draw_callbacks_mutex);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "tick_callbacks", time_ns_3ms);
+
 	/* ------------------------------------- */
 	/* get an array of all sources to tick   */
 
 	da_clear(data->sources_to_tick);
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "get_all_sources");
 
 	pthread_mutex_lock(&data->sources_mutex);
 
@@ -76,11 +85,17 @@ static uint64_t tick_sources(uint64_t cur_time, uint64_t last_time)
 
 	pthread_mutex_unlock(&data->sources_mutex);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "get_all_sources", time_ns_3ms);
+
 	/* ------------------------------------- */
 	/* call the tick function of each source */
 
 	for (size_t i = 0; i < data->sources_to_tick.num; i++) {
 		obs_source_t *s = data->sources_to_tick.array[i];
+
+		//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+		pls_check_end_loading(s);
 
 		//PRISM/Zengqin/20240528/none/add tick source profile ----------- start
 		if (s && !s->source_tick_profile) {
@@ -91,15 +106,22 @@ static uint64_t tick_sources(uint64_t cur_time, uint64_t last_time)
 			profile_start(s->source_tick_profile);
 		//PRISM/Zengqin/20240528/none/add tick source profile ----------- end
 
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(s, obs_source_get_id(s), "tick_source");
+
 		const uint64_t start = source_profiler_source_tick_start();
 		obs_source_video_tick(s, seconds);
 		source_profiler_source_tick_end(s, start);
-		obs_source_release(s);
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(s, obs_source_get_id(s), "tick_source", time_ns_3ms);
 
 		//PRISM/Zengqin/20240528/none/add tick source profile ----------- start
 		if (s && s->source_tick_profile)
 			profile_end(s->source_tick_profile);
 		//PRISM/Zengqin/20240528/none/add tick source profile ----------- end
+
+		obs_source_release(s);
 	}
 
 	return cur_time;
@@ -126,7 +148,14 @@ static inline void render_displays(void)
 
 	display = obs->data.first_display;
 	while (display) {
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(display, "", "render_display");
+
 		render_display(display);
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(display, "", "render_display", time_ns_3ms);
+
 		display = display->next;
 	}
 
@@ -584,7 +613,13 @@ static inline void render_video(struct obs_core_video_mix *video, bool raw_activ
 	gs_enable_depth_test(false);
 	gs_set_cull_mode(GS_NEITHER);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(video, "mix", "render_main_texture");
+
 	render_main_texture(video);
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(video, "mix", "render_main_texture", time_ns_3ms);
 
 	if (raw_active || gpu_active) {
 		gs_texture_t *const *convert_textures = video->convert_textures;
@@ -602,17 +637,35 @@ static inline void render_video(struct obs_core_video_mix *video, bool raw_activ
 		}
 
 		if (video->gpu_conversion) {
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(video, "mix", "gpu_convert");
+
 			render_convert_texture(video, convert_textures, output_texture);
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(video, "mix", "gpu_convert", time_ns_3ms);
 		}
 
 		if (gpu_active) {
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(video, "mix", "output_gpu_encoders");
+
 			gs_flush();
 			output_gpu_encoders(video, raw_active);
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(video, "mix", "output_gpu_encoders", time_ns_3ms);
 		}
 
 		if (raw_active) {
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(video, "mix", "stage_output_texture");
+
 			stage_output_texture(video, cur_texture, convert_textures, output_texture, copy_surfaces,
 					     channel_count);
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(video, "mix", "stage_output_texture", time_ns_3ms);
 		}
 	}
 
@@ -827,9 +880,21 @@ static inline void output_video_data(struct obs_core_video_mix *video, struct vi
 	locked = video_output_lock_frame(video->video, &output_frame, count, input_frame->timestamp);
 	if (locked) {
 		if (video->gpu_conversion) {
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(video, "", "output_video_data::set_gpu_converted_data");
+
 			set_gpu_converted_data(&output_frame, input_frame, info);
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(video, "", "output_video_data::set_gpu_converted_data", time_ns_3ms);
 		} else {
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(video, "", "output_video_data::copy_rgbx_frame");
+
 			copy_rgbx_frame(&output_frame, input_frame, info);
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(video, "", "output_video_data::copy_rgbx_frame", time_ns_3ms);
 		}
 
 		video_output_unlock_frame(video->video);
@@ -864,7 +929,15 @@ static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time, u
 	}
 
 	video->total_frames += count;
-	video->lagged_frames += count - 1;
+	//video->lagged_frames += count - 1;
+	//PRISM/wangshaohui/20251201/PRISM_PC-4643/ignore render drop frames caused by PC sleep
+	if (pls_ignore_render_drop()) {
+		int incresed = count - 1;
+		if (incresed > 0)
+			blog(LOG_INFO, "%s: ignore render drop (count=%d)", __FUNCTION__, incresed);
+	} else {
+		video->lagged_frames += count - 1;
+	}
 
 	vframe_info.timestamp = cur_time;
 	vframe_info.count = count;
@@ -925,21 +998,39 @@ static inline void output_frame(struct obs_core_video_mix *video)
 	profile_start(output_frame_gs_context_name);
 	gs_enter_context(obs->video.graphics);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(video, "", "render_video");
+
 	profile_start(output_frame_render_video_name);
 	GS_DEBUG_MARKER_BEGIN(GS_DEBUG_COLOR_RENDER_VIDEO, output_frame_render_video_name);
 	render_video(video, raw_active, gpu_active, cur_texture);
 	GS_DEBUG_MARKER_END();
 	profile_end(output_frame_render_video_name);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(video, "", "render_video", time_ns_3ms);
+
 	if (raw_active) {
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(video, "", "download_frame");
+
 		profile_start(output_frame_download_frame_name);
 		frame_ready = download_frame(video, prev_texture, &frame);
 		profile_end(output_frame_download_frame_name);
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(video, "", "download_frame", time_ns_3ms);
 	}
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(video, "", "gs_flush");
 
 	profile_start(output_frame_gs_flush_name);
 	gs_flush();
 	profile_end(output_frame_gs_flush_name);
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(video, "", "gs_flush", time_ns_3ms);
 
 	gs_leave_context();
 	profile_end(output_frame_gs_context_name);
@@ -948,10 +1039,16 @@ static inline void output_frame(struct obs_core_video_mix *video)
 		struct obs_vframe_info vframe_info;
 		deque_pop_front(&video->vframe_info_buffer, &vframe_info, sizeof(vframe_info));
 
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(video, "", "output_video_data");
+
 		frame.timestamp = vframe_info.timestamp;
 		profile_start(output_frame_output_video_data_name);
 		output_video_data(video, &frame, vframe_info.count);
 		profile_end(output_frame_output_video_data_name);
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(video, "", "output_video_data", time_ns_3ms);
 	}
 
 	if (++video->cur_texture == NUM_TEXTURES)
@@ -967,7 +1064,13 @@ static inline void output_frames(void)
 	for (size_t i = 0, num = obs->video.mixes.num; i < num; i++) {
 		struct obs_core_video_mix *mix = obs->video.mixes.array[i];
 		if (mix->view) {
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(mix, "video_mix", "output_frame");
+
 			output_frame(mix);
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(mix, "video_mix", "output_frame", time_ns_3ms);
 		} else {
 			//PRISM/wangshaohui/20231130/none/add logs
 			blog(LOG_INFO, "%s i=%zu", __FUNCTION__, i);
@@ -1145,8 +1248,20 @@ static inline bool stop_requested(void)
 	return success;
 }
 
+//PRISM/wangshaohui/20250801/noIssue/debug render time
+#ifdef _WIN32
+static const char *peek_msg_name = "peak_msg_name";
+#endif
+static const char *run_task_name = "run_task_name";
+
 bool obs_graphics_thread_loop(struct obs_graphics_context *context)
 {
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "obs_graphics_thread_loop");
+
+	//PRISM/wangshaohui/20251203/PRISM_PC-4643/ignore invalid render drop
+	pls_notify_graphic_event();
+
 	uint64_t frame_start = os_gettime_ns();
 	uint64_t frame_time_ns;
 
@@ -1159,18 +1274,36 @@ bool obs_graphics_thread_loop(struct obs_graphics_context *context)
 	gs_begin_frame();
 	gs_leave_context();
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "tick_sources");
+
 	profile_start(tick_sources_name);
 	context->last_time = tick_sources(obs->video.video_time, context->last_time);
 	profile_end(tick_sources_name);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "tick_sources", 0);
+
 #ifdef _WIN32
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "PeekMessage");
+	//PRISM/wangshaohui/20250801/noIssue/debug render time
+	profile_start(peek_msg_name);
+
 	MSG msg;
 	while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}
+
+	//PRISM/wangshaohui/20250801/noIssue/debug render time
+	profile_end(peek_msg_name);
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "PeekMessage", 0);
 #endif
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "output_frames");
 	source_profiler_render_begin();
 	profile_start(output_frame_name);
 	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
@@ -1179,13 +1312,28 @@ bool obs_graphics_thread_loop(struct obs_graphics_context *context)
 	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	is_rendering = false;
 	profile_end(output_frame_name);
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "output_frames", 0);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "render_displays");
 	profile_start(render_displays_name);
 	render_displays();
 	profile_end(render_displays_name);
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "render_displays", 0);
+
 	source_profiler_render_end();
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(NULL, "", "execute_graphics_tasks");
+	//PRISM/wangshaohui/20250801/noIssue/debug render time
+	profile_start(run_task_name); 
 	execute_graphics_tasks();
+	//PRISM/wangshaohui/20250801/noIssue/debug render time
+	profile_end(run_task_name);
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "execute_graphics_tasks", 0);
 
 	frame_time_ns = os_gettime_ns() - frame_start;
 
@@ -1193,6 +1341,9 @@ bool obs_graphics_thread_loop(struct obs_graphics_context *context)
 	profile_end(context->video_thread_name);
 
 	profile_reenable_thread();
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(NULL, "", "obs_graphics_thread_loop", 0);
 
 	video_sleep(&obs->video, &obs->video.video_time, context->interval);
 
@@ -1215,6 +1366,9 @@ bool obs_graphics_thread_loop(struct obs_graphics_context *context)
 
 void *obs_graphics_thread(void *param)
 {
+	//PRISM/wangshaohui/20260211/4238/taken time
+	pls_set_render_thread();
+
 #ifdef _WIN32
 	struct winrt_state winrt;
 	init_winrt_state(&winrt);

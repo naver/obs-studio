@@ -69,7 +69,7 @@ const char *nv_error_name(NVENCSTATUS err);
 
 bool init_nvenc(obs_encoder_t *encoder);
 bool nv_fail2(obs_encoder_t *encoder, void *session, const char *format, ...);
-bool nv_failed2(obs_encoder_t *encoder, void *session, NVENCSTATUS err, const char *func, const char *call);
+bool nv_failed2(obs_encoder_t *encoder, bool msg_error, void *session, NVENCSTATUS err, const char *func, const char *call);
 
 struct encoder_caps *get_encoder_caps(enum codec_type codec);
 int num_encoder_devices(void);
@@ -81,4 +81,6 @@ void register_compat_encoders(void);
 
 #define nv_fail(encoder, format, ...) nv_fail2(encoder, enc->session, format, ##__VA_ARGS__)
 
-#define nv_failed(encoder, err, func, call) nv_failed2(encoder, enc->session, err, func, call)
+//PRISM/chenguoxi/20251210/PRISM_PC-4574/nvenc error msg
+#define nv_failed(encoder, err, func, call) \
+	nv_failed2(encoder, enc->is_nvenc_error_msg_error, enc->session, err, func, call)

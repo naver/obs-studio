@@ -322,6 +322,6 @@ void d3d11_capture(void *swap_ptr, void *backbuffer_ptr)
 		backbuffer->Release();
 
 		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
-		send_game_render_type("d3d11");
+		send_game_render_type(RenderType_D3D11);
 	}
 }

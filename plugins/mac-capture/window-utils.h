@@ -4,6 +4,10 @@
 #include <util/threading.h>
 #include <obs-module.h>
 
+#define GUIDANCE_URL \
+    "https://guide.prismlive.com/desktop/guides/error-solution/source/how-to-fix-macos-screen-caupture-failure"
+#define SETTINGS_GUIDANCE "guidance"
+
 struct cocoa_window {
     CGWindowID window_id;
     int owner_pid;

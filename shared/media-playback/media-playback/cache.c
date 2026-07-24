@@ -266,7 +266,8 @@ static void mp_cache_next_video(mp_cache_t *c, bool preload)
 		if (!mp_media_can_play_video(c))
 			return;
 
-		if (c->v_cb)
+		//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+		if (c->v_cb && !c->is_deconnected)
 			c->v_cb(c->opaque, &dup);
 
 		if (c->cur_v_idx < c->next_v_idx)
@@ -274,6 +275,10 @@ static void mp_cache_next_video(mp_cache_t *c, bool preload)
 		++c->next_v_idx;
 		calc_next_v_ts(c, frame);
 	} else {
+		//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+		if (c->is_deconnected)
+			return;
+
 		if (c->seek_next_ts && c->v_seek_cb) {
 			c->v_seek_cb(c->opaque, &dup);
 		} else if (!c->request_preload) {
@@ -303,7 +308,8 @@ static void mp_cache_next_audio(mp_cache_t *c)
 	struct obs_source_audio dup = *audio;
 
 	dup.timestamp = c->base_ts + dup.timestamp - c->start_ts + c->play_sys_ts - base_sys_ts;
-	if (c->a_cb)
+	//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+	if (c->a_cb && !c->is_deconnected)
 		c->a_cb(c->opaque, &dup);
 
 	if (c->cur_a_idx < c->next_a_idx)
@@ -371,8 +377,11 @@ static bool mp_cache_reset(mp_cache_t *c)
 
 	if (!active && c->v_preload_cb)
 		mp_cache_next_video(c, true);
-	if (stopping && c->stop_cb)
+	if (stopping && c->stop_cb && !c->is_deconnected) { //PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		blog(LOG_INFO, "%s: stop_cb triggered, opaque %p", __FUNCTION__, (void *)c->opaque);
 		c->stop_cb(c->opaque);
+	}
 	return true;
 }
 
@@ -465,7 +474,8 @@ static inline bool mp_cache_thread(mp_cache_t *c)
 		if (pause)
 			continue;
 
-		if (preload_frame)
+		//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+		if (preload_frame && !c->is_deconnected)
 			c->v_preload_cb(c->opaque, &c->video_frames.array[0]);
 
 		/* frames are ready */
@@ -490,7 +500,9 @@ static void *mp_cache_thread_start(void *opaque)
 	mp_cache_t *c = opaque;
 
 	if (!mp_cache_thread(c)) {
-		if (c->stop_cb) {
+		if (c->stop_cb && !c->is_deconnected) { //PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: stop_cb triggered, opaque %p", __FUNCTION__, (void *)c->opaque);
 			c->stop_cb(c->opaque);
 		}
 	}
@@ -731,4 +743,12 @@ int64_t mp_cache_get_frames(mp_cache_t *c)
 int64_t mp_cache_get_duration(mp_cache_t *c)
 {
 	return c->media_duration;
+}
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+extern void mp_cache_disconnect(mp_cache_t* c)
+{
+	if (!c)
+		return;
+	c->is_deconnected = true;
 }

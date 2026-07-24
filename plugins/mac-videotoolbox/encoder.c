@@ -1123,7 +1123,8 @@ static bool vt_encode(void *data, struct encoder_frame *frame, struct encoder_pa
 		VT_BLOG(LOG_ERROR, "Unable to create pixel buffer");
 		goto fail;
 	}
-
+	
+	
 	code = CVPixelBufferLockBaseAddress(pixbuf, 0);
 	if (code != noErr) {
 		goto fail;
@@ -1176,6 +1177,10 @@ static bool vt_encode(void *data, struct encoder_frame *frame, struct encoder_pa
 	return parse_sample(enc, buffer, packet, off);
 
 fail:
+	//PRISM/ai.guanghua/20251014/#/Fix Free pixbuf
+        if (pixbuf) {
+	   CVPixelBufferRelease(pixbuf);
+        }
 	return false;
 }
 

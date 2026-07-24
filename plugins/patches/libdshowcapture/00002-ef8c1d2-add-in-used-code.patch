@@ -1,0 +1,15 @@
+diff --git a/source/device.cpp b/source/device.cpp
+index 6c5bfc9..7b11662 100644
+--- a/source/device.cpp
++++ b/source/device.cpp
+@@ -851,7 +851,9 @@ Result HDevice::Start()
+ 	hr = control->Run();
+ 
+ 	if (FAILED(hr)) {
+-		if (hr == (HRESULT)0x8007001F) {
++		//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
++		if (hr == (HRESULT)0x8007001F || hr == (HRESULT)0X800705AA || hr == (HRESULT)0xc00d3704 ||
++		    hr == (HRESULT)0x80070020) {
+ 			WarningHR(L"Run failed, device already in use", hr);
+ 			return Result::InUse;
+ 		} else {

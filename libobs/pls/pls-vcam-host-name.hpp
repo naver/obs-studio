@@ -35,6 +35,20 @@ static std::wstring GetDataPath()
 	return path;
 }
 
+std::string w2u(const wchar_t *str)
+{
+	if (!str)
+		return "";
+
+	int n = WideCharToMultiByte(CP_UTF8, 0, str, -1, nullptr, 0, nullptr, nullptr);
+	std::vector<char> vecBuffer(n + 1);
+	auto pBuffer = vecBuffer.data();
+	n = WideCharToMultiByte(CP_UTF8, 0, str, -1, pBuffer, n, nullptr, nullptr);
+	pBuffer[n] = 0;
+	std::string ret(pBuffer);
+	return ret;
+}
+
 bool LogHostProcessName(const std::wstring &executeFile)
 {
 	if (executeFile.empty())
@@ -52,10 +66,14 @@ bool LogHostProcessName(const std::wstring &executeFile)
 	auto data_path = GetDataPath();
 	CreateFolder(data_path);
 
-	/* create a txt file named by host process name */
-	HANDLE hFile = CreateFileW(data_path.append(appName.data()).append(L".txt").c_str(), GENERIC_READ, 0, NULL,
+	/* create a file named by host process name */
+	HANDLE hFile = CreateFileW(data_path.append(appName.data()).c_str(), GENERIC_WRITE, 0, NULL,
 				   CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile) {
+	if (hFile != INVALID_HANDLE_VALUE) {
+		DWORD bytesWritten = 0;
+		std::string utf8str = w2u(executeFile.c_str());
+		WriteFile(hFile, utf8str.data(), static_cast<DWORD>(utf8str.size()), &bytesWritten, NULL);
+
 		CloseHandle(hFile);
 		return true;
 	}

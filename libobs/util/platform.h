@@ -78,6 +78,14 @@ EXPORT void *os_dlsym(void *module, const char *func);
 EXPORT void os_dlclose(void *module);
 EXPORT bool os_is_obs_plugin(const char *path);
 
+#ifdef _WIN32
+struct sys_cpu_usage_info;
+typedef struct sys_cpu_usage_info sys_cpu_usage_info_t; 
+EXPORT sys_cpu_usage_info_t *sys_cpu_usage_info_start(void);
+EXPORT double sys_cpu_usage_info_query(sys_cpu_usage_info_t *info);
+EXPORT void sys_cpu_usage_info_destroy(sys_cpu_usage_info_t *info);
+#endif
+
 struct os_cpu_usage_info;
 typedef struct os_cpu_usage_info os_cpu_usage_info_t;
 

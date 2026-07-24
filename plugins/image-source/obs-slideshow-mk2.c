@@ -8,6 +8,9 @@
 
 #include <inttypes.h>
 
+//PRISM/chenguoxi/20260121/none/ui action log
+#include <pls/pls-source.h>
+
 #define do_log(level, format, ...) \
 	blog(level, "[slideshow: '%s'] " format, obs_source_get_name(ss->source), ##__VA_ARGS__)
 
@@ -655,6 +658,9 @@ static void ss_play_pause(void *data, bool pause)
 {
 	struct slideshow *ss = data;
 
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(ss->source, "play_pause");
+
 	if (ss->data.stop) {
 		ss->data.stop = false;
 		ss->data.paused = false;
@@ -668,11 +674,17 @@ static void ss_play_pause(void *data, bool pause)
 		set_media_state(ss, OBS_MEDIA_STATE_PAUSED);
 	else
 		set_media_state(ss, OBS_MEDIA_STATE_PLAYING);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(ss->source);
 }
 
 static void ss_restart(void *data)
 {
 	struct slideshow *ss = data;
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(ss->source, "restart");
 
 	restart_slides(ss);
 	ss->data.elapsed = 0.0f;
@@ -681,11 +693,17 @@ static void ss_restart(void *data)
 	do_transition(ss, false);
 
 	set_media_state(ss, OBS_MEDIA_STATE_PLAYING);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(ss->source);
 }
 
 static void ss_stop(void *data)
 {
 	struct slideshow *ss = data;
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(ss->source, "stop");
 
 	restart_slides(ss);
 	ss->data.elapsed = 0.0f;
@@ -694,11 +712,19 @@ static void ss_stop(void *data)
 	do_transition(ss, true);
 
 	set_media_state(ss, OBS_MEDIA_STATE_STOPPED);
+
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(ss->source);
 }
 
 static void ss_next_slide(void *data)
 {
 	struct slideshow *ss = data;
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(ss->source, "next");
+
 	struct slideshow_data *ssd = &ss->data;
 	struct active_slides *slides = &ssd->slides;
 	struct source_data sd;
@@ -722,11 +748,18 @@ static void ss_next_slide(void *data)
 	free_source_data(&sd);
 
 	do_transition(ss, false);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(ss->source);
 }
 
 static void ss_previous_slide(void *data)
 {
 	struct slideshow *ss = data;
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(ss->source, "previous");
+
 	struct slideshow_data *ssd = &ss->data;
 	struct active_slides *slides = &ssd->slides;
 	struct source_data sd;
@@ -752,6 +785,9 @@ static void ss_previous_slide(void *data)
 	free_source_data(&sd);
 
 	do_transition(ss, false);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(ss->source);
 }
 
 static void play_pause_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
@@ -887,6 +923,9 @@ static void ss_video_render(void *data, gs_effect_t *effect)
 		obs_source_video_render(transition);
 		obs_source_release(transition);
 	}
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_render(ss->source, 0);
 
 	UNUSED_PARAMETER(effect);
 }

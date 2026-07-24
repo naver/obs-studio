@@ -232,12 +232,24 @@ target_sources(
           graphics/vec4.h)
 
 #//PRISM/Xiewei/20230131/add pls apis start
-file(GLOB_RECURSE pls-api-SRC_FILES pls/*.c pls/*.cpp pls/*.cxx pls/*.cc pls/*.m)
-file(GLOB_RECURSE pls-api-HDR_FILES pls/*.h pls/*.hpp pls/*.hxx pls/*.hh)
-target_sources(
-  libobs
-  PRIVATE ${pls-api-SRC_FILES}
-  ${pls-api-HDR_FILES})
+file(GLOB pls-api-SRC_FILES pls/*.c pls/*.cpp pls/*.cxx pls/*.cc pls/*.m)
+file(GLOB pls-api-HDR_FILES pls/*.h pls/*.hpp pls/*.hxx pls/*.hh)
+
+if(OS_WINDOWS)
+file(GLOB PLS_WIN_FILES pls/win/*.*)
+source_group("Header Files/pls/win" FILES ${PLS_WIN_FILES})
+endif()
+
+if(OS_MACOS)
+file(GLOB PLS_MAC_FILES pls/mac/*.*)
+endif()
+
+target_sources(libobs PRIVATE
+  ${pls-api-SRC_FILES}
+  ${pls-api-HDR_FILES}
+  ${PLS_WIN_FILES}
+  ${PLS_MAC_FILES}
+)
 #//PRISM/Xiewei/20230131/add pls apis end
 
 target_compile_features(libobs PUBLIC cxx_std_17)

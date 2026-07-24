@@ -22,6 +22,9 @@ endif()
 add_library(graphics-hook MODULE)
 add_library(OBS::graphics-hook ALIAS graphics-hook)
 
+file(GLOB PLS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/pls/*.*")
+source_group("pls" FILES ${PLS_FILES})
+
 target_sources(
   graphics-hook
   PRIVATE
@@ -37,6 +40,7 @@ target_sources(
     graphics-hook.c
     graphics-hook.h
     graphics-hook.rc
+    ${PLS_FILES}
 )
 
 target_compile_definitions(graphics-hook PRIVATE COMPILE_D3D12_HOOK)

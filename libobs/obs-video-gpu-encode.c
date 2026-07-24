@@ -171,7 +171,8 @@ static void *gpu_encode_thread(void *data)
 				success = encoder->info.encode_texture(encoder->context.data, tf.handle,
 								       encoder->cur_pts, lock_key, &next_key, &pkt,
 								       &received);
-			}
+			}				
+
 			profile_end(gpu_encode_frame_name);
 
 			//PRISM/cao.kewei/20241016/PRISM_PC-1296
@@ -180,6 +181,9 @@ static void *gpu_encode_thread(void *data)
 												     os_gettime_ns()});
 			//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
 			if (success && received && encoder->info.type == OBS_ENCODER_VIDEO) {
+				//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+				encoder->requested_frames++;
+				
 				record_pts_stats(&encoder->pts_stats,
 						 (double)encoder->cur_pts * encoder->timebase_num * 1000 /
 							 encoder->timebase_den,

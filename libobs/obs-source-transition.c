@@ -26,6 +26,11 @@
 #define lock_textures(transition) pthread_mutex_lock(&transition->transition_tex_mutex)
 #define unlock_textures(transition) pthread_mutex_unlock(&transition->transition_tex_mutex)
 
+#ifdef PLS_UI_ACTION_STATS
+/* PRISM_PC-5694: first obs_transition_video_render2 after each transition timing reset emits stop log; use os_atomic_* everywhere. */
+static volatile bool g_first_render = true;
+#endif
+
 static inline bool transition_valid(const obs_source_t *transition, const char *func)
 {
 	if (!obs_ptr_valid(transition, func))
@@ -346,6 +351,12 @@ bool obs_transition_start(obs_source_t *transition, enum obs_transition_mode mod
 
 	if (same_as_source && !active)
 		return false;
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/Lizhiyong/20260122/PRISM_PC-5037/action log
+	PLS_UI_ACTION_OBS("%s transition start", obs_source_get_id(transition));
+	os_atomic_store_bool(&g_first_render, true);
+#endif
 	if (active && mode == OBS_TRANSITION_MODE_MANUAL && same_mode && same_as_dest)
 		return true;
 
@@ -638,6 +649,11 @@ static void obs_transition_stop(obs_source_t *transition)
 	transition->transition_source_active[1] = false;
 	transition->transition_sources[0] = transition->transition_sources[1];
 	transition->transition_sources[1] = NULL;
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/eric.li/20260413/PRISM_PC-5694/first-frame transition stop UI log (single winner across threads)
+	if (os_atomic_set_bool(&g_first_render, false))
+		PLS_UI_ACTION_OBS("%s transition stop", obs_source_get_id(transition));
+#endif
 }
 
 static inline void handle_stop(obs_source_t *transition)
@@ -773,6 +789,12 @@ void obs_transition_video_render2(obs_source_t *transition, obs_transition_video
 	obs_source_release(state.s[0]);
 	obs_source_release(state.s[1]);
 
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/eric.li/20260413/PRISM_PC-5694/first-frame transition stop UI log (single winner across threads)
+	if (os_atomic_set_bool(&g_first_render, false))
+		PLS_UI_ACTION_OBS("%s transition stop", obs_source_get_id(transition));
+#endif
+
 	if (video_stopped)
 		obs_source_dosignal(transition, "source_transition_video_stop", "transition_video_stop");
 	if (stopped)
@@ -864,6 +886,12 @@ bool obs_transition_video_render_direct(obs_source_t *transition, enum obs_trans
 
 	obs_source_release(state.s[0]);
 	obs_source_release(state.s[1]);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/eric.li/20260413/PRISM_PC-5694/first-frame transition stop UI log (single winner across threads)
+	if (os_atomic_set_bool(&g_first_render, false))
+		PLS_UI_ACTION_OBS("%s transition stop", obs_source_get_id(transition));
+#endif
 
 	if (video_stopped)
 		obs_source_dosignal(transition, "source_transition_video_stop", "transition_video_stop");

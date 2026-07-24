@@ -15,9 +15,6 @@ MODULE_EXPORT const char *obs_module_description(void)
 extern void RegisterDShowSource();
 extern void RegisterDShowEncoders();
 
-//PRISM/Liuying/20230808/new ux : add prism lens source
-extern void RegisterPrismLensSource();
-extern void RegisterPrismMobileSource();
 //PRIM/Xiewei/20240918/none/check virtual camera guid. ref: https://wiki.navercorp.com/display/nccd/GUID+in+app
 #define PRISM_VIRTUAL_CAMERA_GUID L"{A49F51EE-8841-4425-BEC0-85D0C470BBDE}"
 
@@ -57,10 +54,6 @@ bool obs_module_load(void)
 {
 	RegisterDShowSource();
 	RegisterDShowEncoders();
-
-	//PRISM/Liuying/20230808/new ux : add prism lens source
-	RegisterPrismLensSource();
-	RegisterPrismMobileSource();
 
 #ifdef VIRTUALCAM_AVAILABLE
 	if (vcam_installed(false))

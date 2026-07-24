@@ -324,7 +324,7 @@ void d3d12_capture(void *swap_ptr, void *)
 		d3d12_shtex_capture(swap);
 
 		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
-		send_game_render_type("d3d12");
+		send_game_render_type(RenderType_D3D12);
 	}
 }
 

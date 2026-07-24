@@ -74,6 +74,14 @@ void pls_render_vertical_main_texture(void)
 	}
 }
 
+void pls_source_video_render_vertical_when_render_display(obs_source_t *source)
+{ 
+	struct obs_video_info *old_ovi = obs_get_video_rendering_canvas();
+	obs_set_video_rendering_canvas(obs_get_canvas_by_index(VERTIVAL_CANVAS_INDEX)->ovi); 
+	pls_source_video_render_vertical(source);
+	obs_set_video_rendering_canvas(old_ovi);
+}
+
 void pls_source_video_render_vertical(obs_source_t *source)
 {
 	is_force_render_vertical++;
@@ -504,7 +512,7 @@ bool pls_is_vertical_group(obs_sceneitem_t *item)
 	return pls_is_vertical_scene(item->parent);
 }
 
-obs_scene_t *pls_create_vertical_scene(const char *name)
+obs_scene_t *pls_create_vertical_scene(const char *name, bool is_group_ref)
 {
 	obs_data_t *settings = obs_data_create();
 	obs_data_set_bool(settings, ID_IS_VERTICAL, true);
@@ -514,8 +522,16 @@ obs_scene_t *pls_create_vertical_scene(const char *name)
 		blog(LOG_INFO, "pls_create_vertical_scene: get scene failed! source=[%p]", source);
 	} else {
 		scene->id_counter = 10000000LL;
+		if (is_group_ref)
+			scene->is_vertical_group_ref = true;
 	}
 	return source->context.data;
+}
+
+void pls_vertical_scene_set_group_ref(obs_scene_t *scene, bool is_group_ref)
+{
+	if (scene)
+		scene->is_vertical_group_ref = is_group_ref;
 }
 
 bool pls_bind_vertical_scene(obs_scene_t *real_scene, obs_scene_t *fake_scene)

@@ -11,6 +11,8 @@
 #include <vector>
 #include <deque>
 #include <limits>
+#include <map>
+
 #if defined(_WIN32)
 #include <Windows.h>
 #include <Shlwapi.h>
@@ -26,18 +28,18 @@ struct GLobalVariable {
 #if defined(_WIN32)
 	static Gdiplus::PrivateFontCollection *g_privateFontCollection;
 	static std::mutex g_colllectionMutex;
-	static std::atomic_bool g_locked;
 #endif
 	static std::atomic_bool g_all_mute;
 	static std::atomic_bool g_design_mode;
 
 	static std::recursive_mutex g_encoder_mutex;
 	static std::set<void *> g_encoder_set;
+	
 };
 #if defined(_WIN32)
 Gdiplus::PrivateFontCollection *GLobalVariable::g_privateFontCollection = nullptr;
 std::mutex GLobalVariable::g_colllectionMutex;
-std::atomic_bool GLobalVariable::g_locked = false;
+static thread_local bool g_font_collection_locked = false;
 #endif
 std::atomic_bool GLobalVariable::g_all_mute = false;
 std::atomic_bool GLobalVariable::g_design_mode = false;
@@ -55,6 +57,13 @@ static std::vector<std::string> g_third_party_plugins;
 
 static std::recursive_mutex uploaded_list_lock;
 static vector<std::string> uploaded_list;
+
+static std::recursive_mutex g_text_lookup_mutex;
+static std::vector<lookup_t *> g_text_lookup_array;
+
+std::map<std::string, obs_module_t *> g_id_module_map;
+std::map<obs_module_t *, lookup_t *> g_module_lookup_map;
+std::map<void *, obs_module_t *> g_getstring_pointer_module_map;
 
 static std::string str_tolower(std::string s)
 {
@@ -191,19 +200,19 @@ void pls_destory_font_collection()
 
 void pls_enter_font_collection()
 {
-	if (GLobalVariable::g_locked)
+	if (g_font_collection_locked)
 		return;
 
-	GLobalVariable::g_locked = true;
+	g_font_collection_locked = true;
 	GLobalVariable::g_colllectionMutex.lock();
 }
 
 void pls_leave_font_collection()
 {
-	if (!GLobalVariable::g_locked)
+	if (!g_font_collection_locked)
 		return;
 
-	GLobalVariable::g_locked = false;
+	g_font_collection_locked = false;
 	GLobalVariable::g_colllectionMutex.unlock();
 }
 
@@ -248,9 +257,7 @@ const char *pls_freetype_pop_font_path()
 	std::string path = g_freetype_paths.front();
 	g_freetype_paths.pop_front();
 
-	const char *cString = new char[path.size() + 1];
-	std::strcpy(const_cast<char *>(cString), path.c_str());
-	return cString;
+	return bstrdup(path.c_str());
 }
 
 bool pls_freetype_needs_reload()
@@ -424,4 +431,164 @@ void pls_on_game_render_type(const char *game_title, const char *render_type)
 
 		blogex(false, LOG_INFO, fields, 2, "game render type is [%s], title: %s", render_type, game_title);
 	}
+}
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_add_id_module_map(const char * plugin_id, obs_module_t *plugin_module)
+{
+	if (!plugin_id || !plugin_module) {
+		return;
+	}
+	g_id_module_map[plugin_id] = plugin_module;
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_id_module_map_by_key(const char *plugin_id)
+{
+	if (!plugin_id) {
+		return;
+	}
+	g_id_module_map.erase(plugin_id);
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_id_module_map_by_value(obs_module_t *plugin_module)
+{
+	std::string plugin_id;
+	for (const auto &pair : g_id_module_map) {
+		if (pair.second == plugin_module) {
+			plugin_id = pair.first;
+			break;
+		}
+	}
+	if (!plugin_id.empty()) {
+		g_id_module_map.erase(plugin_id.c_str());
+	}
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_add_module_lookup_map(obs_module_t *plugin_module, lookup_t *lookup)
+{
+	if (!lookup || !plugin_module) {
+		return;
+	}
+	g_module_lookup_map[plugin_module] = lookup;
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_module_lookup_map_by_key(obs_module_t *plugin_module)
+{
+	if (plugin_module) {
+		g_module_lookup_map.erase(plugin_module);
+	}
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_module_lookup_map_by_value(lookup_t *lookup)
+{
+	obs_module_t *plugin_module = nullptr;
+	for (const auto &pair : g_module_lookup_map) {
+		if (pair.second == lookup) {
+			plugin_module = pair.first;
+			break;
+		}
+	}
+	pls_remove_module_lookup_map_by_key(plugin_module);
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT lookup_t * pls_get_lookup_by_id(const char * plugin_id)
+{
+	if (!plugin_id) {
+		return nullptr;
+	}
+	if (auto module_iter = g_id_module_map.find(plugin_id); module_iter != g_id_module_map.end()) {
+		if (auto lookup_iter = g_module_lookup_map.find(module_iter->second); lookup_iter != g_module_lookup_map.end()) {
+			return lookup_iter->second;
+		}
+	}
+	return nullptr;
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+
+EXPORT void pls_add_getstring_pointer_module_map(void *getstring_pointer, obs_module_t *plugin_module)
+{
+	if (!getstring_pointer || !plugin_module) {
+		return;
+	}
+	g_getstring_pointer_module_map[getstring_pointer] = plugin_module;
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_getstring_pointer_module_map_by_key(void *getstring_pointer)
+{
+	if (!getstring_pointer) {
+		return;
+	}
+	g_getstring_pointer_module_map.erase(getstring_pointer);
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_getstring_pointer_module_map_by_value(obs_module_t *plugin_module)
+{
+	void *getstring_pointer = nullptr;
+	for (const auto &pair : g_getstring_pointer_module_map) {
+		if (pair.second == plugin_module) {
+			getstring_pointer = pair.first;
+			break;
+		}
+	}
+	pls_remove_getstring_pointer_module_map_by_key(getstring_pointer);
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT lookup_t *pls_get_lookup_by_getstring_pointer(void *getstring_pointer)
+{
+	if (!getstring_pointer) {
+		return nullptr;
+	}
+	if (auto module_iter = g_getstring_pointer_module_map.find(getstring_pointer);
+	    module_iter != g_getstring_pointer_module_map.end()) {
+		if (auto lookup_iter = g_module_lookup_map.find(module_iter->second);
+		    lookup_iter != g_module_lookup_map.end()) {
+			return lookup_iter->second;
+		}
+	}
+	return nullptr;
+}
+
+EXPORT void pls_add_text_lookup(lookup_t *lookup)
+{
+	if (!lookup) {
+		return;
+	}
+	std::lock_guard<std::recursive_mutex> lock(g_text_lookup_mutex);
+	auto it = std::find(g_text_lookup_array.begin(), g_text_lookup_array.end(), lookup);
+	if (it == g_text_lookup_array.end()) {
+		g_text_lookup_array.push_back(lookup);
+	}
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT void pls_remove_text_lookup(lookup_t *lookup)
+{
+	if (!lookup) {
+		return;
+	}
+	std::lock_guard<std::recursive_mutex> lock(g_text_lookup_mutex);
+	auto it = std::find(g_text_lookup_array.begin(), g_text_lookup_array.end(), lookup);
+	if (it != g_text_lookup_array.end()) {
+		g_text_lookup_array.erase(it);
+	}
+}
+
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT bool pls_is_valid_text_lookup(lookup_t *lookup)
+{
+	if (!lookup) {
+		return false;
+	}
+	std::lock_guard<std::recursive_mutex> lock(g_text_lookup_mutex);
+	auto it = std::find(g_text_lookup_array.begin(), g_text_lookup_array.end(), lookup);
+	return it != g_text_lookup_array.end();
 }

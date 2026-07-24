@@ -51,6 +51,11 @@ target_sources(
     window-capture.c
 )
 
+#PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+file(GLOB_RECURSE pls-files pls/*.*)
+target_sources(win-capture PRIVATE ${pls-files})
+source_group("pls" FILES ${pls-files})
+
 target_compile_definitions(
   win-capture
   PRIVATE

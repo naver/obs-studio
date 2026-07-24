@@ -110,6 +110,12 @@ struct nvenc_data {
 	struct nvenc_properties props;
 
 	CUcontext cu_ctx;
+
+	//PRISM/chenguoxi/20240403/#534/log if device failed
+	bool is_device_failed;
+
+	//PRISM/chenguoxi/20251210/PRISM_PC-4574/nvenc error msg
+	bool is_nvenc_error_msg_error;
 };
 
 /* ------------------------------------------------------------------------- */

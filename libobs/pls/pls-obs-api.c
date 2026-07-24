@@ -12,6 +12,14 @@
 
 #define MAX_TEXTURE_SIZE 8192 //D3D10_REQ_TEXTURE2D_U_OR_V_DIMENSION
 
+#if defined(_WIN32)
+// 10s. On Windows, after weakup event, render drop can still happen because of unprepared graphics-card
+#define MAX_IGNORE_DROP_SPACE (10 * 1000000000ULL)
+#elif defined(__APPLE__)
+// TODO by aiguanghua
+#define MAX_IGNORE_DROP_SPACE (10 * 1000000000ULL)
+#endif
+
 gs_effect_t *pls_effect = NULL;
 volatile bool g_app_exiting = false;
 volatile bool g_obs_shutdowning = false;
@@ -23,6 +31,9 @@ static int g_prism_version_major = 0;
 static int g_prism_version_minor = 0;
 static int g_prism_version_patch = 0;
 static int g_prism_version_build = 0;
+
+volatile bool g_pc_sleeping = false;
+volatile uint64_t g_sleep_update_ns = 0;
 
 static bool pls_source_alive(const obs_source_t *source)
 {
@@ -72,6 +83,15 @@ bool pls_get_wgc_borderless_enable()
 	return os_atomic_load_bool(&wgc_borderless_enable);
 }
 
+void pls_source_send_distinct_notify(const obs_source_t *source, enum obs_source_event_type type, int sub_code)
+{
+	if (type == OBS_SOURCE_FAILED_STATUS && (enum obs_source_failed_status_sub_code)sub_code ==
+							pls_source_get_failed_status_sub_code((obs_source_t *)source))
+		return;
+
+	pls_source_send_notify(source, type, sub_code);
+}
+
 void pls_source_send_notify(const obs_source_t *source, enum obs_source_event_type type, int sub_code)
 {
 	if (!source)
@@ -79,6 +99,11 @@ void pls_source_send_notify(const obs_source_t *source, enum obs_source_event_ty
 
 	if (!pls_source_alive(source))
 		return;
+
+	if (type == OBS_SOURCE_FAILED_STATUS) {
+		pls_source_set_failed_status_sub_code((obs_source_t *)source,
+						      (enum obs_source_failed_status_sub_code)sub_code);
+	}
 
 	struct calldata data;
 	uint8_t stack[512];
@@ -148,6 +173,31 @@ void pls_audio_output_get_info(uint32_t *samples_per_sec, int *speakers)
 	const struct audio_output_info *info = audio_output_get_info(obs_get_audio());
 	*samples_per_sec = info->samples_per_sec;
 	*speakers = info->speakers;
+}
+
+//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+void obs_source_set_flip_horizontal(obs_source_t *source, bool flip_h)
+{
+	if (!pls_source_alive(source))
+		return;
+
+	source->async_flip_h = flip_h;
+}
+
+//PRISM/FanZirong/20251112/PRISM_PC-3577/source capture failed guidance
+void pls_source_set_failed_status_sub_code(obs_source_t *source, enum obs_source_failed_status_sub_code code)
+{
+	if (!pls_source_alive(source))
+		return;
+	source->failed_code = code;
+}
+
+enum obs_source_failed_status_sub_code pls_source_get_failed_status_sub_code(obs_source_t *source)
+{
+	if (!pls_source_alive(source))
+		return OBS_SOURCE_STATUS_SUCCESS;
+
+	return source->failed_code;
 }
 
 void pls_load_sources(obs_data_array_t *array, obs_load_source_cb cb, obs_load_pld_cb pldCb, void *private_data,
@@ -252,6 +302,30 @@ bool pls_load_plugin(const char *bin_path, const char *data_path)
 	return true;
 }
 
+gs_texture_t *create_drawpen_canvas(uint32_t width, uint32_t height, enum gs_color_format color_format)
+{
+	if (!width || !height) {
+		return NULL;
+	}
+
+	gs_texture_t *tex = NULL;
+#if defined(_WIN32)
+	uint8_t *ptr = NULL;
+	if (GS_BGRA == color_format || GS_BGRX == color_format || GS_RGBA == color_format) {
+		uint32_t size = width * height * 4;
+		ptr = (uint8_t *)bzalloc(size); // clear it with RGBA(0,0,0,0)
+	}
+	tex = gs_texture_create(width, height, color_format, 1, &ptr, GS_DYNAMIC);
+	if (ptr) {
+		bfree(ptr);
+	}
+#else
+	tex = gs_texture_create(width, height, color_format, 1, NULL, GS_DYNAMIC);
+#endif
+	assert(tex);
+	return tex;
+}
+
 void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture, bool save)
 {
 	UNUSED_PARAMETER(save);
@@ -283,7 +357,7 @@ void pls_scene_update_canvas(obs_scene_t *scene, gs_texture_t *texture, bool sav
 	}
 
 	if (!scene->canvas_texture) {
-		scene->canvas_texture = gs_texture_create(tex_width, tex_height, fmt, 1, NULL, GS_DYNAMIC);
+		scene->canvas_texture = create_drawpen_canvas(tex_width, tex_height, fmt);
 	}
 
 	gs_copy_texture(scene->canvas_texture, texture);
@@ -302,7 +376,7 @@ gs_texture_t *pls_scene_get_canvas(obs_scene_t *scene)
 		obs_get_video_info(&ovi);
 		uint32_t width = ovi.base_width;
 		uint32_t height = ovi.base_height;
-		scene->canvas_texture = gs_texture_create(width, height, GS_BGRA, 1, NULL, GS_DYNAMIC);
+		scene->canvas_texture = create_drawpen_canvas(width, height, GS_BGRA);
 	}
 	obs_leave_graphics();
 	return scene->canvas_texture;
@@ -311,8 +385,10 @@ gs_texture_t *pls_scene_get_canvas(obs_scene_t *scene)
 void pls_scene_canvas_render(void *data)
 {
 	struct obs_scene *scene = data;
-	if (!obs || !scene->canvas_texture)
+	if (!obs || !scene->canvas_texture) {
+		pls_on_drawpen_render(scene);
 		return;
+	}
 
 	gs_set_cull_mode(GS_NEITHER);
 
@@ -340,6 +416,8 @@ void pls_scene_canvas_render(void *data)
 	gs_technique_end(tech);
 
 	gs_blend_state_pop();
+
+	pls_on_drawpen_render(scene);
 
 #if __APPLE__
 	gs_set_linear_srgb(previous);
@@ -531,3 +609,30 @@ EXPORT bool pls_is_local_log()
 {
 	return g_local_log;
 };
+
+EXPORT void pls_update_pc_sleep(bool is_sleep)
+{
+	blog(LOG_INFO, "%s: update pc sleep flag with %s", __FUNCTION__, is_sleep ? "sleep" : "weakup");
+	g_pc_sleeping = is_sleep;
+	g_sleep_update_ns = os_gettime_ns();
+}
+
+EXPORT bool pls_ignore_render_drop()
+{
+	if (!pls_is_render_drop_enabled())
+		return true;
+
+	if (g_pc_sleeping)
+		return true;
+
+	uint64_t now_ns = os_gettime_ns();
+	uint64_t update = g_sleep_update_ns;
+	if (now_ns <= update)
+		return true;
+
+	uint64_t interval = now_ns - update;
+	if (interval < MAX_IGNORE_DROP_SPACE)
+		return true;
+	else
+		return false;
+}

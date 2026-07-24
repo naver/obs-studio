@@ -386,8 +386,11 @@ gs_samplerstate_t *device_samplerstate_create(gs_device_t *device, const struct 
 	sampler = bzalloc(sizeof(struct gs_sampler_state));
 	sampler->device = device;
 	sampler->ref = 1;
-
+	
 	convert_sampler_info(sampler, info);
+	//PRISM/ai.guanghua/20260105/PRISM_PC-4834/resolve mac sampler release crash
+	pls_add_sampler_alive(sampler);
+		
 	return sampler;
 }
 

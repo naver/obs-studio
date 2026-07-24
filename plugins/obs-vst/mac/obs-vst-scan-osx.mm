@@ -3,6 +3,7 @@
 #include <util/platform.h>
 #import <Foundation/Foundation.h>
 
+
 #define TEST_SAMPLERATE 48000
 
 void *process_handle = nullptr;
@@ -82,7 +83,7 @@ bool InitEffect(const char *path, int *result)
         *result = VST_STATUS_DLL_LOAD_FAIL;
         return false;
     }
-
+  
     // Open the bundle
     bundle = CFBundleCreate(kCFAllocatorDefault, bundleUrl);
     if (bundle == NULL) {

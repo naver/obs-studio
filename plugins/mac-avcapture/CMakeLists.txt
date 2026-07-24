@@ -41,6 +41,8 @@ target_sources(
     OBSAVCapture.h
     OBSAVCapturePresetInfo.m
     OBSAVCapturePresetInfo.h
+    lens-utils.h
+    lens-utils.mm
 )
 
 target_link_libraries(mac-avcapture PRIVATE OBS::libobs)

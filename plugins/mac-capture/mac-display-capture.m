@@ -8,6 +8,8 @@
 #import <Cocoa/Cocoa.h>
 
 #include "window-utils.h"
+#include <pls/pls-obs-api.h>
+#include "pls/pls-properties.h"
 
 enum crop_mode {
     CROP_NONE,
@@ -221,7 +223,12 @@ static bool init_display_stream(struct display_capture *dc)
             display_stream_update(dc, status, displayTime, frameSurface, updateRef);
         });
 
-    return !CGDisplayStreamStart(dc->disp);
+    BOOL did_stream_start = CGDisplayStreamStart(dc->disp) == kCGErrorSuccess;
+    //PRISM/sam.zhang/20251105/notify capture error
+    pls_source_send_notify(dc->source, OBS_SOURCE_FAILED_STATUS,
+                           did_stream_start ? OBS_SOURCE_STATUS_SUCCESS
+                                            : OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
+    return did_stream_start;
 }
 
 bool init_vertbuf(struct display_capture *dc)
@@ -593,6 +600,8 @@ static obs_properties_t *display_capture_properties(void *unused)
 
     obs_properties_t *props = obs_properties_create();
 
+    pls_properties_add_capture_guide(props, SETTINGS_GUIDANCE, "", GUIDANCE_URL);
+
     obs_property_t *list = obs_properties_add_list(props, "display_uuid", obs_module_text("DisplayCapture.Display"),
                                                    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
@@ -600,10 +609,10 @@ static obs_properties_t *display_capture_properties(void *unused)
                                                      BOOL *_Nonnull stop __unused) {
         char dimension_buffer[4][12];
         char name_buffer[256];
-        snprintf(dimension_buffer[0], sizeof(dimension_buffer[0]), "%u", (uint32_t)[screen frame].size.width);
-        snprintf(dimension_buffer[1], sizeof(dimension_buffer[0]), "%u", (uint32_t)[screen frame].size.height);
-        snprintf(dimension_buffer[2], sizeof(dimension_buffer[0]), "%d", (int32_t)[screen frame].origin.x);
-        snprintf(dimension_buffer[3], sizeof(dimension_buffer[0]), "%d", (int32_t)[screen frame].origin.y);
+        snprintf(dimension_buffer[0], sizeof(dimension_buffer[0]), "%u", (uint32_t) [screen frame].size.width);
+        snprintf(dimension_buffer[1], sizeof(dimension_buffer[0]), "%u", (uint32_t) [screen frame].size.height);
+        snprintf(dimension_buffer[2], sizeof(dimension_buffer[0]), "%d", (int32_t) [screen frame].origin.x);
+        snprintf(dimension_buffer[3], sizeof(dimension_buffer[0]), "%d", (int32_t) [screen frame].origin.y);
 
         snprintf(name_buffer, sizeof(name_buffer), "%.200s: %.12sx%.12s @ %.12s,%.12s",
                  [[screen localizedName] UTF8String], dimension_buffer[0], dimension_buffer[1], dimension_buffer[2],

@@ -69,3 +69,6 @@ extern int64_t media_playback_get_frames(media_playback_t *mp);
 extern int64_t media_playback_get_duration(media_playback_t *mp);
 extern bool media_playback_has_video(media_playback_t *mp);
 extern bool media_playback_has_audio(media_playback_t *mp);
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+extern void media_playback_disconnect(media_playback_t *mp);

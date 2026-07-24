@@ -39,6 +39,9 @@ extern char *find_libobs_data_file(const char *file);
 //PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
 extern void pls_set_obs_shutdowning(bool shutdowning);
 
+//PRISM/wangshaohui/20251023/PRISM_PC-4258/drawpen blocked
+extern void only_save_sync_task(pthread_mutex_t *task_mutex, struct deque *tasks_queue);
+
 static inline void make_video_info(struct video_output_info *vi, struct obs_video_info *ovi)
 {
 	vi->name = "video";
@@ -940,9 +943,12 @@ static void obs_free_video(bool full_clean)
 	pthread_mutex_destroy(&obs->video.encoder_group_mutex);
 	pthread_mutex_init_value(&obs->video.encoder_group_mutex);
 
+	only_save_sync_task(&obs->video.task_mutex,
+			    &obs->video.tasks); //PRISM/wangshaohui/20251023/PRISM_PC-4258/drawpen blocked
+
 	pthread_mutex_destroy(&obs->video.task_mutex);
 	pthread_mutex_init_value(&obs->video.task_mutex);
-	deque_free(&obs->video.tasks);
+	//deque_free(&obs->video.tasks); //PRISM/wangshaohui/20251023/PRISM_PC-4258/drawpen blocked
 }
 
 static void obs_free_graphics(void)
@@ -989,6 +995,9 @@ static bool obs_init_audio(struct audio_output_info *ai)
 	if (pthread_mutex_init(&audio->task_mutex, NULL) != 0)
 		return false;
 
+	//PRISM/wangshaohui/20250811/none/add more logs for audio
+	blog(LOG_INFO, "%s is called", __FUNCTION__);
+
 	struct obs_task_info audio_init = {.task = set_audio_thread};
 	deque_push_back(&audio->tasks, &audio_init, sizeof(audio_init));
 
@@ -1028,10 +1037,13 @@ static void obs_free_audio(void)
 	da_free(audio->render_order);
 	da_free(audio->root_nodes);
 
+	only_save_sync_task(&audio->task_mutex,
+			    &audio->tasks); //PRISM/wangshaohui/20251023/PRISM_PC-4258/drawpen blocked
+
 	da_free(audio->monitors);
 	bfree(audio->monitoring_device_name);
 	bfree(audio->monitoring_device_id);
-	deque_free(&audio->tasks);
+	//deque_free(&audio->tasks); //PRISM/wangshaohui/20251023/PRISM_PC-4258/drawpen blocked
 	pthread_mutex_destroy(&audio->task_mutex);
 	pthread_mutex_destroy(&audio->monitoring_mutex);
 
@@ -1247,6 +1259,8 @@ static inline void stop_hotkeys(void)
 		hotkeys->hotkey_thread_initialized = false;
 	}
 
+	//PRISM/chenguoxi/20260211/PRISM_PC-5280/retry obs_hotkey_thread
+	blog(LOG_INFO, "stop_hotkeys: destroying hotkeys stop_event");
 	os_event_destroy(hotkeys->stop_event);
 	obs_hotkeys_free();
 }
@@ -1486,6 +1500,9 @@ void obs_shutdown(void)
 	stop_audio();
 	stop_hotkeys();
 
+	//PRISM/wangshaohui/20260227/none/wait source destroy
+	os_task_queue_wait(obs->destruction_task_thread);
+
 	module = obs->first_module;
 	while (module) {
 		struct obs_module *next = module->next;
@@ -1495,7 +1512,9 @@ void obs_shutdown(void)
 	obs->first_module = NULL;
 
 	//PRISM/AiGuanghua/20240624/#5561/source signal shut down crashed
-	pls_set_obs_shutdowning(true);
+	pls_set_obs_shutdowning(true); 
+	//PRISM/lizhiyong/20251022/PRISM_PC-4243/sre for stream output and render
+	pls_update_render_frames(obs_get_total_frames(), obs_get_lagged_frames());
 
 	obs_free_data();
 	obs_free_audio();
@@ -1529,10 +1548,17 @@ void obs_shutdown(void)
 	//PRISM/wangshaohui/20250409/PRISM_PC-2599/checking video_t
 	pls_destroy_all_video_output();
 
+	//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+	//PRISM/lizhiyong/20251021/PRISM_PC-4243/sre for output and render
+	pls_upload_frame_type();
+
 #ifdef _WIN32
 	if (com_initialized)
 		uninitialize_com();
 #endif
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_stop_upload_time();
 }
 
 bool obs_initialized(void)
@@ -3391,6 +3417,11 @@ void stop_raw_video(video_t *v, void (*callback)(void *param, struct video_data 
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Exit]", v, __FUNCTION__);
+
+	//PRISM/FanZirong/20260226/PRISM_PC-5385/add action logs
+#ifdef PLS_UI_ACTION_STATS
+	PLS_UI_ACTION_OBS("%p-%s: [Exit]", v, __FUNCTION__);
+#endif
 }
 
 void obs_add_raw_video_callback(const struct video_scale_info *conversion,
@@ -3590,6 +3621,39 @@ static void task_wait_callback(void *param)
 
 THREAD_LOCAL bool is_graphics_thread = false;
 THREAD_LOCAL bool is_audio_thread = false;
+
+//PRISM/wangshaohui/20251023/PRISM_PC-4258/drawpen blocked
+void only_save_sync_task(pthread_mutex_t *task_mutex, struct deque *tasks_queue)
+{
+	struct deque tasks_temp;
+	memset(&tasks_temp, 0, sizeof(struct deque));
+
+	pthread_mutex_lock(task_mutex);
+
+	bool tasks_remaining = true;
+	while (tasks_remaining) {
+		if (tasks_queue->size) {
+			struct obs_task_info info;
+			deque_pop_front(tasks_queue, &info, sizeof(info));
+			if (info.task == task_wait_callback) {
+				deque_push_back(&tasks_temp, &info, sizeof(info));
+			}
+		}
+		tasks_remaining = !!tasks_queue->size;
+	}
+
+	tasks_remaining = true;
+	while (tasks_remaining) {
+		if (tasks_temp.size) {
+			struct obs_task_info info;
+			deque_pop_front(&tasks_temp, &info, sizeof(info));
+			deque_push_back(tasks_queue, &info, sizeof(info));
+		}
+		tasks_remaining = !!tasks_temp.size;
+	}
+
+	pthread_mutex_unlock(task_mutex);
+}
 
 static void set_audio_thread(void *unused)
 {

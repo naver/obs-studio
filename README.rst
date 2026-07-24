@@ -1,4 +1,4 @@
-This library including modifications would be used in https://github.com/naver/prism-live-studio
+This library, including its modifications, is used in [https://github.com/naver/prism-live-studio](https://github.com/naver/prism-live-studio).
 
 OBS Studio <https://obsproject.com>
 ===================================

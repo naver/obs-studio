@@ -102,8 +102,11 @@ void *os_dlopen(const char *path)
 
 		/* don't print error for libraries that aren't meant to be
 		 * dynamically linked */
-		if (error == ERROR_PROC_NOT_FOUND)
+		if (error == ERROR_PROC_NOT_FOUND) {
+			//PRISM//wangshaohui//20250729/none/add helpful log.
+			blog(LOG_WARNING, "LoadLibrary failed for '%s': error is ERROR_PROC_NOT_FOUND", path);
 			return NULL;
+		}
 
 		char *message = NULL;
 
@@ -117,7 +120,7 @@ void *os_dlopen(const char *path)
 			LocalFree(message);
 	}
 
-	//PRISM//wangshaohui//20240627/none/send module info to KR server which helps debug.
+	//PRISM//wangshaohui//20240627/none/send module info to NELO
 	if (h_library) {
 		wchar_t full_path[MAX_PATH] = {0};
 		GetModuleFileNameW(h_library, full_path, MAX_PATH);
@@ -133,8 +136,7 @@ void *os_dlopen(const char *path)
 			end_addr = base_addr + mod_info.SizeOfImage;
 		}
 
-		// Note: Must use debug level so this log can be sent to KR server only.
-		blog(LOG_DEBUG, "successed to LoadLibrary [%p~%p] %s", base_addr, end_addr, full_path_utf8);
+		blog(LOG_INFO, "successed to LoadLibrary [%p~%p] %s", base_addr, end_addr, full_path_utf8);
 	}
 
 	return h_library;
@@ -413,6 +415,62 @@ double os_cpu_usage_info_query(os_cpu_usage_info_t *info)
 }
 
 void os_cpu_usage_info_destroy(os_cpu_usage_info_t *info)
+{
+	if (info)
+		bfree(info);
+}
+ 
+struct sys_cpu_usage_info {
+	uint64_t last_idle_time, last_kernel_time, last_user_time;
+	uint64_t last_sys_time;
+	DWORD core_count;
+};
+
+sys_cpu_usage_info_t *sys_cpu_usage_info_start(void)
+{
+	struct sys_cpu_usage_info *info = bzalloc(sizeof(*info));
+	if (!info)
+		return NULL;
+
+	SYSTEM_INFO si;
+	union time_data idle, kernel, user;
+
+	GetSystemInfo(&si);
+	GetSystemTimes(&idle.ft, &kernel.ft, &user.ft);
+	info->core_count = si.dwNumberOfProcessors;
+	info->last_idle_time = idle.val;
+	info->last_kernel_time = kernel.val;
+	info->last_user_time = user.val;
+
+	return info;
+}
+
+double sys_cpu_usage_info_query(struct sys_cpu_usage_info *info)
+{
+	if (!info)
+		return 0.0;
+
+	union time_data idle, kernel, user;
+	uint64_t idle_time, kernel_time, user_time, sys_time;
+	double percent;
+
+	GetSystemTimes(&idle.ft, &kernel.ft, &user.ft);
+	idle_time = idle.val - info->last_idle_time;
+	kernel_time = kernel.val - info->last_kernel_time;
+	user_time = user.val - info->last_user_time;
+	sys_time = user_time + kernel_time;
+
+	percent = sys_time > 0 ? (double)(sys_time - idle_time) / (double)sys_time : 0.0;
+	//percent /= (double)info->core_count;
+
+	info->last_idle_time = idle.val;
+	info->last_kernel_time = kernel.val;
+	info->last_user_time = user.val;
+
+	return percent * 100.0;
+}
+
+void sys_cpu_usage_info_destroy(sys_cpu_usage_info_t *info)
 {
 	if (info)
 		bfree(info);

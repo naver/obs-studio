@@ -78,7 +78,6 @@ bool pls_is_video_output_valid(const void *video, const void *output, const char
 		if (itr != invalid_video_list.end() && itr->second != NULL) {
 			found = true;
 
-			uint64_t current_time = os_gettime_ns();
 			if (!itr->second->notified) {         // never notified
 				itr->second->notified = true; // notify once
 				need_signal = true;

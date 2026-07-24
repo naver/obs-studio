@@ -103,7 +103,7 @@ static void load_queued_font_paths()
 	char *path;
 	while ((path = (char *)pls_freetype_pop_font_path())) {
 		load_custom_font(path);
-		free(path);
+		bfree(path);
 	}
 	pls_freetype_set_needs_reload(true);
 #endif
@@ -124,10 +124,11 @@ static void init_plugin(void)
 	if (plugin_initialized)
 		return;
 
-	FT_Init_FreeType(&ft2_lib);
-
-	if (ft2_lib == NULL) {
-		blog(LOG_WARNING, "FT2-text: Failed to initialize FT2.");
+	FT_Error err = FT_Init_FreeType(&ft2_lib);
+	if (err != 0 || ft2_lib == NULL) {
+		ft2_lib = NULL;
+		blog(LOG_WARNING, "FT2-text: Failed to initialize FT2 (err=%d).",
+		     (int)err);
 		return;
 	}
 
@@ -162,6 +163,8 @@ void obs_module_unload(void)
 	if (plugin_initialized) {
 		free_os_font_list();
 		FT_Done_FreeType(ft2_lib);
+		ft2_lib = NULL;
+		plugin_initialized = false;
 	}
 
 	//PRISM/cao.kewei/20240524/custom font path
@@ -257,11 +260,10 @@ static void ft2_source_destroy(void *data)
 	struct ft2_source *srcdata = data;
 
 	if (srcdata->font_face != NULL) {
-		//PRISM/cao.kewei/20240519/#5313/nil check
-		if (srcdata->font_face->family_name) {
+		if (plugin_initialized && ft2_lib != NULL) {
 			FT_Done_Face(srcdata->font_face);
-			srcdata->font_face = NULL;
 		}
+		srcdata->font_face = NULL;
 	}
 
 	for (uint32_t i = 0; i < num_cache_slots; i++) {

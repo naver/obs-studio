@@ -5,6 +5,9 @@
 #include <util/dstr.h>
 #include <Windows.h>
 
+//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+#include "pls/pls-base.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

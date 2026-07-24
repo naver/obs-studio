@@ -1,9 +1,18 @@
 #include "mac-sck-common.h"
 #include "window-utils.h"
+#include <pls/pls-obs-api.h>
+#include "pls/pls-properties.h"
 
 API_AVAILABLE(macos(12.5)) static void destroy_screen_stream(struct screen_capture *sc)
 {
     if (sc->disp && !sc->capture_failed) {
+        //PRISM/sam.zhang/20260104/crash fix
+        NSError *err;
+        [sc->disp removeStreamOutput:sc->capture_delegate type:SCStreamOutputTypeScreen error:&err];
+        if (@available(macOS 13.0, *)) {
+            [sc->disp removeStreamOutput:sc->capture_delegate type:SCStreamOutputTypeAudio error:&err];
+        }
+
         [sc->disp stopCaptureWithCompletionHandler:^(NSError *_Nullable error) {
             if (error && error.code != SCStreamErrorAttemptToStopStreamState) {
                 MACCAP_ERR("destroy_screen_stream: Failed to stop stream with error %s\n",
@@ -63,6 +72,8 @@ API_AVAILABLE(macos(12.5)) static void sck_video_capture_destroy(void *data)
     }
 
     if (sc->capture_delegate) {
+        //PRISM/sam.zhang/20251229/crash fix
+        sc->capture_delegate.sc = NULL;
         [sc->capture_delegate release];
     }
     [sc->application_id release];
@@ -108,6 +119,11 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
                 os_sem_post(sc->shareable_content_available);
                 sc->disp = NULL;
                 os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+
+                //PRISM/sam.zhang/20251105/notify capture error
+                pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                                       OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_CONTENT);
+
                 return true;
             }
             if (sc->hide_obs) {
@@ -149,6 +165,10 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
                 os_sem_post(sc->shareable_content_available);
                 sc->disp = NULL;
                 os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+
+                //PRISM/sam.zhang/20251105/notify capture error
+                pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                                       OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_CONTENT);
                 return true;
             } else {
                 content_filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target_window];
@@ -168,6 +188,11 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
                 os_sem_post(sc->shareable_content_available);
                 sc->disp = NULL;
                 os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+
+                //PRISM/sam.zhang/20251105/notify capture error
+                pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                                       OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_CONTENT);
+
                 return true;
             }
             SCRunningApplication *target_application = nil;
@@ -228,6 +253,8 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
     if (!did_add_output) {
         MACCAP_ERR("init_screen_stream: Failed to add stream output with error %s\n",
                    [[addStreamOutputError localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding]);
+        //PRISM/sam.zhang/20251105/notify capture error
+        pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
         [addStreamOutputError release];
         return !did_add_output;
     }
@@ -239,6 +266,9 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
         if (!did_add_output) {
             MACCAP_ERR("init_screen_stream: Failed to add audio stream output with error %s\n",
                        [[addStreamOutputError localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding]);
+            //PRISM/sam.zhang/20251105/notify capture error
+            pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                                   OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
             [addStreamOutputError release];
             return !did_add_output;
         }
@@ -258,7 +288,10 @@ API_AVAILABLE(macos(12.5)) static bool init_screen_stream(struct screen_capture 
         os_event_signal(sc->stream_start_completed);
     }];
     os_event_wait(sc->stream_start_completed);
-
+    //PRISM/sam.zhang/20251105/notify capture error
+    pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                           did_stream_start ? OBS_SOURCE_STATUS_SUCCESS
+                                            : OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
     return did_stream_start;
 }
 
@@ -563,6 +596,8 @@ API_AVAILABLE(macos(12.5)) static obs_properties_t *sck_video_capture_properties
     struct screen_capture *sc = data;
 
     obs_properties_t *props = obs_properties_create();
+
+    pls_properties_add_capture_guide(props, SETTINGS_GUIDANCE, "", GUIDANCE_URL);
 
     obs_property_t *capture_type = obs_properties_add_list(props, "type", obs_module_text("SCK.Method"),
                                                            OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);

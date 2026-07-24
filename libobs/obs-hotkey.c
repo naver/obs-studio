@@ -976,13 +976,22 @@ static void release_registerer(obs_hotkey_t *hotkey)
 
 static inline void unregister_hotkey(obs_hotkey_id id)
 {
-	if (id >= obs->hotkeys.next_id)
+	//PRISM/chenguoxi/20260211/PRISM_PC-5280/retry obs_hotkey_thread
+	if (id >= obs->hotkeys.next_id) {
+		blog(LOG_INFO, "unregister_hotkey: id %zu out of range, skip", id);
 		return;
+	}
 
 	obs_hotkey_t *hotkey;
 	HASH_FIND_HKEY(obs->hotkeys.hotkeys, id, hotkey);
-	if (!hotkey)
+	//PRISM/chenguoxi/20260211/PRISM_PC-5280/retry obs_hotkey_thread
+	if (!hotkey) {
+		blog(LOG_INFO, "unregister_hotkey: hotkey id %zu not found", id);
 		return;
+	}
+
+	//PRISM/chenguoxi/20260211/PRISM_PC-5280/retry obs_hotkey_thread
+	blog(LOG_INFO, "unregister_hotkey: id %zu, removing from hash and bindings", id);
 
 	HASH_DEL(obs->hotkeys.hotkeys, hotkey);
 
@@ -1306,6 +1315,8 @@ static inline void query_hotkeys()
 }
 
 #define NBSP "\xC2\xA0"
+//PRISM/chenguoxi/20260211/PRISM_PC-5280/retry obs_hotkey_thread --begin
+#define HOTKEY_THREAD_MAX_CONSECUTIVE_FAILURES 10
 
 void *obs_hotkey_thread(void *arg)
 {
@@ -1317,20 +1328,48 @@ void *obs_hotkey_thread(void *arg)
 		profile_store_name(obs_get_profiler_name_store(), "obs_hotkey_thread(%g" NBSP "ms)", 25.);
 	profile_register_root(hotkey_thread_name, (uint64_t)25000000);
 
-	while (os_event_timedwait(obs->hotkeys.stop_event, 25) == ETIMEDOUT) {
-		if (!lock())
+	int consecutive_failures = 0;
+	int wait_result;
+
+	for (;;) {
+		wait_result = os_event_timedwait(obs->hotkeys.stop_event, 25);
+
+		if (wait_result == ETIMEDOUT) {
+			consecutive_failures = 0;
+			if (!lock())
+				continue;
+
+			profile_start(hotkey_thread_name);
+			query_hotkeys();
+			profile_end(hotkey_thread_name);
+
+			unlock();
+
+			profile_reenable_thread();
 			continue;
+		}
 
-		profile_start(hotkey_thread_name);
-		query_hotkeys();
-		profile_end(hotkey_thread_name);
+		if (wait_result == 0) {
+			blog(LOG_INFO, "obs_hotkey_thread: exited, os_event_timedwait returned %d", wait_result);
+			break;
+		}
 
-		unlock();
-
-		profile_reenable_thread();
+		/* Other error (e.g. EINVAL): wait 1s then retry, exit after 10 consecutive failures */
+		consecutive_failures++;
+		blog(LOG_INFO,
+		     "obs_hotkey_thread: os_event_timedwait returned %d (failure %d/%d), waiting 0.1s before retry",
+		     wait_result, consecutive_failures, HOTKEY_THREAD_MAX_CONSECUTIVE_FAILURES);
+		if (consecutive_failures >= HOTKEY_THREAD_MAX_CONSECUTIVE_FAILURES) {
+			blog(LOG_ERROR, "obs_hotkey_thread: exiting after %d consecutive failures",
+			     consecutive_failures);
+			break;
+		}
+		/* Wait 0.1s before retry (use sleep since os_event_timedwait may be failing) */
+		os_sleep_ms(100);
 	}
 	return NULL;
 }
+//PRISM/chenguoxi/20260211/PRISM_PC-5280/retry obs_hotkey_thread --end
 
 void obs_hotkey_trigger_routed_callback(obs_hotkey_id id, bool pressed)
 {

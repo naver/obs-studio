@@ -43,7 +43,9 @@ bool nv_fail2(obs_encoder_t *encoder, void *session, const char *format, ...)
 	return true;
 }
 
-bool nv_failed2(obs_encoder_t *encoder, void *session, NVENCSTATUS err, const char *func, const char *call)
+//PRISM/chenguoxi/20251210/PRISM_PC-4574/nvenc error msg
+bool nv_failed2(obs_encoder_t *encoder, bool msg_error, void *session, NVENCSTATUS err, const char *func,
+		const char *call)
 {
 	struct dstr error_message = {0};
 	const char *nvenc_error = NULL;
@@ -51,7 +53,7 @@ bool nv_failed2(obs_encoder_t *encoder, void *session, NVENCSTATUS err, const ch
 	if (err == NV_ENC_SUCCESS)
 		return false;
 
-	if (session) {
+	if (session && !msg_error) {
 		nvenc_error = nv.nvEncGetLastErrorString(session);
 		if (nvenc_error) {
 			// Some NVENC errors begin with :: which looks
@@ -97,7 +99,8 @@ bool nv_failed2(obs_encoder_t *encoder, void *session, NVENCSTATUS err, const ch
 	return true;
 }
 
-#define NV_FAILED(e, x) nv_failed2(e, NULL, x, __FUNCTION__, #x)
+//PRISM/chenguoxi/20251210/PRISM_PC-4574/nvenc error msg
+#define NV_FAILED(e, x) nv_failed2(e, FALSE, NULL, x, __FUNCTION__, #x)
 
 bool load_nvenc_lib(void)
 {

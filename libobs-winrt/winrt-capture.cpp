@@ -1,5 +1,8 @@
 #include "winrt-capture.h"
 
+//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+#include "pls/pls-source.h"
+
 extern "C" EXPORT BOOL winrt_capture_supported()
 try {
 	/* no contract for IGraphicsCaptureItemInterop, verify 10.0.18362.0 */
@@ -623,6 +626,11 @@ extern "C" EXPORT void winrt_capture_render(struct winrt_capture *capture)
 		gs_blend_state_pop();
 
 		gs_enable_framebuffer_srgb(previous);
+
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		if (texture) {
+			pls_on_source_property_render(pls_get_current_source(), PROPERTY_RENDER_TIMEOUT);
+		}
 	}
 }
 

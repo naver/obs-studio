@@ -1196,7 +1196,7 @@ static void vk_capture(struct vk_data *data, VkQueue queue, const VkPresentInfoK
 		vk_shtex_capture(data, &data->funcs, swap, idx, queue, info);
 
 		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
-		send_game_render_type("vulkan");
+		send_game_render_type(RenderType_Vulkan);
 	}
 }
 

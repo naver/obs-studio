@@ -1,6 +1,9 @@
 #include "nvenc-internal.h"
 #include "nvenc-helpers.h"
 
+//PRISM/chenguoxi/20240403/#534/log which adpter nvenc chose
+#include <util/platform.h>
+
 /*
  * NVENC implementation using Direct3D 11 context and textures
  */
@@ -65,6 +68,18 @@ bool d3d11_init(struct nvenc_data *enc, obs_data_t *settings)
 	if (FAILED(hr)) {
 		error_hr("D3D11CreateDevice failed");
 		return false;
+	}
+
+	//PRISM/chenguoxi/20240403/#534/log which adpter nvenc chose
+	{
+		WCHAR *adapterName;
+		DXGI_ADAPTER_DESC desc;
+
+		adapterName = (adapter->lpVtbl->GetDesc(adapter, &desc) == S_OK) ? desc.Description : L"<unknown>";
+
+		char adapterNameUTF8[1024];
+		os_wcs_to_utf8(adapterName, 0, adapterNameUTF8, 1024);
+		info("nvenc: loading up D3D11 on adapter %s (0)", adapterNameUTF8);
 	}
 
 	enc->device = device;
@@ -176,6 +191,15 @@ static ID3D11Texture2D *get_tex_from_handle(struct nvenc_data *enc, uint32_t han
 	IDXGIKeyedMutex *km;
 	ID3D11Texture2D *input_tex;
 	HRESULT hr;
+
+	//PRISM/chenguoxi/20240403/#534/log if device failed
+	if (!enc->is_device_failed) {
+		hr = device->lpVtbl->GetDeviceRemovedReason(device);
+		if (hr != S_OK) {
+			error_hr("device failed");
+			enc->is_device_failed = true;
+		}
+	}
 
 	for (size_t i = 0; i < enc->input_textures.num; i++) {
 		struct handle_tex *ht = &enc->input_textures.array[i];

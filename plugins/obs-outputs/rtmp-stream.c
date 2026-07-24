@@ -58,6 +58,7 @@ static const char *rtmp_stream_getname(void *unused)
 
 //PRISM/Xiewei/20250106/None/Add thread local variable for stream
 THREAD_LOCAL void *rtmp_thread_local = NULL;
+THREAD_LOCAL bool send_debug_log = false;
 
 //PRISM/Xiewei/20241104/PRISM_PC-1673/Add logs
 static void do_blogex(int level, const char *format, va_list args)
@@ -87,8 +88,10 @@ static void log_rtmp(int level, const char *format, va_list args)
 {
 	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
 	//if (level > RTMP_LOGWARNING)
-	if (level > RTMP_LOGINFO)
-		return;
+	if (level > RTMP_LOGINFO) { // DEBUG level
+		if (!send_debug_log)
+			return; // debug log in connect_thread will not be ignored
+	}
 
 	//PRISM/Xiewei/20241104/PRISM_PC-1673/Add logs
 	//blogva(LOG_INFO, format, args);
@@ -704,6 +707,10 @@ static void *send_thread(void *data)
 #ifdef _WIN32
 	log_sndbuf_size(stream);
 #endif
+
+	//PRISM/wangshaohui/20260107/4988/add log for send error
+	uint64_t pre_send_time = os_gettime_ns();
+
 	while (os_sem_wait(stream->send_sem) == 0) {
 		struct encoder_packet packet;
 		struct dbr_frame dbr_frame;
@@ -734,6 +741,8 @@ static void *send_thread(void *data)
 		if (!stream->sent_headers) {
 			if (!send_headers(stream)) {
 				os_atomic_set_bool(&stream->disconnected, true);
+				//PRISM/wangshaohui/20260107/4988/add log for send error
+				info("Disconnected from server, failed to send headers");
 				break;
 			}
 		}
@@ -767,8 +776,14 @@ static void *send_thread(void *data)
 	check_sent:
 		if (sent < 0) {
 			os_atomic_set_bool(&stream->disconnected, true);
+			//PRISM/wangshaohui/20260107/4988/add log for send error
+			uint64_t interval_ms = (start_time - pre_send_time) / 1000000;
+			info("Disconnected from server, send interval = %llu ms", interval_ms);
 			break;
 		}
+
+		//PRISM/wangshaohui/20260107/4988/add log for send error
+		pre_send_time = os_gettime_ns();
 
 		//PRISM/wangshaohui/20250311/2446/for network time
 		if (packet_type == OBS_ENCODER_VIDEO && !stream->new_socket_loop) {
@@ -1295,7 +1310,7 @@ static int try_connect(struct rtmp_stream *stream)
 
 	//PRISM/wangshaohui/20240920/none/add logs
 	const char *name = obs_output_get_name(stream->output);
-	info("Connecting to RTMP URL %s... name=[%s]", stream->path.array, name ? name : "none");
+	info("%p Connecting to RTMP URL %s... name=[%s]", stream->output, stream->path.array, name ? name : "none");
 	if (strstr(stream->path.array, "rtmp") == NULL) {
 		do_log(LOG_ERROR, "%p Invalid RTMP URL %s", stream->output, stream->path.array);
 		assert(false && "not a rtmp url");
@@ -1350,10 +1365,21 @@ static int try_connect(struct rtmp_stream *stream)
 	win32_log_interface_type(stream);
 #endif
 
+	//PRISM/wangshaohui/20251027/noissue/add log for rtmp
+	int order = 0;
+	pls_increase_order(stream->output, &order);
+	blog(LOG_INFO, "[%p-LibRTMP] start new rtmp with order=%d", stream->output, order);
+
+	//PRISM/wangshaohui/20251219/PRISM_PC-4745/enable debug log for rtmp connection
+	send_debug_log = true;
+
 	if (!RTMP_Connect(&stream->rtmp, NULL)) {
 		set_output_error(stream);
 		return OBS_OUTPUT_CONNECT_FAILED;
 	}
+
+	//PRISM/wangshaohui/20251219/PRISM_PC-4745/enable debug log for rtmp connection
+	send_debug_log = false;
 
 	if (!RTMP_ConnectStream(&stream->rtmp, 0))
 		return OBS_OUTPUT_INVALID_STREAM;

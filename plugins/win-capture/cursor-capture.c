@@ -99,6 +99,12 @@ static inline uint8_t *copy_from_mask(ICONINFO *ii, uint32_t *width, uint32_t *h
 	bmp.bmHeight /= 2;
 
 	pixels = bmp.bmHeight * bmp.bmWidth;
+	//PRISM/chenguoxi/20260203/PRISM_PC-5223/check malloc 0 size  -- begin
+	if (pixels == 0) {
+		bfree(mask);
+		return NULL;
+	}
+	//PRISM/chenguoxi/20260203/PRISM_PC-5223/check malloc 0 size  -- end
 	output = bzalloc(pixels * 4);
 
 	bottom = bmp.bmWidthBytes * bmp.bmHeight;

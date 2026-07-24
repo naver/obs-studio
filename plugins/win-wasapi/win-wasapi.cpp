@@ -25,6 +25,9 @@
 //PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 #include <pls/pls-base.h>
 
+//PRISM/chenguoxi/20260121/none/ui action log
+#include <pls/pls-source.h>
+
 using namespace std;
 
 #define OPT_DEVICE_ID "device_id"
@@ -178,14 +181,38 @@ class WASAPISource {
 
 	class CallbackStartCapture : public ARtwqAsyncCallback {
 	public:
-		CallbackStartCapture(WASAPISource *source) : ARtwqAsyncCallback(source) {}
+		//PRISM/chenguoxi/20250818/PRISM_PC_NELO-409/avoid that the start and stop of WASAPISource are executed at the same time
+		CallbackStartCapture(WASAPISource *source, obs_source_t *source_) : ARtwqAsyncCallback(source)
+		{
+			weak_source = obs_source_get_weak_source(source_);
+		}
 
 		STDMETHOD(Invoke)
 		(IRtwqAsyncResult *) override
 		{
+			//PRISM/chenguoxi/20250818/PRISM_PC_NELO-409/avoid that the start and stop of WASAPISource are executed at the same time
+			obs_source_t *strong_source = obs_weak_source_get_source(weak_source);
+			if (strong_source == NULL) {
+				blog(LOG_ERROR, "WASAPI: CallbackStartCapture: source is NULL. Maybe it was released");
+				SetEvent(((WASAPISource *)source)->idleSignal);
+				return S_OK;
+			}
 			((WASAPISource *)source)->OnStartCapture();
+			obs_source_release(strong_source);
 			return S_OK;
 		}
+
+		//PRISM/chenguoxi/20250818/PRISM_PC_NELO-409/avoid that the start and stop of WASAPISource are executed at the same time
+		~CallbackStartCapture()
+		{
+			if (weak_source) {
+				blog(LOG_INFO, "WASAPI: CallbackStartCapture: release weak source");
+				obs_weak_source_release(weak_source);
+			}
+		}
+
+	private:
+		obs_weak_source_t *weak_source;
 
 	} startCapture;
 	ComPtr<IRtwqAsyncResult> startCaptureAsyncResult;
@@ -295,12 +322,16 @@ public:
 		obs_weak_source_release(reroute_target);
 		reroute_target = obs_source_get_weak_source(target);
 	}
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	friend bool wasapi_window_changed(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
 };
 
 WASAPISource::WASAPISource(obs_data_t *settings, obs_source_t *source_, SourceType type)
 	: source(source_),
 	  sourceType(type),
-	  startCapture(this),
+	  //PRISM/chenguoxi/20250818/PRISM_PC_NELO-409/avoid that the start and stop of WASAPISource are executed at the same time
+	  startCapture(this, source_),
 	  sampleReady(this),
 	  restart(this)
 {
@@ -547,6 +578,12 @@ void WASAPISource::LogSettings()
 
 void WASAPISource::Update(obs_data_t *settings)
 {
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_set_property_update_delay(true);
+	pls_on_source_property_updated(source);
+#endif
+
 	UpdateParams params = BuildUpdateParams(settings);
 
 	const bool restart = (sourceType == SourceType::ProcessOutput)
@@ -559,6 +596,13 @@ void WASAPISource::Update(obs_data_t *settings)
 
 	if (restart)
 		SetEvent(restartSignal);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	if (!restart) {
+		pls_on_source_property_render(source, 0);
+	}
+#endif
 }
 
 void WASAPISource::OnWindowChanged(obs_data_t *settings)
@@ -1275,6 +1319,11 @@ void WASAPISource::OnSampleReady()
 		reconnectDuration = RECONNECT_INTERVAL;
 	}
 
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_render(source, 0);
+#endif
+
 	if (WaitForSingleObject(restartSignal, 0) == WAIT_OBJECT_0) {
 		stop = true;
 		reconnect = true;
@@ -1546,6 +1595,12 @@ static bool wasapi_window_changed(obs_properties_t *props, obs_property_t *p, ob
 	source->OnWindowChanged(settings);
 
 	ms_check_window_property_setting(props, p, settings, "window", 0);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(source->source);
+#endif
+
 	return true;
 }
 

@@ -428,6 +428,15 @@ void obs_encoder_destroy(obs_encoder_t *encoder)
 	blog(LOG_INFO, "%p-%s: [Enter]", encoder, __FUNCTION__);
 
 	if (encoder) {
+		//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+		if (encoder->info.type == OBS_ENCODER_VIDEO) {
+			blog(LOG_INFO, "%p-%s: requested_frames=%d, encoded_frames=%d", encoder, __FUNCTION__,
+			     encoder->requested_frames, encoder->encoded_frames);
+			g_sre_frame_info.total_encoder_frames += encoder->requested_frames;
+			g_sre_frame_info.total_encoder_dropped_frames +=
+				(encoder->requested_frames - encoder->encoded_frames);
+		}
+
 		//PRISM/Xiewei/20240806/#5901/trace encoders' lifetime
 		on_encoder_destoryed(encoder);
 		pthread_mutex_lock(&encoder->outputs_mutex);
@@ -1546,6 +1555,9 @@ bool do_encode(struct obs_encoder *encoder, struct encoder_frame *frame, const u
 
 	//PRISM/chenguoxi/20240929/PRISM_PC-1280/encoder pts stats
 	if (success && received && encoder->info.type == OBS_ENCODER_VIDEO && frame != NULL) {
+		//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+		encoder->requested_frames++;		
+
 		record_pts_stats(&encoder->pts_stats,
 				 (double)frame->pts * encoder->timebase_num * 1000 / encoder->timebase_den,
 				 (double)pkt.pts * pkt.timebase_num * 1000 / pkt.timebase_den);

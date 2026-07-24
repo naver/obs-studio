@@ -42,7 +42,7 @@ set_target_properties_obs(
              BUNDLE_EXTENSION systemextension
              XCODE_PRODUCT_TYPE com.apple.product-type.system-extension
 )
-  
+
 string(TIMESTAMP CURRENT_YEAR "%Y")
 if(NOT DEFINED ENV{PRISM_VCAM_BUNDLE_PP})
   message("NOT DEFINED PRISM_VCAM_BUNDLE_PP")
@@ -77,13 +77,14 @@ set_target_xcode_properties(
              PRODUCT_BUNDLE_IDENTIFIER "com.prismlive.prismlivestudio.mac-camera-extension"
              DEVELOPMENT_TEAM "K9UP278937"
              PROVISIONING_PROFILE_SPECIFIER "Prismlivestudio MacCameraExtension DeveloperID PP"
-             CODE_SIGN_IDENTITY "Developer ID Application"
+             CODE_SIGN_IDENTITY "Developer ID Application: NAVER Corp. (K9UP278937)"
              #/PRISM/Zhongling/20231123/#/New vcam end
              CURRENT_PROJECT_VERSION ${OBS_BUILD_NUMBER}
              MARKETING_VERSION ${OBS_VERSION_CANONICAL}
              COPY_PHASE_STRIP NO
              GENERATE_INFOPLIST_FILE YES
-             INFOPLIST_KEY_CFBundleDisplayName "OBS Virtual Camera"
+             #PRISM/keven/20260323/#/add display name
+             INFOPLIST_KEY_CFBundleDisplayName "PRISM Virtual Camera"
              INFOPLIST_KEY_NSHumanReadableCopyright "(c) 2022-${CURRENT_YEAR} Sebastian Beckmann, Patrick Heyer"
              #/PRISM/Zhongling/20231123/#/New vcam start
              INFOPLIST_KEY_NSSystemExtensionUsageDescription "This Camera Extension enables virtual camera functionality in PRISM Live Studio.")

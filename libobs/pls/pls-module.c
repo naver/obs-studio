@@ -7,6 +7,7 @@ struct pls_load_all_callback_info {
 	struct fail_info fi;
 	bool has_mfi;
 	pls_load_module_filter_t filter;
+	pls_load_module_load_t load;
 };
 
 //PRISM/Zhangdewen/20230117/#/load with filter
@@ -18,7 +19,13 @@ static void pls_load_all_callback(void *param, const struct obs_module_info2 *in
 		return;
 	}
 
-	if (laci->has_mfi) {
+	if (laci->load) {
+		if (laci->has_mfi) {
+			laci->load(load_all_callback, &laci->fi, info);
+		} else {
+			laci->load(load_all_callback, NULL, info);
+		}
+	} else if (laci->has_mfi) {
 		load_all_callback(&laci->fi, info);
 	} else {
 		load_all_callback(NULL, info);
@@ -29,12 +36,13 @@ static void pls_load_all_callback(void *param, const struct obs_module_info2 *in
 static const char *pls_load_all_modules_name = "pls_load_all_modules";
 
 //PRISM/Zhangdewen/20230117/#/load with filter
-void pls_load_all_modules(pls_load_module_filter_t filter)
+void pls_load_all_modules(pls_load_module_filter_t filter, pls_load_module_load_t load)
 {
 	struct pls_load_all_callback_info laci;
 	memset(&laci, 0, sizeof(laci));
 	laci.has_mfi = false;
 	laci.filter = filter;
+	laci.load = load;
 
 	profile_start(pls_load_all_modules_name);
 	obs_find_modules2(pls_load_all_callback, &laci);
@@ -50,12 +58,14 @@ void pls_load_all_modules(pls_load_module_filter_t filter)
 static const char *pls_load_all_modules2_name = "pls_load_all_modules2";
 
 //PRISM/Zhangdewen/20230117/#/load with filter
-void pls_load_all_modules2(struct obs_module_failure_info *mfi, pls_load_module_filter_t filter)
+void pls_load_all_modules2(struct obs_module_failure_info *mfi, pls_load_module_filter_t filter,
+			   pls_load_module_load_t load)
 {
 	struct pls_load_all_callback_info laci;
 	memset(&laci, 0, sizeof(laci));
 	laci.has_mfi = true;
 	laci.filter = filter;
+	laci.load = load;
 
 	memset(mfi, 0, sizeof(*mfi));
 

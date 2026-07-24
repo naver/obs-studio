@@ -125,7 +125,8 @@ static void nvvfx_filter_update(void *data, obs_data_t *settings)
 {
 	struct nvvfx_data *filter = (struct nvvfx_data *)data;
 	NvCV_Status vfxErr;
-	enum nvvfx_fx_id id = filter->filter_id;
+	//PRISM/wangshaohui/20251014/#4217/fix compile error after upgrading vs2022: nvvfx_fx_id -> nvvfx_filter_id
+	enum nvvfx_filter_id id = filter->filter_id;
 
 	filter->threshold = (float)obs_data_get_double(settings, S_THRESHOLDFX);
 	filter->processing_interval = (int)obs_data_get_int(settings, S_PROCESSING);
@@ -223,7 +224,8 @@ static void *log_nverror_destroy(struct nvvfx_data *filter, NvCV_Status vfxErr)
 static bool nvvfx_filter_create_internal(struct nvvfx_data *filter)
 {
 	NvCV_Status vfxErr;
-	enum nvvfx_fx_id id = filter->filter_id;
+	//PRISM/wangshaohui/20251014/#4217/fix compile error after upgrading vs2022: nvvfx_fx_id -> nvvfx_filter_id
+	enum nvvfx_filter_id id = filter->filter_id;
 	/* 1. Create FX */
 	switch (id) {
 	case S_FX_AIGS:
@@ -275,7 +277,8 @@ static bool nvvfx_filter_create_internal(struct nvvfx_data *filter)
 	return true;
 }
 
-static void *nvvfx_filter_create(obs_data_t *settings, obs_source_t *context, enum nvvfx_fx_id id)
+//PRISM/wangshaohui/20251014/#4217/fix compile error after upgrading vs2022: nvvfx_fx_id -> nvvfx_filter_id
+static void *nvvfx_filter_create(obs_data_t *settings, obs_source_t *context, enum nvvfx_filter_id id)
 {
 	struct nvvfx_data *filter = (struct nvvfx_data *)bzalloc(sizeof(*filter));
 	if (!nvvfx_loaded) {
@@ -607,7 +610,8 @@ fail:
 
 static bool process_texture(struct nvvfx_data *filter)
 {
-	enum nvvfx_fx_id id = filter->filter_id;
+	//PRISM/wangshaohui/20251014/#4217/fix compile error after upgrading vs2022: nvvfx_fx_id -> nvvfx_filter_id
+	enum nvvfx_filter_id id = filter->filter_id;
 	CUstream process_stream;
 
 	/* 1. Map src img holding texture. */

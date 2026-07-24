@@ -6,6 +6,7 @@
 #include "Defines.h"
 
 #include "pls/pls-source.h"
+#include "pls/pls-base.h" //PRISM/keven-cao/20260121/#/for PLS_UI_ACTION_OBS
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("mac-virtualcam", "en-US")
@@ -40,6 +41,9 @@ struct virtualcam_data {
 
     // Legacy DAL (deprecated since macOS 12.3)
     OBSDALMachServer *machServer;
+
+    //PRISM/keven-cao/20260121/#/Track first frame for latency logging
+    bool firstFrameSent;
 };
 
 @interface SystemExtensionActivationDelegate : NSObject <OSSystemExtensionRequestDelegate> {
@@ -275,6 +279,7 @@ static void *virtualcam_output_create(obs_data_t *settings, obs_output_t *output
     struct virtualcam_data *vcam = (struct virtualcam_data *) bzalloc(sizeof(*vcam));
 
     vcam->output = output;
+    vcam->firstFrameSent = false; //PRISM/keven-cao/20260121/#/init first frame flag
 
     if (cmio_extension_supported()) {
         vcam->extensionDelegate = [[SystemExtensionActivationDelegate alloc] initWithVcam:vcam];
@@ -471,6 +476,8 @@ static bool virtualcam_output_start(void *data)
         return false;
     }
 
+    vcam->firstFrameSent = false; //PRISM/keven-cao/20260121/#/reset first frame flag on start
+
     return true;
 }
 
@@ -569,6 +576,12 @@ static void virtualcam_output_raw_video(void *data, struct video_data *frame)
     }
 
     CVPixelBufferRelease(frameRef);
+
+    //PRISM/keven-cao/20260121/#/Log first frame for latency measurement
+    if (!vcam->firstFrameSent) {
+        vcam->firstFrameSent = true;
+        PLS_UI_ACTION_OBS("first video received in vcam");
+    }
 }
 
 struct obs_output_info virtualcam_output_info = {

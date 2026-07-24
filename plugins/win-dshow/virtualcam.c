@@ -53,6 +53,7 @@ static bool virtualcam_start(void *data)
 	snprintf(res, sizeof(res), "%dx%dx%lld", (int)width, (int)height, (long long)interval);
 
 	//PRISM/wangshaohui/20250211/none/PRISM should use different file
+	//char *res_file = os_get_config_path_ptr("obs-virtualcam.txt");
 	char *res_file = os_get_config_path_ptr("obs-virtualcam-for-prism.txt");
 	os_quick_write_utf8_file_safe(res_file, res, strlen(res), false, "tmp", NULL);
 	bfree(res_file);
@@ -129,7 +130,7 @@ static void virtual_video(void *param, struct video_data *frame)
 
 	//PRISM/Xiewei/20250207/PRISM_PC-2246/fix: add log
 	if (os_atomic_load_bool(&vcam->first_video)) {
-		blog(LOG_INFO, "%s-%p: first video received.", __FUNCTION__, (void *)vcam);
+		blog(LOG_INFO, "%s-%p: first video received in vcam", __FUNCTION__, (void *)vcam);
 		os_atomic_set_bool(&vcam->first_video, false);
 	}
 	video_queue_write(vcam->vq, frame->data, frame->linesize, frame->timestamp);

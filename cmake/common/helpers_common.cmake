@@ -488,3 +488,25 @@ function(add_obs_plugin target)
     target_disable(${target})
   endif()
 endfunction()
+
+# ---------- PRISM START ------------
+# PRISM_PC-3610/2025/8/18/ jimbo.ren add module version same with prism
+
+set(PRISM_VERSION $ENV{PLS_VERSION})
+set(PRISM_VERSION_MAJOR $ENV{PRISM_VERSION_MAJOR})
+set(PRISM_VERSION_MINOR $ENV{PRISM_VERSION_MINOR})
+set(PRISM_VERSION_PATCH $ENV{PRISM_VERSION_PATCH})
+set(PRISM_VERSION_TWEAK $ENV{PRISM_VERSION_TWEAK})
+set(PRISM_COMMENTS $ENV{PRISM_COMMENTS})
+
+function(prism_module target description)
+    if(OS_WINDOWS)
+      set(MODULE_DESCRIPTION ${description})
+      configure_file($ENV{PRISM_SRC_DIR}/cmake/bundle/windows/prism-module.rc.in ${CMAKE_CURRENT_BINARY_DIR}/${target}.rc)
+      target_sources(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/${target}.rc)
+    elseif(OS_MACOS)
+      set_target_properties(${target} PROPERTIES SOVERSION ${PRISM_VERSION})
+    endif()
+endfunction()
+
+# ---------- PRISM DONE ------------

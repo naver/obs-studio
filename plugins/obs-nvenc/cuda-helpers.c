@@ -9,6 +9,9 @@
 #include <util/dstr.h>
 #include <util/pipe.h>
 
+//PRISM/chenguoxi/20241212/PRISM_PC-1672/Add logs
+#include "pls/pls-base.h"
+
 static void *cuda_lib = NULL;
 static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 CudaFunctions *cu = NULL;
@@ -126,7 +129,11 @@ bool cuda_error_check(struct nvenc_data *enc, CUresult res, const char *func, co
 		dstr_printf(&message, "%s: CUDA call \"%s\" failed with %d", func, call, res);
 	}
 
-	error("%s", message.array);
+	//PRISM/chenguoxi/20241212/PRISM_PC-1672/Add logs
+	//error("%s", message.array);
+	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
+	blogex(false, LOG_ERROR, fields, 1, "%s", message.array);
+
 	obs_encoder_set_last_error(enc->encoder, message.array);
 
 	dstr_free(&message);

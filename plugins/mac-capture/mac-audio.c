@@ -228,6 +228,23 @@ static char *sanitize_device_name(char *name)
 
 static char **coreaudio_get_channel_names(struct coreaudio_data *ca)
 {
+	//PRISM/Keven/20251013/PRISM_PC-4175/crash fix - validate device before querying channels
+	if (!ca || ca->device_id == kAudioObjectUnknown) {
+		return NULL;
+	}
+
+	// Check if device is still alive
+	AudioObjectPropertyAddress alive_addr = {.mSelector = kAudioDevicePropertyDeviceIsAlive,
+						 .mScope = kAudioObjectPropertyScopeGlobal,
+						 .mElement = kAudioObjectPropertyElementMain};
+	UInt32 isAlive = 0;
+	UInt32 aliveSize = sizeof(isAlive);
+	OSStatus aliveStat = AudioObjectGetPropertyData(ca->device_id, &alive_addr, 0, NULL, &aliveSize, &isAlive);
+	if (aliveStat != noErr || !isAlive) {
+		blog(LOG_WARNING, "[coreaudio_get_channel_names] device is not alive or cannot be queried");
+		return NULL;
+	}
+
 	char **channel_names = bzalloc(sizeof(char *) * ca->available_channels);
 
 	for (uint32_t i = 0; i < ca->available_channels; i++) {
@@ -290,11 +307,21 @@ static bool coreaudio_init_format(struct coreaudio_data *ca)
 		return false;
 
 	ca->available_channels = inputDescription.mChannelsPerFrame;
+
+	//PRISM/Keven/20250814/PRISM_PC_NELO-403/crash fix
+	if (ca->available_channels == 0) {
+		return false;
+	}
 	if (ca->available_channels > MAX_DEVICE_INPUT_CHANNELS) {
 		ca->available_channels = MAX_DEVICE_INPUT_CHANNELS;
 	}
 
+	//PRISM/Keven/20251013/PRISM_PC-4175/crash fix - check if channel names retrieval succeeded
 	ca->channel_names = coreaudio_get_channel_names(ca);
+	if (!ca->channel_names) {
+		ca_warn(ca, "coreaudio_init_format", "failed to get channel names, device may be disconnected");
+		return false;
+	}
 
 	if (ca->enable_downmix) {
 		blog(LOG_INFO, "Downmix enabled: %d to %d channels.", ca->available_channels, channels);
@@ -594,6 +621,26 @@ static bool coreaudio_get_device_name(struct coreaudio_data *ca)
 	CFStringRef cf_name = NULL;
 	UInt32 size = sizeof(CFStringRef);
 	char *name = NULL;
+
+	//PRISM/cao.kewei/20251010/#PRISM_PC-4152/Validate device is alive before querying properties
+	AudioObjectPropertyAddress alive_addr = {kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal,
+						 kAudioObjectPropertyElementMain};
+	UInt32 is_alive = 0;
+	UInt32 alive_size = sizeof(UInt32);
+	OSStatus alive_stat = AudioObjectGetPropertyData(ca->device_id, &alive_addr, 0, NULL, &alive_size, &is_alive);
+
+	if (alive_stat != noErr || !is_alive) {
+		//PRISM/cao.kewei/20251010/#PRISM_PC-4152/log limit
+		static uint64_t last_log_time = 0;
+		uint64_t current_time = os_gettime_ns();
+		if (current_time - last_log_time > 1000000000) { // Only log once per second
+			last_log_time = current_time;
+			blog(LOG_WARNING,
+			     "[coreaudio_get_device_name] device is not alive or invalid: stat=%d, is_alive=%d",
+			     (int)alive_stat, is_alive);
+		}
+		return false;
+	}
 
 	const AudioObjectPropertyAddress addr = {kAudioDevicePropertyDeviceNameCFString, kAudioObjectPropertyScopeInput,
 						 kAudioObjectPropertyElementMain};

@@ -4,6 +4,9 @@
 #include <util/platform.h>
 #include <util/dstr.h>
 
+//PRISM/chenguoxi/20260121/none/ui action log
+#include <pls/pls-source.h>
+
 #define do_log(level, format, ...) \
 	blog(level, "[vlc_source: '%s'] " format, obs_source_get_name(ss->source), ##__VA_ARGS__)
 
@@ -737,6 +740,9 @@ static void vlcs_update(void *data, obs_data_t *settings)
 		obs_source_output_video(c->source, NULL);
 
 	obs_data_array_release(array);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(c->source);
 }
 
 static void vlcs_started(const struct libvlc_event_t *event, void *data)
@@ -791,42 +797,73 @@ static void vlcs_play_pause(void *data, bool pause)
 {
 	struct vlc_source *c = data;
 
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(c->source, "play_pause");
+
 	libvlc_state_t state = libvlc_media_player_get_state_(c->media_player);
 
 	if (pause && state == libvlc_Playing)
 		libvlc_media_list_player_pause_(c->media_list_player);
 	else if (!pause && state == libvlc_Paused)
 		libvlc_media_list_player_play_(c->media_list_player);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(c->source);
 }
 
 static void vlcs_restart(void *data)
 {
 	struct vlc_source *c = data;
 
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(c->source, "restart");
+
 	libvlc_media_list_player_stop_(c->media_list_player);
 	libvlc_media_list_player_play_(c->media_list_player);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(c->source);
 }
 
 static void vlcs_stop(void *data)
 {
 	struct vlc_source *c = data;
 
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(c->source, "stop");
+
 	libvlc_media_list_player_stop_(c->media_list_player);
 	obs_source_output_video(c->source, NULL);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(c->source);
+	pls_on_source_property_render(c->source, 0);
 }
 
 static void vlcs_playlist_next(void *data)
 {
 	struct vlc_source *c = data;
 
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(c->source, "next");
+
 	libvlc_media_list_player_next_(c->media_list_player);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(c->source);
 }
 
 static void vlcs_playlist_prev(void *data)
 {
 	struct vlc_source *c = data;
 
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(c->source, "prev");
+
 	libvlc_media_list_player_previous_(c->media_list_player);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(c->source);
 }
 
 static int64_t vlcs_get_duration(void *data)

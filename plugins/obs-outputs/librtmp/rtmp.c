@@ -30,6 +30,8 @@
 #endif
 
 #include "rtmp_sys.h"
+//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+#include "net-if.h"
 #include "log.h"
 
 #include "happy-eyeballs.h"
@@ -1039,6 +1041,9 @@ RTMP_Connect1(RTMP *r, RTMPPacket *cp)
 int
 RTMP_Connect(RTMP *r, RTMPPacket *cp)
 {
+    //PRISM/wangshaohui/20251027/noissue/add log for rtmp
+    RTMP_Log(RTMP_LOGINFO, "%s enter", __FUNCTION__);
+
     struct happy_eyeballs_ctx* happy_ctx = NULL;
     bool free_hostname = FALSE;
     char *hostname = NULL;
@@ -1077,6 +1082,41 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp)
         he_result = happy_eyeballs_timedwait_default(happy_ctx);
     }
 
+    //PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+    int addr_type = happy_eyeballs_connect_ip_family_type(happy_ctx); 
+    switch (addr_type)
+	{
+    case AF_INET:
+        RTMP_Log(RTMP_LOGINFO, "Remote connect urls address list,type=IPv4");
+        break;
+    case AF_INET6:
+        RTMP_Log(RTMP_LOGINFO, "Remote connect urls address list,type=IPv6");
+        break;
+     case AF_UNSPEC:
+        RTMP_Log(RTMP_LOGINFO, "Remote connect urls address list,type=IPv6+IPv4");
+        break;
+	default:
+	    break;
+	}
+        
+    SOCKET socket_fd_log = happy_eyeballs_get_socket_fd(happy_ctx);
+    struct sockaddr_storage addr_log;
+    int addr_len = happy_eyeballs_get_remote_addr(happy_ctx, &addr_log);
+
+    if(socket_fd_log && addr_len>0){
+        char ip_address[INET6_ADDRSTRLEN] = {0};
+        bool sucessfully = netif_addr_to_str(&addr_log,ip_address,INET6_ADDRSTRLEN);
+        if (sucessfully) {
+            RTMP_Log(RTMP_LOGINFO, "Remote connect url,type=%s, address= %s", addr_log.ss_family == AF_INET ? "IPv4": "IPv6",ip_address);
+        }
+        else {
+            RTMP_Log(RTMP_LOGINFO, "Remote connect url not correct");
+        }
+    }
+    else {
+        RTMP_Log(RTMP_LOGINFO, "Remote connect urls failed");
+    }
+
     if (he_result == -E_INVAL)
     {
         /* Parameter error */
@@ -1111,13 +1151,13 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp)
         goto fail;
     }
     
-	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
-    if (he_result == 0) {
-            RTMP_Log(RTMP_LOGINFO, "[rtmp io] successed to connect rtmp server");
-    }
-
     happy_eyeballs_get_remote_addr(happy_ctx, &r->m_sb.sb_addr);
     r->connect_time_ms = (int)(happy_eyeballs_get_connection_time_ns(happy_ctx) / 1000000);
+   
+    //PRISM/wangshaohui/20250106/noissue/add log for rtmp
+    if (he_result == 0) {
+            RTMP_Log(RTMP_LOGINFO, "[rtmp io] successed to connect rtmp server,connect time:%d ms,index:%d",r->connect_time_ms, happy_eyeballs_get_index(happy_ctx));
+    }
 
     /* Successful connection */
     SOCKET socket_fd = happy_eyeballs_get_socket_fd(happy_ctx);
@@ -1187,6 +1227,9 @@ SocksNegotiate(RTMP *r)
 int
 RTMP_ConnectStream(RTMP *r, int seekTime)
 {
+    //PRISM/wangshaohui/20251027/noissue/add log for rtmp
+    RTMP_Log(RTMP_LOGINFO, "%s enter", __FUNCTION__);
+
     RTMPPacket packet = { 0 };
 
     /* seekTime was already set by SetupStream / SetupURL.
@@ -3147,10 +3190,29 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
     AMF_Dump(&obj);
     AMFProp_GetString(AMF_GetProp(&obj, NULL, 0), &method);
     txn = AMFProp_GetNumber(AMF_GetProp(&obj, NULL, 1));
-
-	//PRISM/wangshaohui/20250106/noissue/add log for rtmp
+    
+	//PRISM/wangshaohui/20250106/noissue/add log for rtmp --------------------------------- start
     //RTMP_Log(RTMP_LOGDEBUG, "%s, server invoking <%s>", __FUNCTION__, method.av_val);
-    RTMP_Log(RTMP_LOGINFO, "[rtmp io] server->client 0x%X method=%s", RTMP_PACKET_TYPE_INVOKE, method.av_val ? method.av_val : "unknown");
+    AMFObject obj2;
+    AVal code, level, description;
+    AMFProp_GetObject(AMF_GetProp(&obj, NULL, 3), &obj2);
+    AMFProp_GetString(AMF_GetProp(&obj2, &av_code, -1), &code);
+    AMFProp_GetString(AMF_GetProp(&obj2, &av_level, -1), &level);
+    AMFProp_GetString(AMF_GetProp(&obj2, &av_description, -1), &description);
+    if (code.av_val) {
+        RTMP_Log(RTMP_LOGINFO, "[rtmp io] server->client 0x%X method=%s \n" \
+            "\t level:%s \n"\
+            "\t code:%s \n"\
+            "\t description:%s"
+            , RTMP_PACKET_TYPE_INVOKE, method.av_val ? method.av_val : "unknown",
+            level.av_val?level.av_val:"noLevel",
+            code.av_val?code.av_val:"noCode",
+            description.av_val?description.av_val:"noDesc");
+    }
+    else {
+        RTMP_Log(RTMP_LOGINFO, "[rtmp io] server->client 0x%X method=%s", RTMP_PACKET_TYPE_INVOKE, method.av_val ? method.av_val : "unknown");
+    }
+	//PRISM/wangshaohui/20250106/noissue/add log for rtmp --------------------------------- end
 
     if (AVMATCH(&method, &av__result))
     {

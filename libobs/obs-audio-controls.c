@@ -489,6 +489,15 @@ static void volmeter_process_audio_data(obs_volmeter_t *volmeter, const struct a
 	volmeter_process_magnitude(volmeter, data, nr_channels);
 }
 
+//PRISM/FanZirong/20251222/PRISM_PC-4344/Add audio volume log
+static inline uint64_t conv_frames_to_time(const size_t sample_rate, const size_t frames)
+{
+	if (!sample_rate)
+		return 0;
+
+	return util_mul_div64(frames, 1000000000ULL, sample_rate);
+}
+
 static void volmeter_source_data_received(void *vptr, obs_source_t *source, const struct audio_data *data, bool muted)
 {
 	struct obs_volmeter *volmeter = (struct obs_volmeter *)vptr;
@@ -516,6 +525,22 @@ static void volmeter_source_data_received(void *vptr, obs_source_t *source, cons
 	pthread_mutex_unlock(&volmeter->mutex);
 
 	signal_levels_updated(volmeter, magnitude, peak, input_peak);
+
+	//PRISM/FanZirong/20251222/PRISM_PC-4344/Add audio volume log
+	size_t sample_rate = audio_output_get_sample_rate(obs->audio.audio);
+	uint64_t get_duration = conv_frames_to_time(sample_rate, source->get_audio_frames);
+	if (get_duration % 10000000000 == 0) {
+		int nr_channels = obs_volmeter_get_nr_channels(volmeter);
+		char log_buffer[1024];
+		int pos =
+			snprintf(log_buffer, sizeof(log_buffer), "[volmeter] source: %s,", obs_source_get_name(source));
+		for (int ch = 0; ch < nr_channels && pos < (int)sizeof(log_buffer) - 200; ch++) {
+			pos += snprintf(log_buffer + pos, sizeof(log_buffer) - pos,
+					" [ch[%d]: mag=%.2f peak=%.2f in_peak=%.2f]", ch, magnitude[ch], peak[ch],
+					input_peak[ch]);
+		}
+		blog(LOG_INFO, "%s", log_buffer);
+	}
 }
 
 obs_fader_t *obs_fader_create(enum obs_fader_type type)

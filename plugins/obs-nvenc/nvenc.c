@@ -3,6 +3,12 @@
 #include <util/darray.h>
 #include <util/dstr.h>
 
+// PRISM/chenguoxi/20240514/#5378/force keyframe
+#include "pls/pls-encoder.h"
+
+//PRISM/chenguoxi/20241212/PRISM_PC-1672/Add logs
+#include "pls/pls-base.h"
+
 /* ========================================================================= */
 
 #define EXTRA_BUFFERS 5
@@ -792,6 +798,9 @@ static void *nvenc_create_internal(enum codec_type codec, obs_data_t *settings, 
 	enc->first_packet = true;
 	enc->non_texture = !texture;
 
+	//PRISM/chenguoxi/20240403/#534/log if device failed
+	enc->is_device_failed = false;
+
 	nvenc_properties_read(&enc->props, settings);
 
 	NV_ENCODE_API_FUNCTION_LIST init = {NV_ENCODE_API_FUNCTION_LIST_VER};
@@ -828,9 +837,27 @@ static void *nvenc_create_internal(enum codec_type codec, obs_data_t *settings, 
 	if (!init_session(enc)) {
 		goto fail;
 	}
+
 	if (!init_encoder(enc, codec, settings, encoder)) {
 		goto fail;
 	}
+
+	//PRISM/chenguoxi/20251210/PRISM_PC-4574/nvenc error msg
+	if (enc != NULL && enc->session != NULL) {
+		const char *nvenc_error = nv.nvEncGetLastErrorString(enc->session);
+		__try {
+			if (nvenc_error != NULL && nvenc_error[0] != '\0') {
+				enc->is_nvenc_error_msg_error = true;
+			}
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			enc->is_nvenc_error_msg_error = true;
+		}
+
+		if (enc->is_nvenc_error_msg_error) {
+			error("nvenc [%p]: is_nvenc_error_msg_error is true.", enc->encoder);
+		}
+	}
+
 	if (!init_bitstreams(enc)) {
 		goto fail;
 	}
@@ -1090,6 +1117,16 @@ static bool get_encoded_packet(struct nvenc_data *enc, bool finalize)
 	return true;
 }
 
+// PRISM/chenguoxi/20240514/#5378/force keyframe
+static bool is_force_keyframe(struct nvenc_data *enc)
+{
+	if (enc == NULL) {
+		return false;
+	}
+
+	return obs_encoder_request_keyframe_and_clean(enc->encoder);
+}
+
 struct roi_params {
 	uint32_t mb_width;
 	uint32_t mb_height;
@@ -1200,6 +1237,12 @@ bool nvenc_encode_base(struct nvenc_data *enc, struct nv_bitstream *bs, void *pi
 		params.bufferFmt = obs_p010_tex_active() ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT
 							 : NV_ENC_BUFFER_FORMAT_NV12;
 	}
+
+	// PRISM/chenguoxi/20240514/#5378/force keyframe
+	if (is_force_keyframe(enc)) {
+		params.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR;
+		blog(LOG_INFO, "nvenc_encode_base: force keyframe!");
+	} 
 
 	/* Add ROI map if enabled */
 	if (obs_encoder_has_roi(enc->encoder))

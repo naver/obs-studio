@@ -97,6 +97,14 @@ struct obs_scene_item {
 
 	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	bool is_vertical;
+	//PRISM/lizhiyong/20250902/PRISM_PC-3615/improve crop area
+	bool is_cropping;
+	gs_texrender_t *cropping_item_render;
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	void *action_helper_ptr;
+#endif
 };
 
 struct scene_source_mix {
@@ -134,4 +142,10 @@ struct obs_scene {
 	bool is_vertical;
 	//PRISM/chenguoxi/20241104/PRISM_PC-1452/dual output
 	obs_scene_t *real_scene;
+	//PRISM/lizhiyong/20250902/PRISM_PC-5389/improve vertical group cropping
+	bool is_vertical_group_ref;
+
+#ifdef PLS_UI_ACTION_STATS //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	void *action_helper_ptr;
+#endif
 };

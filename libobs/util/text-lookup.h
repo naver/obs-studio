@@ -40,6 +40,13 @@ EXPORT bool text_lookup_add(lookup_t *lookup, const char *path);
 EXPORT void text_lookup_destroy(lookup_t *lookup);
 EXPORT bool text_lookup_getstr(lookup_t *lookup, const char *lookup_val, const char **out);
 
+//PRISM/aiguanghua/20241203/PRISM_PC-1698/save the en-US.ini text item
+EXPORT bool text_lookup_get_plugin_english_str(const char *kr_str, const char * plugin_id, const char **out);
+EXPORT bool text_lookup_get_english_str(lookup_t *lookup, const char *kr_str, const char **out);
+EXPORT bool text_lookup_get_english_str_by_key(lookup_t *lookup, const char *key, const char **out);
+EXPORT bool getstring_pointer_get_english_str_by_key(void *getstring_pointer, const char *key, const char **out);
+EXPORT bool getstring_pointer_get_english_str(void *getstring_pointer, const char *kr_str, const char **out);
+
 #ifdef __cplusplus
 }
 #endif

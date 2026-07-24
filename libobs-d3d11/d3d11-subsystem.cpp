@@ -29,6 +29,9 @@
 #include <shellscalingapi.h>
 #include <d3dkmthk.h>
 
+//PRISM/wangshaohui/20260306/PRISM_PC-5427/handle badmalloc
+#include <new>
+
 //PRISM/chenguoxi/20241212/PRISM_PC-1672/Add logs
 #include "pls/pls-base.h"
 
@@ -1553,6 +1556,9 @@ gs_texture_t *device_texture_create(gs_device_t *device, uint32_t width, uint32_
 		LogD3D11ErrorDetails(error, device);
 	} catch (const char *error) {
 		blog(LOG_ERROR, "device_texture_create (D3D11): %s", error);
+	} catch (const std::bad_alloc &) { //PRISM/wangshaohui/20260306/PRISM_PC-5427/handle badmalloc
+		blog(LOG_ERROR, "device_texture_create (D3D11): out of memory (texture %ux%u, levels %u)",
+		     (unsigned)width, (unsigned)height, (unsigned)levels);
 	}
 
 	return texture;
@@ -1573,6 +1579,9 @@ gs_texture_t *device_cubetexture_create(gs_device_t *device, uint32_t size, enum
 		LogD3D11ErrorDetails(error, device);
 	} catch (const char *error) {
 		blog(LOG_ERROR, "device_cubetexture_create (D3D11): %s", error);
+	} catch (const std::bad_alloc &) { //PRISM/wangshaohui/20260306/PRISM_PC-5427/handle badmalloc
+		blog(LOG_ERROR, "device_cubetexture_create (D3D11): out of memory (size %u, levels %u)", (unsigned)size,
+		     (unsigned)levels);
 	}
 
 	return texture;

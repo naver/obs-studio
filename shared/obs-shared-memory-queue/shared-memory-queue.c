@@ -2,7 +2,9 @@
 #include "shared-memory-queue.h"
 #include "tiny-nv12-scale.h"
 
-#define VIDEO_NAME L"OBSVirtualCamVideo"
+//PRISM/WuLongyue/20231129/none/Add PRISM VirtualCamera
+//#define VIDEO_NAME L"OBSVirtualCamVideo"
+#define VIDEO_NAME L"PRISMVirtualCamVideo"
 
 enum queue_type {
 	SHARED_QUEUE_TYPE_VIDEO,

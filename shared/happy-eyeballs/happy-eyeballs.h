@@ -179,6 +179,18 @@ int happy_eyeballs_timedwait_default(struct happy_eyeballs_ctx *context);
  */
 int happy_eyeballs_destroy(struct happy_eyeballs_ctx *context);
 
+//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+/**
+ * Record the remote address family type log for analysis.
+ */
+int happy_eyeballs_connect_ip_family_type(struct happy_eyeballs_ctx *context);
+
+//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+/**
+ * Record the remote address index log for analysis.
+ */
+int happy_eyeballs_get_index(const struct happy_eyeballs_ctx *context);
+
 #ifdef __cplusplus
 }
 #endif

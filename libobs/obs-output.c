@@ -26,6 +26,7 @@
 
 //PRISM/wangshaohui/20250409/PRISM_PC-2599/checking video_t
 #include "pls/pls-video-output.h"
+#include "pls/pls-output.h"
 //PRISM/cao.kewei/20241016/PRISM_PC-1296
 #include "pls/pls-statistics.h"
 #include "pls/pls-base.h"
@@ -464,6 +465,9 @@ bool obs_output_start(obs_output_t *output)
 		return false;
 	}
 
+	//PRISM/wangshaohui/20251027/noissue/add log for rtmp
+	output->start_order = 0;
+
 	if (output->delay_sec) {
 		//PRISM/WuLongyue/20231122/#2212/add logs
 		blog(LOG_INFO, "%p-%s: [Exit] id=[%s] to call obs_output_delay_start", output, __FUNCTION__,
@@ -476,6 +480,11 @@ bool obs_output_start(obs_output_t *output)
 			//PRISM/WuLongyue/20231122/#2212/add logs
 			blog(LOG_INFO, "%p-%s: [Exit with ok] id=[%s] obs_output_actual_start successed", output,
 			     __FUNCTION__, output->info.id);
+			//PRISM/FanZirong/20260226/PRISM_PC-5385/add action logs
+#ifdef PLS_UI_ACTION_STATS
+			PLS_UI_ACTION_OBS("%p-%s: [Exit with ok] id=[%s] obs_output_actual_start successed", output,
+					  __FUNCTION__, output->info.id);
+#endif
 
 			return true;
 		}
@@ -3303,15 +3312,7 @@ void obs_output_signal_stop(obs_output_t *output, int code)
 		return;
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
-	char pointer_buf[50] = {0};
-	snprintf(pointer_buf, sizeof(pointer_buf), "%p", output);
-	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT},
-				   {"output", pointer_buf},
-				   {"output_id", output->info.id},
-				   {"output_name", obs_output_get_name(output)}};
-	blogex(false, OBS_OUTPUT_SUCCESS == code ? LOG_INFO : LOG_WARNING, fields, 4,
-	       "%p-%s: output_signal [Enter] id:%s data=%p, video=%p, encoder=%p code=%d", output, __FUNCTION__,
-	       output->info.id, output->context.data, output->video, output->video_encoders[0], code);
+	pls_log_output_stop(output, code);
 
 	output->stop_code = code;
 
@@ -3532,6 +3533,43 @@ const char *obs_output_get_last_error(obs_output_t *output)
 			obs_encoder_t *aencoder = output->audio_encoders[i];
 			if (aencoder && aencoder->last_error_message) {
 				return aencoder->last_error_message;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+//PRISM/wangshaohui/20241203/PRISM_PC-1698/save the en-US.ini text item
+const char *check_english_str(const char *kr_str, const char *plugin_id)
+{
+	const char *out = NULL;
+	bool ret = text_lookup_get_plugin_english_str(kr_str, plugin_id, &out);
+	return ret ? out : kr_str;
+}
+//PRISM/wangshaohui/20241203/PRISM_PC-1698/save the en-US.ini text item
+const char *obs_output_get_last_english_error(obs_output_t *output)
+{
+	if (!obs_output_get_last_error(output)) {
+		assert(false);
+		return NULL;
+	}
+
+	if (output->last_error_message) {
+		return check_english_str(output->last_error_message, output->info.id);
+
+	} else {
+		for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; i++) {
+			obs_encoder_t *vencoder = output->video_encoders[i];
+			if (vencoder && vencoder->last_error_message) {
+				return check_english_str(vencoder->last_error_message, vencoder->info.id);
+			}
+		}
+
+		for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
+			obs_encoder_t *aencoder = output->audio_encoders[i];
+			if (aencoder && aencoder->last_error_message) {
+				return check_english_str(aencoder->last_error_message, aencoder->info.id);
 			}
 		}
 	}

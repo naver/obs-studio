@@ -26,7 +26,6 @@
 //PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
 #include "pls/pls-dual-output.h"
 #include "pls/pls-dual-output-internal.h"
-
 const struct obs_source_info group_info;
 
 static void resize_group(obs_sceneitem_t *group, bool scene_resize);
@@ -187,6 +186,10 @@ static void *scene_create(obs_data_t *settings, struct obs_source *source)
 	struct obs_scene *scene = bzalloc(sizeof(struct obs_scene));
 	scene->source = source;
 
+#ifdef PLS_UI_ACTION_STATS //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	scene->action_helper_ptr = pls_create_action_helper(ACTION_HELPER_TYPE_SCENE);
+#endif
+
 	if (strcmp(source->info.id, group_info.id) == 0) {
 		scene->is_group = true;
 		scene->custom_size = true;
@@ -318,6 +321,10 @@ static void scene_destroy(void *data)
 	struct obs_scene *scene = data;
 
 	remove_all_items(scene);
+
+#ifdef PLS_UI_ACTION_STATS //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	pls_free_action_helper(scene->action_helper_ptr, ACTION_HELPER_TYPE_SCENE);
+#endif
 
 	//PRISM/ZengQin/20230201/#none/for DrawPen feature.
 	obs_enter_graphics();
@@ -886,6 +893,11 @@ static void render_item_texture(struct obs_scene_item *item, enum gs_color_space
 				enum gs_color_space source_space)
 {
 	gs_texture_t *tex = gs_texrender_get_texture(item->item_render);
+	//PRISM/lizhiyong/20250902/PRISM_PC-3615/improve crop area
+	if (item->is_cropping && !is_rendering && item->cropping_item_render) {
+		tex = gs_texrender_get_texture(item->cropping_item_render);
+	}
+
 	if (!tex) {
 		return;
 	}
@@ -1036,11 +1048,45 @@ static bool are_texcoords_centered(struct matrix4 *m)
 	return memcmp(m, &copy, sizeof(*m)) == 0;
 }
 
+//PRISM/lizhiyong/20250902/PRISM_PC-5389/improve vertical group cropping
+static bool group_has_cropping_child_proc(obs_scene_t *scene, obs_sceneitem_t *item, void *param)
+{
+	UNUSED_PARAMETER(scene);
+	bool *found = (bool *)param;
+	struct obs_scene_item *si = (struct obs_scene_item *)item;
+	if (si->is_cropping) {
+		*found = true;
+		return false;
+	}
+	if (obs_sceneitem_is_group(item)) {
+		obs_scene_t *sub_scene = obs_sceneitem_group_get_scene(item);
+		if (sub_scene)
+			pls_scene_enum_items_all(sub_scene, group_has_cropping_child_proc, param);
+	}
+	return *found ? false : true;
+}
+
+static bool group_has_cropping_child(obs_sceneitem_t *item)
+{
+	bool found = false;
+	obs_scene_t *scene = obs_scene_from_source(item->source);
+	if (scene)
+		pls_scene_enum_items_all(scene, group_has_cropping_child_proc, &found);
+	return found;
+}
+
 static inline void render_item(struct obs_scene_item *item)
 {
 	GS_DEBUG_MARKER_BEGIN_FORMAT(GS_DEBUG_COLOR_ITEM, "Item: %s", obs_source_get_name(item->source));
 
-	const bool use_texrender = item_texture_enabled(item);
+	//PRISM/lizhiyong/20250902/PRISM_PC-5389/improve vertical group cropping
+	bool use_texrender = item_texture_enabled(item);
+	// only when vertical group ref scene (is_vertical_group_ref set at create) and has cropping child
+	if (item->is_vertical && item_is_scene(item) && !item->is_group && !is_rendering) {
+		obs_scene_t *scene = obs_scene_from_source(item->source);
+		if (scene && scene->is_vertical_group_ref && group_has_cropping_child((obs_sceneitem_t *)item))
+			use_texrender = false;
+	}
 
 	obs_source_t *const source = item->source;
 	const enum gs_color_space current_space = gs_get_color_space();
@@ -1050,6 +1096,10 @@ static inline void render_item(struct obs_scene_item *item)
 	if (item->item_render && (!use_texrender || (gs_texrender_get_format(item->item_render) != format))) {
 		gs_texrender_destroy(item->item_render);
 		item->item_render = NULL;
+		if (item->cropping_item_render) {
+			gs_texrender_destroy(item->cropping_item_render);
+			item->cropping_item_render = NULL;
+		}
 	}
 
 	if (!item->item_render && use_texrender) {
@@ -1064,10 +1114,22 @@ static inline void render_item(struct obs_scene_item *item)
 			goto cleanup;
 		}
 
+		gs_texrender_t *item_rendering = item->item_render;
+
 		uint32_t cx = calc_cx(item, width);
 		uint32_t cy = calc_cy(item, height);
-
-		if (cx && cy && gs_texrender_begin_with_color_space(item->item_render, cx, cy, source_space)) {
+		//PRISM/lizhiyong/20250902/PRISM_PC-3615/improve crop area
+		if (item->is_cropping && !is_rendering) {
+			cx = width;
+			cy = height;
+			if (!item->cropping_item_render) {
+				item->cropping_item_render = gs_texrender_create(format, GS_ZS_NONE);
+			}else{
+				gs_texrender_reset(item->cropping_item_render);
+			}
+			item_rendering = item->cropping_item_render ? item->cropping_item_render : item->item_render;
+		}
+		if (cx && cy && gs_texrender_begin_with_color_space(item_rendering, cx, cy, source_space)) {
 			float cx_scale = (float)width / (float)cx;
 			float cy_scale = (float)height / (float)cy;
 			struct vec4 clear_color;
@@ -1077,8 +1139,14 @@ static inline void render_item(struct obs_scene_item *item)
 			gs_ortho(0.0f, (float)width, 0.0f, (float)height, -100.0f, 100.0f);
 
 			gs_matrix_scale3f(cx_scale, cy_scale, 1.0f);
-			gs_matrix_translate3f(-(float)(item->crop.left + item->bounds_crop.left),
-					      -(float)(item->crop.top + item->bounds_crop.top), 0.0f);
+			//PRISM/lizhiyong/20250902/PRISM_PC-3615/improve crop area
+			if (item->is_cropping && !is_rendering) {
+				gs_matrix_translate3f(-(float)(item->bounds_crop.left), -(float)(item->bounds_crop.top),
+						      0.0f);
+			} else {
+				gs_matrix_translate3f(-(float)(item->crop.left + item->bounds_crop.left),
+						      -(float)(item->crop.top + item->bounds_crop.top), 0.0f);
+			}
 
 			if (item->user_visible && transition_active(item->show_transition)) {
 				const int cx = obs_source_get_width(item->source);
@@ -1096,7 +1164,7 @@ static inline void render_item(struct obs_scene_item *item)
 				obs_source_set_texcoords_centered(item->source, false);
 			}
 
-			gs_texrender_end(item->item_render);
+			gs_texrender_end(item_rendering);
 		}
 	}
 
@@ -1104,6 +1172,10 @@ static inline void render_item(struct obs_scene_item *item)
 	const bool previous = gs_set_linear_srgb(linear_srgb);
 	gs_matrix_push();
 	gs_matrix_mul(&item->draw_transform);
+	//PRISM/lizhiyong/20250902/PRISM_PC-3615/improve crop area
+	if (item->is_cropping && !is_rendering) {
+		gs_matrix_translate3f(-(float)item->crop.left, -(float)item->crop.top, 0.0f);
+	}
 	if (item->item_render) {
 		render_item_texture(item, current_space, source_space);
 	} else if (item->user_visible && transition_active(item->show_transition)) {
@@ -1134,7 +1206,15 @@ static void scene_video_tick(void *data, float seconds)
 	struct obs_scene *scene = data;
 	struct obs_scene_item *item;
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(scene, "scene", "request_video_lock");
 	video_lock(scene);
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(scene, "scene", "request_video_lock", time_ns_3ms);
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(scene, "scene", "reset_all_items");
+
 	item = scene->first_item;
 	while (item) {
 		if (item->item_render)
@@ -1142,6 +1222,9 @@ static void scene_video_tick(void *data, float seconds)
 		item = item->next;
 	}
 	video_unlock(scene);
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(scene, "scene", "reset_all_items", time_ns_3ms);
 
 	UNUSED_PARAMETER(seconds);
 }
@@ -1206,7 +1289,11 @@ static void scene_video_render(void *data, gs_effect_t *effect)
 
 	da_init(remove_items);
 
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(scene, "scene", "render_request_video_lock");
 	video_lock(scene);
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(scene, "scene", "render_request_video_lock", time_ns_3ms);
 
 	if (!scene->is_group) {
 		bool size_changed = scene_size_changed(scene);
@@ -1215,6 +1302,9 @@ static void scene_video_render(void *data, gs_effect_t *effect)
 
 	gs_blend_state_push();
 	gs_reset_blend_state();
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_begin_taken_time(scene, "scene", "render_all_items");
 
 	item = scene->first_item;
 	while (item) {
@@ -1226,8 +1316,13 @@ static void scene_video_render(void *data, gs_effect_t *effect)
 		if (item->user_visible || transition_active(item->hide_transition))
 			render_item(item);
 
+		pls_on_item_render(item); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+
 		item = item->next;
 	}
+
+	//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+	pls_end_taken_time(scene, "scene", "render_all_items", time_ns_3ms);
 
 	gs_blend_state_pop();
 
@@ -1637,6 +1732,8 @@ static void scene_save_item(obs_data_array_t *array, struct obs_scene_item *item
 	obs_data_set_obj(item_data, "hide_transition", hide_data);
 	obs_data_release(hide_data);
 
+	//PRISM/Rainny.liu/20251208/PRISM_PC-4445/When loading a scene item, store the source_uuid in the private settings.
+	obs_data_set_string(item->private_settings, "source_uuid", src_uuid);
 	obs_data_set_obj(item_data, "private_settings", item->private_settings);
 
 	obs_data_array_push_back(array, item_data);
@@ -1777,6 +1874,10 @@ static void apply_scene_item_audio_actions(struct obs_scene_item *item, float *b
 		}
 
 		item->visible = action.visible;
+		
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_on_item_attribute_changed(item, action.visible ? SHOW_ITEM : HIDE_ITEM, PROPERTY_UPDATED);
+
 		if (!item->visible)
 			deref_count++;
 
@@ -2670,6 +2771,10 @@ static obs_sceneitem_t *obs_scene_add_internal(obs_scene_t *scene, obs_source_t 
 	item->id = id ? id : ++scene->id_counter;
 	item->parent = scene;
 
+#ifdef PLS_UI_ACTION_STATS //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	item->action_helper_ptr = pls_create_action_helper(ACTION_HELPER_TYPE_SCENEITEM);
+#endif
+
 	//PRISM/Xiewei/20250108/add logs to trace item->parent
 	blog(LOG_INFO, "%s-%p: Bind new parent(%p)", __FUNCTION__, (void *)item, (void *)scene);
 
@@ -2834,6 +2939,13 @@ static void obs_sceneitem_destroy(obs_sceneitem_t *item)
 			gs_texrender_destroy(item->item_render);
 			obs_leave_graphics();
 		}
+
+		if (item->cropping_item_render) {
+			obs_enter_graphics();
+			gs_texrender_destroy(item->cropping_item_render);
+			obs_leave_graphics();
+		}
+
 		obs_data_release(item->private_settings);
 		obs_hotkey_pair_unregister(item->toggle_visibility);
 		pthread_mutex_destroy(&item->actions_mutex);
@@ -2846,6 +2958,10 @@ static void obs_sceneitem_destroy(obs_sceneitem_t *item)
 		if (item->source)
 			obs_source_release(item->source);
 		da_free(item->audio_actions);
+
+#ifdef PLS_UI_ACTION_STATS //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_free_action_helper(item->action_helper_ptr, ACTION_HELPER_TYPE_SCENEITEM);
+#endif
 
 		//PRISM/wangshaohui/20230724/#2093/check source alive
 		pls_remove_alive(item);
@@ -3651,6 +3767,9 @@ bool obs_sceneitem_set_visible(obs_sceneitem_t *item, bool visible)
 		pthread_mutex_unlock(&item->actions_mutex);
 	} else {
 		set_visibility(item, visible);
+
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_on_item_attribute_changed(item, visible ? SHOW_ITEM : HIDE_ITEM, PROPERTY_UPDATED);
 	}
 	return true;
 }
@@ -4123,6 +4242,10 @@ static void resize_group(obs_sceneitem_t *group, bool scene_resize)
 	if (os_atomic_load_long(&group->defer_group_resize) > 0)
 		return;
 
+	//PRISM/chenguoxi/20251212/PRISM_PC-4447/keep vertical group unchanged when dual output off
+	if (!pls_is_dual_output_on() && pls_is_vertical_group(group))
+		return;
+
 	//PRISM/Xiewei/20241111/PRISM_PC-1448/dual output
 	if (!resize_scene_base(scene, &minv, &maxv, &scale, pls_is_vertical_sceneitem(group)))
 		return;
@@ -4170,6 +4293,9 @@ obs_sceneitem_t *obs_scene_insert_group(obs_scene_t *scene, const char *name, ob
 {
 	if (!scene)
 		return NULL;
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(scene->source, "group_group");
 
 	/* don't allow groups or sub-items of other groups */
 	for (size_t i = count; i > 0; i--) {
@@ -4239,6 +4365,11 @@ obs_sceneitem_t *obs_scene_insert_group(obs_scene_t *scene, const char *name, ob
 	/* ------------------------- */
 
 	obs_scene_release(sub_scene);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(scene->source);
+	pls_on_source_property_render(scene->source, 0);
+
 	return item;
 }
 
@@ -4289,6 +4420,39 @@ obs_scene_t *obs_sceneitem_group_get_scene(const obs_sceneitem_t *item)
 	return (item && item->is_group) ? item->source->context.data : NULL;
 }
 
+//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+struct source_has_other_ref_param {
+	obs_sceneitem_t *item;
+	bool found;
+};
+//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+static bool source_has_other_ref_scene_enum_items_proc(obs_scene_t *scene, obs_sceneitem_t *item, void *ptr)
+{
+	UNUSED_PARAMETER(scene);
+	struct source_has_other_ref_param *param = ptr;
+	if (item != param->item && param->item->source == item->source)
+		param->found = true;
+	else if (obs_sceneitem_is_group(item))
+		pls_scene_enum_items_all(obs_sceneitem_group_get_scene(item),
+					 source_has_other_ref_scene_enum_items_proc, param);
+	return param->found ? false : true;
+}
+//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+static bool source_has_other_ref_enum_all_scene_proc(void *ptr, obs_source_t *source)
+{
+	struct source_has_other_ref_param *param = ptr;
+	obs_scene_t *scene = obs_scene_from_source(source);
+	pls_scene_enum_items_all(scene, source_has_other_ref_scene_enum_items_proc, param);
+	return param->found ? false : true;
+}
+//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+static bool source_has_other_ref(obs_sceneitem_t *item)
+{
+	struct source_has_other_ref_param param = {item, false};
+	pls_enum_all_scenes(source_has_other_ref_enum_all_scene_proc, &param);
+	return param.found;
+}
+
 void obs_sceneitem_group_ungroup(obs_sceneitem_t *item)
 {
 	if (!item || !item->is_group)
@@ -4299,10 +4463,16 @@ void obs_sceneitem_group_ungroup(obs_sceneitem_t *item)
 	obs_sceneitem_t *insert_after = item;
 	obs_sceneitem_t *first;
 	obs_sceneitem_t *last;
+	//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+	bool has_other_ref = source_has_other_ref(item);
 
 	signal_item_remove(scene, item);
 
 	full_lock(scene);
+
+	//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+	if (has_other_ref && obs_sceneitem_visible(item))
+		obs_source_remove_active_child(scene->source, item->source);
 
 	/* ------------------------- */
 
@@ -4380,6 +4550,12 @@ void obs_sceneitem_group_add_item_ex(obs_sceneitem_t *group, obs_sceneitem_t *it
 
 	full_lock(scene);
 	full_lock(groupscene);
+
+	//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+	if (obs_sceneitem_visible(item)) {
+		obs_source_remove_active_child(item->parent->source, item->source);
+		obs_source_add_active_child(group->source, item->source);
+	}
 
 	remove_group_transform(group, item);
 
@@ -4603,6 +4779,13 @@ bool obs_scene_reorder_items2(obs_scene_t *scene, struct obs_sceneitem_order_inf
 					break;
 				}
 
+				//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+				if (sub_item->parent && sub_item->parent != sub_scene &&
+				    obs_sceneitem_visible(sub_item)) {
+					obs_source_remove_active_child(sub_item->parent->source, sub_item->source);
+					obs_source_add_active_child(sub_scene->source, sub_item->source);
+				}
+
 				if (!sub_scene->first_item)
 					sub_scene->first_item = sub_item;
 
@@ -4628,6 +4811,11 @@ bool obs_scene_reorder_items2(obs_scene_t *scene, struct obs_sceneitem_order_inf
 			resize_group(info->item, false);
 			full_unlock(sub_scene);
 			obs_scene_release(sub_scene);
+		}
+		//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+		else if (item->parent && item->parent != scene && obs_sceneitem_visible(item)) {
+			obs_source_remove_active_child(item->parent->source, item->source);
+			obs_source_add_active_child(scene->source, item->source);
 		}
 
 		/* Move item hotkeys out of group */
@@ -4855,6 +5043,11 @@ void pls_sceneitem_group_ungroup(obs_sceneitem_t *item)
 	obs_sceneitem_t *insert_after = item;
 	obs_sceneitem_t *first;
 	obs_sceneitem_t *last;
+	//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+	bool has_other_ref = source_has_other_ref(item);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_changed(item->source, "ungroup_group");
 
 	signal_item_remove(scene, item);
 
@@ -4862,6 +5055,10 @@ void pls_sceneitem_group_ungroup(obs_sceneitem_t *item)
 	da_init(items);
 	full_lock(scene);
 	full_lock(subscene);
+
+	//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+	if (has_other_ref && obs_sceneitem_visible(item))
+		obs_source_remove_active_child(scene->source, item->source);
 
 	first = subscene->first_item;
 	last = first;
@@ -4904,6 +5101,10 @@ void pls_sceneitem_group_ungroup(obs_sceneitem_t *item)
 
 	//PRISM/wangshaohui/20250108/PRISM_PC-2070/wrong sceneitem list
 	is_items_normal(scene, __FUNCTION__);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(item->source);
+	pls_on_source_property_render(item->source, 0);
 
 	obs_sceneitem_release(item);
 }

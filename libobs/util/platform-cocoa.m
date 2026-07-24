@@ -361,38 +361,30 @@ uint64_t os_get_sys_free_size(void)
 int64_t os_get_free_space(const char *path)
 {
     if (path) {
-        NSURL *fileURL = [NSURL fileURLWithPath:@(path)];
+	
+	NSURL *fileURL = [NSURL fileURLWithPath:@(path)];
         // PRISM/cao.kewei/20240802/add log/start
         NSError *error = nil;
         if (![fileURL checkResourceIsReachableAndReturnError:&error]) {
             blog(LOG_ERROR, "Path is not reachable: %s", error.localizedDescription.UTF8String);
+	    return 0;
         }
-
-        NSArray *availableCapacityKeys = @[
-            NSURLVolumeAvailableCapacityKey, NSURLVolumeAvailableCapacityForImportantUsageKey,
-            NSURLVolumeAvailableCapacityForOpportunisticUsageKey
-        ];
-
-        NSDictionary *values = [fileURL resourceValuesForKeys:availableCapacityKeys error:&error];
-        if (error) {
-            blog(LOG_ERROR, "Error getting resource values: %s", error.localizedDescription.UTF8String);
-        }
-
-        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:fileURL.path error:&error];
-        if (attrs) {
-            NSNumber *freeSpace = [attrs objectForKey:NSFileSystemFreeSize];
-            blog(LOG_INFO, "Free disk space from NSFileManager: %lld", freeSpace.longLongValue);
-        }
-        // PRISM/cao.kewei/20240802/add log/end
-
-        NSNumber *availableImportantSpace = values[NSURLVolumeAvailableCapacityForImportantUsageKey];
-        NSNumber *availableSpace = values[NSURLVolumeAvailableCapacityKey];
-
-        if (availableImportantSpace.longValue > 0) {
-            return availableImportantSpace.longValue;
-        } else {
-            return availableSpace.longValue;
-        }
+	 
+	// PRISM/ai.guanghua/20251013//PRISM_PC-4147/resourceValuesForKeys method crashes
+	NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:fileURL.path
+										      error:&error];
+	if (error) {
+	    blog(LOG_ERROR, "Error getting file system attributes: %s", error.localizedDescription.UTF8String);
+	    return 0;
+	}
+	
+	// PRISM/ai.guanghua/20251013//PRISM_PC-4147/resourceValuesForKeys method crashes
+	if (attrs) {
+	    NSNumber *freeSpace = [attrs objectForKey:NSFileSystemFreeSize];
+	    if (freeSpace && [freeSpace isKindOfClass:[NSNumber class]]) {
+		return freeSpace.longLongValue;
+	    }
+	}
     }
 
     return 0;

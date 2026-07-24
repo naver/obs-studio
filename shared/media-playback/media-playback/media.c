@@ -379,6 +379,10 @@ void mp_media_next_audio(mp_media_t *m)
 	if (audio.format == AUDIO_FORMAT_UNKNOWN)
 		return;
 
+	//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+	if (m->is_deconnected)
+		return;
+
 	m->a_cb(m->opaque, &audio);
 }
 
@@ -494,6 +498,10 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 
 		d->got_first_keyframe = true;
 	}
+
+	//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+	if (m->is_deconnected)
+		return;
 
 	if (preload) {
 		if (m->seek_next_ts && m->v_seek_cb) {
@@ -617,8 +625,11 @@ bool mp_media_reset(mp_media_t *m, bool start)
 
 	if (!active && m->is_local_file && m->v_preload_cb)
 		mp_media_next_video(m, true);
-	if (stopping && m->stop_cb)
+	if (stopping && m->stop_cb && !m->is_deconnected) { //PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		blog(LOG_INFO, "%s: stop_cb triggered, opaque %p", __FUNCTION__, (void *)m->opaque);
 		m->stop_cb(m->opaque);
+	}
 
 	//PRISM/FanZirong/20231206/issue none/to reduce log
 	m->time_less_than_next_nums = 0;
@@ -883,7 +894,8 @@ static inline bool mp_media_thread(mp_media_t *m)
 
 		/* see note in mp_media_prepare_frames() for context on the
 		 * pointer check */
-		if (preload_frame && m->obsframe.data[0] && !is_active) {
+		//PRISM/chenguoxi/20260424/PRISM_PC-5977/short-circuit cb dispatch when disconnected to reduce UAF window
+		if (preload_frame && m->obsframe.data[0] && !is_active && !m->is_deconnected) {
 			m->v_preload_cb(m->opaque, &m->obsframe);
 		}
 
@@ -916,7 +928,9 @@ static void *mp_media_thread_start(void *opaque)
 
 	if (!mp_media_thread(m)) {
 		//PRISM/zengqin/20240111/#2943 #2940/to ignore send stop signal to bgm
-		if (m->stop_cb && !m->ignore_stop) {
+		if (m->stop_cb && !m->ignore_stop && !m->is_deconnected) {  //PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: stop_cb triggered, opaque %p", __FUNCTION__, (void *)m->opaque);
 			m->stop_cb(m->opaque);
 		}
 	}
@@ -1137,4 +1151,12 @@ void mp_media_seek(mp_media_t *m, int64_t pos)
 	pthread_mutex_unlock(&m->mutex);
 
 	os_sem_post(m->sem);
+}
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+extern void mp_media_disconnect(mp_media_t *c)
+{
+	if (!c)
+		return;
+	c->is_deconnected = true;
 }

@@ -98,6 +98,18 @@ static void a_free(void *ptr)
 
 static long num_allocs = 0;
 
+//PRISM/wangshaohui/20251225/#PRISM_PC-4586/check malloc errno
+void print_errno(size_t size)
+{
+	if (errno == ENOMEM) {
+		blog(LOG_ERROR, "%s (errno=%d: %s) failed to malloc memory (%zu Byte), the reason is no more memory",
+		     __FUNCTION__, errno, strerror(errno), size);
+	} else {
+		blog(LOG_ERROR, "%s (errno=%d: %s) failed to malloc memory (%zu Byte)", __FUNCTION__, errno,
+		     strerror(errno), size);
+	}
+}
+
 void *bmalloc(size_t size)
 {
 	if (!size) {
@@ -109,6 +121,7 @@ void *bmalloc(size_t size)
 
 	if (!ptr) {
 		//PRISM/WuLongyue/2023725/#1980/Exit app friendly
+		print_errno(size);
 		bcrash("Out of memory while trying to allocate %lu bytes", (unsigned long)size);
 	}
 
@@ -130,6 +143,7 @@ void *brealloc(void *ptr, size_t size)
 
 	if (!ptr) {
 		//PRISM/WuLongyue/2023725/#1980/Exit app friendly
+		print_errno(size);
 		bcrash("Out of memory while trying to allocate %lu bytes", (unsigned long)size);
 	}
 

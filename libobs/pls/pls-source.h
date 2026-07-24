@@ -8,6 +8,7 @@
 #pragma once
 
 #include "obs.h"
+#include "pls/pls-action-util.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,15 +119,21 @@ typedef enum {
 } AUDIO_COVER_STATUS;
 EXPORT AUDIO_COVER_STATUS pls_source_is_audio_has_cover(obs_source_t *source);
 
-
 //PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 EXPORT bool pls_source_free_resources(obs_source_t *source);
-
 
 EXPORT void pls_init_alive_module();
 EXPORT void pls_add_alive(void *s);
 EXPORT void pls_remove_alive(void *s);
 EXPORT bool pls_is_alive(void *s);
+
+EXPORT void pls_add_sampler_alive(void *s);
+EXPORT void pls_remove_sampler_alive(void *s);
+EXPORT bool pls_sampler_is_alive(void *s);
+
+EXPORT void pls_update_source_loading(obs_source_t *source, bool loading);
+EXPORT bool pls_is_source_loading(obs_source_t *source);
+EXPORT void pls_check_end_loading(obs_source_t *source);
 
 //PRISM/wangshaohui/20250408/PRISM_PC-1636/add source api for paid
 // this is for keyname in API, we should confuse its name.
@@ -135,6 +142,21 @@ EXPORT bool obs_source_check_settings_ex(obs_source_t *source, obs_data_t *outpu
 
 //PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 EXPORT bool pls_stop_ffmpeg_source(obs_source_t *source);
+
+//PRISM/lizhiyong/20251013/PRISM_PC-4169/crash when create source failed
+EXPORT bool pls_source_context_data_valid(obs_source_t *source);
+
+//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes -start
+struct pls_key_param_config {
+	const char *key;
+	enum obs_data_type type;
+};
+
+EXPORT bool pls_check_key_params_changed(obs_data_t *new_settings, obs_data_t *old_settings,
+					 const struct pls_key_param_config *key_params, size_t key_params_count,
+					 bool (*special_param_func)(obs_data_t *old_settings,
+								    obs_data_t *new_settings));
+//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes -end
 
 #ifdef __cplusplus
 }

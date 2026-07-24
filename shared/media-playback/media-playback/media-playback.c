@@ -174,3 +174,14 @@ bool media_playback_has_audio(media_playback_t *mp)
 	else
 		return mp->media.has_audio;
 }
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+extern void media_playback_disconnect(media_playback_t* mp)
+{
+	if (!mp)
+		return;
+	if (mp->is_cached)
+		mp_cache_disconnect(&mp->cache);
+	else
+		mp_media_disconnect(&mp->media);
+}

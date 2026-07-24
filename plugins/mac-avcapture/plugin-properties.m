@@ -255,26 +255,21 @@ bool properties_update_device(OBSAVCapture *capture, obs_property_t *property, o
 
     NSArray *filteredDevices;
 
-    // Do not sort devices for Capture Card source.
-    if (capture.isFastPath) {
-        filteredDevices = allDevices;
-    } else {
-        NSArray<NSString *> *priorityNames = @[@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3];
+    NSArray<NSString *> *priorityNames = @[@TEXT_PRISM_LENS_1, @TEXT_PRISM_LENS_2, @TEXT_PRISM_LENS_3];
 
-        NSArray *filteredArray = [allDevices
-            filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF.localizedName != 'PRISM Live Studio'"]];
+    NSArray *filteredArray = [allDevices
+        filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF.localizedName != 'PRISM Live Studio'"]];
 
-        NSArray<AVCaptureDevice *> *sortedDevices =
-            [filteredArray sortedArrayUsingComparator:^NSComparisonResult(id _Nonnull obj1, id _Nonnull obj2) {
-                NSNumber *index1 = [[NSNumber alloc]
-                    initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *) obj1).localizedName]];
-                NSNumber *index2 = [[NSNumber alloc]
-                    initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *) obj2).localizedName]];
-                return [index1 compare:index2];
-            }];
+    NSArray<AVCaptureDevice *> *sortedDevices =
+        [filteredArray sortedArrayUsingComparator:^NSComparisonResult(id _Nonnull obj1, id _Nonnull obj2) {
+            NSNumber *index1 = [[NSNumber alloc]
+                initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *) obj1).localizedName]];
+            NSNumber *index2 = [[NSNumber alloc]
+                initWithUnsignedLongLong:[priorityNames indexOfObject:((AVCaptureDevice *) obj2).localizedName]];
+            return [index1 compare:index2];
+        }];
 
-        filteredDevices = sortedDevices;
-    }
+    filteredDevices = sortedDevices;
 
     for (AVCaptureDevice *device in filteredDevices) {
         obs_property_list_add_string(property, device.localizedName.UTF8String, device.uniqueID.UTF8String);

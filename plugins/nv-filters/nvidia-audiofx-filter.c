@@ -104,6 +104,15 @@ struct nvidia_audio_data {
 	pthread_t nvafx_thread;
 	pthread_mutex_t nvafx_mutex;
 
+	//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit --begin
+	bool nvafx_reiniting;
+	bool nvafx_reinit_thread_started;
+	pthread_t nvafx_reinit_thread;
+	pthread_mutex_t nvafx_pending_mutex;
+	char *nvafx_pending_method;
+	float nvafx_pending_intensity;
+	//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit --end
+
 	/* PCM buffers */
 	float *copy_buffers[MAX_PREPROC_CHANNELS];
 	float *nvafx_segment_buffers[MAX_PREPROC_CHANNELS];
@@ -111,6 +120,9 @@ struct nvidia_audio_data {
 	/* output data */
 	struct obs_audio_data output_audio;
 	DARRAY(float) output_data;
+
+	//PRISM/chenguoxi/20251205/PRISM_PC-4654/check nvfilter destory
+	volatile bool is_destoryed;
 };
 
 static const char *nvidia_audio_name(void *unused)
@@ -122,6 +134,25 @@ static const char *nvidia_audio_name(void *unused)
 static void nvidia_audio_destroy(void *data)
 {
 	struct nvidia_audio_data *ng = data;
+
+	//PRISM/chenguoxi/20251205/PRISM_PC-4654/check nvfilter destory
+	if (ng->is_destoryed) {
+		return;
+	}
+	ng->is_destoryed = true;
+
+	//PRISM/eric.li/20260414/PRISM_PC-5700/join reinit thread before destroy --begin
+	if (ng->nvidia_sdk_dir_found) {
+		bool need_join = false;
+		pthread_mutex_lock(&ng->nvafx_pending_mutex);
+		need_join = ng->nvafx_reinit_thread_started;
+		ng->nvafx_reinit_thread_started = false;
+		pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+		if (need_join)
+			pthread_join(ng->nvafx_reinit_thread, NULL);
+	}
+	bfree(ng->nvafx_pending_method);
+	//PRISM/eric.li/20260414/PRISM_PC-5700/join reinit thread before destroy --end
 
 	if (ng->nvidia_sdk_dir_found)
 		pthread_mutex_lock(&ng->nvafx_mutex);
@@ -152,11 +183,27 @@ static void nvidia_audio_destroy(void *data)
 		pthread_join(ng->nvafx_thread, NULL);
 		pthread_mutex_unlock(&ng->nvafx_mutex);
 		pthread_mutex_destroy(&ng->nvafx_mutex);
+		//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit
+		pthread_mutex_destroy(&ng->nvafx_pending_mutex);
 	}
 
 	bfree(ng->copy_buffers[0]);
 	deque_free(&ng->info_buffer);
 	da_free(ng->output_data);
+	//PRISM/chenguoxi/20251205/PRISM_PC-4654/check nvfilter destory
+	//bfree(ng);
+}
+
+//PRISM/chenguoxi/20251205/PRISM_PC-4654/check nvfilter destory
+static void nvidia_audio_destroy2(void *data)
+{
+	struct nvidia_audio_data *ng = data;
+	if (ng == NULL) {
+		return;
+	}
+
+	nvidia_audio_destroy(data);
+
 	bfree(ng);
 }
 
@@ -384,6 +431,7 @@ static bool nvidia_audio_initialize_internal(void *data)
 			}
 			os_atomic_set_bool(&ng->reinit_done, true);
 		}
+
 	}
 	return true;
 
@@ -486,6 +534,85 @@ static void set_nv_model(void *data, const char *method)
 	ng->model = buffer;
 }
 
+//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit --begin
+static void *nvidia_audio_reinitialize(void *data)
+{
+	struct nvidia_audio_data *ng = data;
+
+	for (;;) {
+		char *latest_method = NULL;
+		float latest_intensity = 0.0f;
+
+		pthread_mutex_lock(&ng->nvafx_pending_mutex);
+		latest_method = ng->nvafx_pending_method;
+		latest_intensity = ng->nvafx_pending_intensity;
+		ng->nvafx_pending_method = NULL;
+		if (!latest_method || strcmp(ng->fx, latest_method) == 0) {
+			if (ng->use_nvafx && latest_intensity != ng->intensity_ratio) {
+				NvAFX_Status err;
+				bool intensity_updated = true;
+				pthread_mutex_lock(&ng->nvafx_mutex);
+				for (size_t i = 0; i < ng->channels; i++) {
+					err = NvAFX_SetFloat(ng->handle[i], NVAFX_PARAM_INTENSITY_RATIO,
+							     latest_intensity);
+					if (err != NVAFX_STATUS_SUCCESS) {
+						do_log(LOG_ERROR,
+						       "NvAFX_SetFloat(Intensity Ratio: %f) failed, error %i",
+						       latest_intensity, err);
+						intensity_updated = false;
+						break;
+					}
+				}
+				if (intensity_updated)
+					ng->intensity_ratio = latest_intensity;
+				pthread_mutex_unlock(&ng->nvafx_mutex);
+			}
+			if (latest_method)
+				bfree(latest_method);
+			ng->nvafx_reiniting = false;
+			pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+			return NULL;
+		}
+		pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+
+		pthread_mutex_lock(&ng->nvafx_mutex);
+		pthread_mutex_lock(&nvidia_afx_initializer_mutex);
+		os_atomic_set_bool(&ng->reinit_done, false);
+
+		bfree((void *)ng->fx);
+		ng->fx = latest_method;
+		bfree(ng->model);
+		ng->model = NULL;
+		set_nv_model(ng, ng->fx);
+		ng->intensity_ratio = latest_intensity;
+
+		for (int i = 0; i < (int)ng->channels; i++) {
+			if (ng->handle[i]) {
+				if (NvAFX_DestroyEffect(ng->handle[i]) != NVAFX_STATUS_SUCCESS) {
+					do_log(LOG_ERROR, "FX failed to be destroyed.");
+					ng->use_nvafx = false;
+					break;
+				}
+				ng->handle[i] = NULL;
+			}
+		}
+
+		if (ng->use_nvafx && !nvidia_audio_initialize_internal(data))
+			ng->use_nvafx = false;
+
+		pthread_mutex_unlock(&nvidia_afx_initializer_mutex);
+		pthread_mutex_unlock(&ng->nvafx_mutex);
+
+		if (!ng->use_nvafx) {
+			pthread_mutex_lock(&ng->nvafx_pending_mutex);
+			ng->nvafx_reiniting = false;
+			pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+			return NULL;
+		}
+	}
+}
+//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit --end
+
 static void nvidia_audio_update(void *data, obs_data_t *s)
 {
 	struct nvidia_audio_data *ng = data;
@@ -509,45 +636,76 @@ static void nvidia_audio_update(void *data, obs_data_t *s)
 
 	/*-------------------------------------------------------------------*/
 	/* STAGE 2 : this is executed only after the FX has been initialized */
+	//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit --begin
 	if (ng->nvafx_initialized) {
-		/* updating the intensity of the FX */
-		if (intensity != ng->intensity_ratio && (strcmp(ng->fx, method) == 0)) {
+		/* keep only latest snapshot while worker is running */
+		pthread_mutex_lock(&ng->nvafx_pending_mutex);
+		if (ng->nvafx_reiniting) {
+			if (ng->nvafx_pending_method) {
+				if (strcmp(ng->nvafx_pending_method, method) != 0) {
+					bfree(ng->nvafx_pending_method);
+					ng->nvafx_pending_method = bstrdup(method);
+				}
+			} else {
+				/* Worker already dequeued current request; always keep latest user selection. */
+				ng->nvafx_pending_method = bstrdup(method);
+			}
+			ng->nvafx_pending_intensity = intensity;
+			pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+			return;
+		}
+		pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+
+		/* swapping to a new FX requires a reinitialization (async) */
+		if (strcmp(ng->fx, method) != 0) {
+			//PRISM/eric.li/20260414/PRISM_PC-5700/reap previous reinit thread then create new
+			pthread_mutex_lock(&ng->nvafx_pending_mutex);
+			if (ng->nvafx_reinit_thread_started && !ng->nvafx_reiniting) {
+				ng->nvafx_reinit_thread_started = false;
+				pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+				pthread_join(ng->nvafx_reinit_thread, NULL);
+				pthread_mutex_lock(&ng->nvafx_pending_mutex);
+			}
+
+			bfree(ng->nvafx_pending_method);
+			ng->nvafx_pending_method = bstrdup(method);
+			ng->nvafx_pending_intensity = intensity;
+			ng->nvafx_reiniting = true;
+			int err = pthread_create(&ng->nvafx_reinit_thread, NULL, nvidia_audio_reinitialize, ng);
+			if (err == 0) {
+				ng->nvafx_reinit_thread_started = true;
+			} else {
+				do_log(LOG_ERROR, "pthread_create(nvidia_audio_reinitialize) failed, error %d", err);
+				bfree(ng->nvafx_pending_method);
+				ng->nvafx_pending_method = NULL;
+				ng->nvafx_reiniting = false;
+			}
+			pthread_mutex_unlock(&ng->nvafx_pending_mutex);
+			return;
+		}
+
+		/* updating intensity when no method switch is pending */
+		if (intensity != ng->intensity_ratio) {
 			NvAFX_Status err;
-			ng->intensity_ratio = intensity;
+			bool intensity_updated = true;
 			pthread_mutex_lock(&ng->nvafx_mutex);
 			for (size_t i = 0; i < ng->channels; i++) {
-				err = NvAFX_SetFloat(ng->handle[i], NVAFX_PARAM_INTENSITY_RATIO, ng->intensity_ratio);
+				err = NvAFX_SetFloat(ng->handle[i], NVAFX_PARAM_INTENSITY_RATIO,
+						     intensity);
 				if (err != NVAFX_STATUS_SUCCESS) {
-					do_log(LOG_ERROR, "NvAFX_SetFloat(Intensity Ratio: %f) failed, error %i",
-					       ng->intensity_ratio, err);
-					nvidia_audio_destroy(ng);
+					do_log(LOG_ERROR,
+					       "NvAFX_SetFloat(Intensity Ratio: %f) failed, error %i",
+					       intensity, err);
+					intensity_updated = false;
+					break;
 				}
 			}
-			pthread_mutex_unlock(&ng->nvafx_mutex);
-		}
-		/* swapping to a new FX requires a reinitialization */
-		if ((strcmp(ng->fx, method) != 0)) {
-			pthread_mutex_lock(&ng->nvafx_mutex);
-			bfree((void *)ng->fx);
-			ng->fx = bstrdup(method);
-			ng->intensity_ratio = intensity;
-			set_nv_model(ng, method);
-			os_atomic_set_bool(&ng->reinit_done, false);
-			for (int i = 0; i < (int)ng->channels; i++) {
-				/* Destroy previous FX */
-				if (NvAFX_DestroyEffect(ng->handle[i]) != NVAFX_STATUS_SUCCESS) {
-					do_log(LOG_ERROR, "FX failed to be destroyed.");
-					nvidia_audio_destroy(ng);
-				} else {
-					ng->handle[i] = NULL;
-				}
-			}
-			if (!nvidia_audio_initialize_internal(data))
-				nvidia_audio_destroy(ng);
-
+			if (intensity_updated)
+				ng->intensity_ratio = intensity;
 			pthread_mutex_unlock(&ng->nvafx_mutex);
 		}
 	}
+	//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit --end
 }
 
 static void *nvidia_audio_create(obs_data_t *settings, obs_source_t *filter)
@@ -574,6 +732,8 @@ static void *nvidia_audio_create(obs_data_t *settings, obs_source_t *filter)
 		ng->fx = NULL;
 
 		pthread_mutex_init(&ng->nvafx_mutex, NULL);
+		//PRISM/eric.li/20260414/PRISM_PC-5700/async method reinit
+		pthread_mutex_init(&ng->nvafx_pending_mutex, NULL);
 
 		info("NVAFX SDK redist path was found here %s", sdk_path);
 		// set FX
@@ -744,6 +904,12 @@ static void reset_data(struct nvidia_audio_data *ng)
 static struct obs_audio_data *nvidia_audio_filter_audio(void *data, struct obs_audio_data *audio)
 {
 	struct nvidia_audio_data *ng = data;
+
+	//PRISM/chenguoxi/20251205/PRISM_PC-4654/check nvfilter destory
+	if (ng->is_destoryed) {
+		return audio;
+	}
+
 	struct nv_audio_info info;
 	size_t segment_size = ng->frames * sizeof(float);
 	size_t out_size;
@@ -848,7 +1014,7 @@ struct obs_source_info nvidia_audiofx_filter = {
 	.output_flags = OBS_SOURCE_AUDIO,
 	.get_name = nvidia_audio_name,
 	.create = nvidia_audio_create,
-	.destroy = nvidia_audio_destroy,
+	.destroy = nvidia_audio_destroy2, //PRISM/chenguoxi/20251205/PRISM_PC-4654/check nvfilter destory
 	.update = nvidia_audio_update,
 	.filter_audio = nvidia_audio_filter_audio,
 	.get_defaults = nvidia_audio_defaults,

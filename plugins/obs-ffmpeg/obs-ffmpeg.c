@@ -346,8 +346,22 @@ static void register_encoder_if_available(struct obs_encoder_info *info, const c
 //PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 extern void ffmpeg_free_resource(void *source);
 
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+// Async destroy system
+extern bool init_async_destroy_system(void);
+extern void shutdown_async_destroy_system(void);
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end
+
 bool obs_module_load(void)
 {
+	//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+	// Initialize async destroy system
+	if (!init_async_destroy_system()) {
+		blog(LOG_ERROR, "Failed to initialize async destroy system");
+		return false;
+	}
+	//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end
+
 	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 	struct pls_source_info pls_info = {0};
 	pls_info.free_resources = ffmpeg_free_resource;
@@ -435,4 +449,9 @@ void obs_module_unload(void)
 #ifdef _WIN32
 	amf_unload();
 #endif
+
+	//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+	// Shutdown async destroy system
+	shutdown_async_destroy_system();
+	//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end
 }

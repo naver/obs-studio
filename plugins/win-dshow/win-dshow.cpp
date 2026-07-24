@@ -26,11 +26,8 @@
 //#define _DEBUG_AV_DATA
 //PRISM/Xiewei/20230712/noissue/add log end
 
-//PRISM/Liuying/20230808/new ux : add prism lens source
-#include "pls/pls-source.h"
-#include "pls/pls-properties.h"
+//PRISM/Zengqin/20231229/#3744/notify ui to not support HDR color space.
 #include "pls/pls-obs-api.h"
-#include "tchar.h"
 
 //PRISM/Xiewei/20240621/none/add more logs to trace video data
 #include "pls/data-monitor/pls-data-monitor.h"
@@ -38,6 +35,11 @@
 
 //PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 #include <pls/pls-base.h>
+
+//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+#include "pls/pls-lens-helper.h"
+#include <pls/pls-source.h>
+#include <pls/pls-lens-event.h>
 
 /*
  * TODO:
@@ -63,6 +65,8 @@ using namespace DShow;
 #define LAST_RESOLUTION   "last_resolution"
 #define BUFFERING_VAL     "buffering"
 #define FLIP_IMAGE        "flip_vertically"
+//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+#define FLIP_IMAGE_H      "flip_horizontally"
 #define AUDIO_OUTPUT_MODE "audio_output_mode"
 #define USE_CUSTOM_AUDIO  "use_custom_audio_device"
 #define AUDIO_DEVICE_ID   "audio_device_id"
@@ -89,6 +93,9 @@ using namespace DShow;
 #define TEXT_BUFFERING_ON   obs_module_text("Buffering.Enable")
 #define TEXT_BUFFERING_OFF  obs_module_text("Buffering.Disable")
 #define TEXT_FLIP_IMAGE     obs_module_text("FlipVertically")
+//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+#define TEXT_FLIP_IMAGE_H   obs_module_text("FlipHorizontally")
+
 #define TEXT_AUTOROTATION   obs_module_text("Autorotation")
 #define TEXT_HW_DECODE      obs_module_text("HardwareDecode")
 #define TEXT_AUDIO_MODE     obs_module_text("AudioOutputMode")
@@ -168,11 +175,15 @@ enum class BufferingType : int64_t {
 	Off,
 };
 
+//PRISM/FanZirong/20260210/none/print log
+static THREAD_LOCAL int ffmpeg_log_print_count = 0;
+
 void ffmpeg_log(void *bla, int level, const char *msg, va_list args)
 {
 	DStr str;
 	if (level == AV_LOG_WARNING) {
-		dstr_copy(str, "warning: ");
+		//PRISM/FanZirong/20260210/none/print log
+		dstr_copy(str, "[win-dshow]ffmpeg_log warning: ");
 	} else if (level == AV_LOG_ERROR) {
 		/* only print first of this message to avoid spam */
 		static bool suppress_app_field_spam = false;
@@ -182,10 +193,11 @@ void ffmpeg_log(void *bla, int level, const char *msg, va_list args)
 
 			suppress_app_field_spam = true;
 		}
-
-		dstr_copy(str, "error:   ");
+		//PRISM/FanZirong/20260210/none/print log
+		dstr_copy(str, "[win-dshow]ffmpeg_log error:   ");
 	} else if (level < AV_LOG_ERROR) {
-		dstr_copy(str, "fatal:   ");
+		//PRISM/FanZirong/20260210/none/print log
+		dstr_copy(str, "[win-dshow]ffmpeg_log fatal:   ");
 	} else {
 		return;
 	}
@@ -194,8 +206,13 @@ void ffmpeg_log(void *bla, int level, const char *msg, va_list args)
 	if (dstr_end(str) == '\n')
 		dstr_resize(str, str->len - 1);
 
-	//PRISM/Zengqin/20230726/none/silence log
-	blogva(LOG_DEBUG, str, args);
+	//PRISM/FanZirong/20260210/none/print log
+	if (ffmpeg_log_print_count < 50) {
+		blogva(LOG_INFO, str, args);
+		ffmpeg_log_print_count++;
+	} else {
+		blogva(LOG_DEBUG, str, args);
+	}
 	av_log_default_callback(bla, level, msg, args);
 }
 
@@ -252,11 +269,18 @@ struct DShowInput {
 	bool deactivateWhenNotShowing = false;
 	bool deviceHasAudio = false;
 	bool deviceHasSeparateAudioFilter = false;
-	bool flip = false;
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+	std::atomic<bool> flip = false;
+	//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+	std::atomic<bool> flip_h = false;
+
 	//PRISM/Xiewei/20240621/none/add more logs to trace video data
 	std::atomic<bool> active = false;
-	bool autorotation = true;
-	bool hw_decode = false;
+
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+	std::atomic<bool> autorotation = true;
+	std::atomic<bool> hw_decode = false;
+
 	//PRISM/Xiewei/20230712/noissue/add log
 	std::atomic<bool> is_first_video = true;
 	std::atomic<bool> is_first_audio = true;
@@ -264,8 +288,6 @@ struct DShowInput {
 	//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
 	bool is_need_transform_pts = false;
 	long long first_video_pts = 0;
-	long long first_audio_pts = 0;
-	//PRISM/FanZirong/end/20240131/#3752/one of av device is lens, transform PTS to start from 0
 
 	//PRISM/Xiewei/202312125/noissue/add debug log start
 #if defined(_DEBUG_AV_DATA)
@@ -275,7 +297,7 @@ struct DShowInput {
 	std::atomic<std::optional<int64_t>> m_lastVideoFramePts;
 #endif
 	//PRISM/Xiewei/202312125/noissue/add debug log end
-	char video_device[MAX_PATH];
+	char video_device[MAX_PATH] = {0};
 
 	Decoder audio_decoder;
 	Decoder video_decoder;
@@ -283,8 +305,11 @@ struct DShowInput {
 	VideoConfig videoConfig;
 	AudioConfig audioConfig;
 
+	//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
+	CriticalSection colorMutex;
 	enum video_colorspace cs;
 	obs_source_frame2 frame;
+
 	obs_source_audio audio;
 	long lastRotation = 0;
 
@@ -294,8 +319,6 @@ struct DShowInput {
 	WinHandle thread;
 	CriticalSection mutex;
 	vector<Action> actions;
-
-	//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
 	HANDLE thread_exit_event = nullptr;
 
 	//PRISM/Xiewei/20220119/#11238/resolve ui block, close config dialog
@@ -310,6 +333,19 @@ struct DShowInput {
 
 	//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
 	int decodeErrorNum = 0;
+
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	obs_source_t *lens_source = nullptr;
+
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes start
+	CriticalSection oldSettingMutex;
+	obs_data_t *oldSettings = nullptr;
+
+	std::atomic<bool> onlyUpdateNonKeyParams = false;
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes end
+
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	std::atomic<enum obs_source_failed_status_sub_code> activate_result = OBS_SOURCE_STATUS_SUCCESS;
 
 	inline void QueueAction(Action action)
 	{
@@ -378,6 +414,10 @@ struct DShowInput {
 			},
 			(void *)source);
 		//PRISM/Xiewei/20240621/none/add more logs to trace video data end
+
+		//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+		// Initialize key params snapshot (whether active or not, need to initialize)
+		SaveOldSetting(settings);
 	}
 
 	inline ~DShowInput()
@@ -420,9 +460,23 @@ struct DShowInput {
 			data_monitor.reset();
 		}
 
+		//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+		if (lens_source) {
+			obs_source_release(lens_source);
+			lens_source = nullptr;
+		}
+
 		//PRISM/FanZirong/20240920/none/#6103/put it after the thread ends to avoid crash
 		//PRISM/Xiewei/20240621/none/add more logs to trace video data
 		DeviceNotification::instance()->Unsubscribe(subscribeId);
+
+		//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+		if (oldSettings) {
+			obs_data_release(oldSettings);
+			oldSettings = nullptr;
+		}
+
+		pls_unregister_lens_events(this);
 	}
 
 	void OnEncodedVideoData(enum AVCodecID id, unsigned char *data, size_t size, long long ts);
@@ -448,6 +502,15 @@ struct DShowInput {
 
 	//PRISM/Xiewei/20220119/#11238/resolve ui block, close config dialog before exit
 	void closeDialogWindow(DWORD processId, DWORD threadId);
+
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+	void UpdateNonKeyParamsOnly(obs_data_t *settings);
+	void SaveOldSetting(obs_data_t *settings);
+	bool CheckKeyParamsChanged(obs_data_t *settings);
+
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	void dshow_capture_status_notify(enum obs_source_failed_status_sub_code code);
+	void subscribe_device_event(obs_data_t *settings);
 };
 
 static DWORD CALLBACK DShowThread(LPVOID ptr)
@@ -459,6 +522,9 @@ static DWORD CALLBACK DShowThread(LPVOID ptr)
 	CoInitialize(nullptr);
 	dshowInput->DShowLoop();
 	CoUninitialize();
+
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	reset_lens_source(dshowInput->lens_source);
 	return 0;
 }
 
@@ -507,14 +573,25 @@ void DShowInput::DShowLoop()
 			settings = obs_source_get_settings(source);
 
 			//PRISM/Xiewei/20240315/#4686/catch an internal exception
+			//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+			activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_UNKNOWN;
 			try {
 				if (!Activate(settings)) {
 					obs_source_output_video2(source, nullptr);
+
+					//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+					pls_update_source_loading(source, false);
 				}
 			} catch (...) {
 				do_log(LOG_WARNING, "Failed to Activate device: An internal exception happend.");
 				obs_source_output_video2(source, nullptr);
+
+				//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+				pls_update_source_loading(source, false);
 			}
+			//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+			dshow_capture_status_notify(activate_result);
+
 			if (block)
 				SetEvent(activated_event);
 			obs_data_release(settings);
@@ -523,6 +600,8 @@ void DShowInput::DShowLoop()
 
 		case Action::Deactivate:
 			Deactivate();
+			//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+			pls_update_source_loading(source, false);
 			break;
 
 		case Action::Shutdown:
@@ -569,6 +648,10 @@ void DShowInput::DShowLoop()
 		}
 		//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
 		ProcessMessages();
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/FanZirong/20260112/PRISM_PC-5167/action log
+		pls_on_source_property_updated(source);
+#endif
 	}
 	//PRISM/FanZirong/20241113/PRISM_PC_NELO-45/avoid block
 	device.ShutdownGraph();
@@ -586,6 +669,12 @@ void DShowInput::closeDialogWindow(DWORD processId, DWORD threadId)
 			until users close config dialog manually.");
 		assert(false && "close config dialog failed");
 	}
+}
+
+//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+void DShowInput::dshow_capture_status_notify(enum obs_source_failed_status_sub_code code)
+{
+	pls_source_send_notify(source, OBS_SOURCE_FAILED_STATUS, code);
 }
 
 #define FPS_HIGHEST 0LL
@@ -700,30 +789,44 @@ void DShowInput::OnEncodedVideoData(enum AVCodecID id, unsigned char *data, size
 	}
 
 	bool got_output;
-	bool success = ffmpeg_decode_video(video_decoder, data, size, &ts, cs, frame.range, &frame, &got_output);
-	if (!success) {
-		//PRISM/Xiewei/20230712/none/silence log
-		//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
-		if (decodeErrorNum % 10000 == 0) {
-			do_log(LOG_DEBUG, "Error decoding video");
+
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+	{
+		CriticalScope scope(colorMutex);
+		bool success =
+			ffmpeg_decode_video(video_decoder, data, size, &ts, cs, frame.range, &frame, &got_output);
+		if (!success) {
+			//PRISM/Xiewei/20230712/none/silence log
+			//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
+			if (decodeErrorNum % 10000 == 0) {
+				do_log(LOG_WARNING, "Error decoding video");
+			}
+			decodeErrorNum++;
+			return;
 		}
-		decodeErrorNum++;
-		return;
 	}
 
 	if (got_output) {
 		frame.timestamp = (uint64_t)ts * 100;
 		if (flip)
 			frame.flip = !frame.flip;
+		//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+		obs_source_set_flip_horizontal(source, flip_h);
+
 #if LOG_ENCODED_VIDEO_TS
 		blog(LOG_DEBUG, "video ts: %llu", frame.timestamp);
 #endif
 		obs_source_output_video2(source, &frame);
+
+		//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+		pls_update_source_loading(source, false);
 	}
 }
 
 void DShowInput::OnReactivate()
 {
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-Key param changes
+	onlyUpdateNonKeyParams = false;
 	SetActive(true);
 }
 
@@ -734,6 +837,7 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data, siz
 	if (is_first_video) {
 		is_first_video = false;
 		DStr fmt = GetVideoFormatName(videoConfig.format);
+
 		//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
 		first_video_pts = startTime;
 
@@ -747,6 +851,8 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data, siz
 		if (data_monitor)
 			data_monitor->Resum();
 		monitor_video.Reset();
+		//PRISM/FanZirong/20260210/none/print log
+		ffmpeg_log_print_count = 0;
 	}
 
 	//PRISM/Xiewei/20240621/none/add more logs to trace video data
@@ -760,7 +866,6 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data, siz
 		startTime -= first_video_pts;
 		endTime -= first_video_pts;
 	}
-	//PRISM/FanZirong/end/20240131/#3752/one of av device is lens, transform PTS to start from 0
 
 	//PRISM/Xiewei/202312125/noissue/add debug log start
 #if defined(_DEBUG_AV_DATA)
@@ -814,6 +919,7 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data, siz
 	frame.height = cy_abs;
 	frame.format = ConvertVideoFormat(config.format);
 	frame.flip = flip;
+
 	frame.flags = OBS_SOURCE_FRAME_LINEAR_ALPHA;
 
 	/* YUV DIBS are always top-down */
@@ -905,8 +1011,13 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data, siz
 		/* TODO: other formats */
 		return;
 	}
+	//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+	obs_source_set_flip_horizontal(source, flip_h);
 
 	obs_source_output_video2(source, &frame);
+
+	//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+	pls_update_source_loading(source, false);
 
 	UNUSED_PARAMETER(endTime); /* it's the enndd tiimmes! */
 }
@@ -951,8 +1062,6 @@ void DShowInput::OnAudioData(const AudioConfig &config, unsigned char *data, siz
 	//PRISM/Xiewei/20230712/noissue/add log
 	if (is_first_audio) {
 		is_first_audio = false;
-		//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
-		first_audio_pts = startTime;
 
 		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 		char source_p[50];
@@ -960,13 +1069,11 @@ void DShowInput::OnAudioData(const AudioConfig &config, unsigned char *data, siz
 		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}, {"source", source_p}};
 		do_logex(false, LOG_INFO, fields, 2, "first audio received. channels: %d, format: %d", config.channels,
 			 config.format);
+		//PRISM/FanZirong/20260226/PRISM_PC-5385/add action logs
+#ifdef PLS_UI_ACTION_STATS
+		PLS_UI_ACTION_OBS("first audio received. channels: %d, format: %d", config.channels, config.format);
+#endif
 	}
-	//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
-	if (is_need_transform_pts) {
-		startTime -= first_audio_pts;
-		endTime -= first_audio_pts;
-	}
-	//PRISM/FanZirong/end/20240131/#3752/one of av device is lens, transform PTS to start from 0
 
 	//PRISM/Xiewei/202312125/noissue/add debug log start
 #if defined(_DEBUG_AV_DATA)
@@ -1203,67 +1310,26 @@ inline void DShowInput::SetupBuffering(obs_data_t *settings)
 	obs_source_set_async_decoupled(source, IsDecoupled(videoConfig));
 }
 
-//PRISM/Xiewei/20230712/noissue/add log
-//static DStr GetVideoFormatName(VideoFormat format);
-
-//PRISM/Xiewei/20230616/prism cam issues: 748/reorder devicel ist
-static bool EnumReorderedVideoDevices(std::vector<VideoDevice> &devices)
-{
-	bool ok = Device::EnumVideoDevices(devices);
-	if (!ok)
-		return false;
-
-	static const int vcam_number = 4;
-	VideoDevice prism_vcam[vcam_number] = {};
-	const wchar_t *device_name[vcam_number] = {L"PRISM Live Studio", L"PRISM Lens 1", L"PRISM Lens 2",
-						   L"PRISM Lens 3"};
-
-	auto find_func = [device_name](const wchar_t *name) {
-		for (int i = 0; i < vcam_number; i++) {
-			if (wstrcmpi(name, device_name[i]) == 0)
-				return i;
-		}
-		return -1;
-	};
-
-	size_t idx = 0;
-	for (auto iter = devices.begin(); iter != devices.end();) {
-		auto i = find_func((*iter).name.c_str());
-		if (i != -1) {
-			if (i != 0)
-				prism_vcam[i] = (*iter);
-			iter = devices.erase(iter);
-			continue;
-		}
-		iter++;
-	}
-
-	for (int i = vcam_number - 1; i >= 0; i--) {
-		if (!prism_vcam[i].name.empty())
-			devices.insert(devices.begin(), prism_vcam[i]);
-	}
-
-	return true;
-}
-
-//PRISM/Xiewei/20230906/voc/set ARGB as default format for PRISM lens devices
-static bool IsPRISMLensDevice(const std::wstring &device)
-{
-	const static std::set<std::wstring> lens = {L"PRISM Lens 1", L"PRISM Lens 2", L"PRISM Lens 3"};
-	return (lens.find(device) != lens.end());
-}
-
 bool DShowInput::UpdateVideoConfig(obs_data_t *settings)
 {
 	string video_device_id = obs_data_get_string(settings, VIDEO_DEVICE_ID);
 	deactivateWhenNotShowing = obs_data_get_bool(settings, DEACTIVATE_WNS);
 	flip = obs_data_get_bool(settings, FLIP_IMAGE);
+	//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+	flip_h = obs_data_get_bool(settings, FLIP_IMAGE_H);
+
 	autorotation = obs_data_get_bool(settings, AUTOROTATION);
 	hw_decode = obs_data_get_bool(settings, HW_DECODE);
 
 	DeviceId id;
 	if (!DecodeDeviceId(id, video_device_id.c_str())) {
 		blog(LOG_WARNING, "%s: DecodeDeviceId failed", obs_source_get_name(source));
+		//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+		if (!video_device_id.empty()) {
+			activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_FOUND;
+		} else {
+			activate_result = OBS_SOURCE_STATUS_SUCCESS;
+		}
 		return false;
 	}
 
@@ -1275,12 +1341,13 @@ bool DShowInput::UpdateVideoConfig(obs_data_t *settings)
 	sprintf_s(video_device, "%s", (const char *)name_utf8);
 
 	PropertiesData data;
-	//PRISM/Xiewei/20230616/prism cam issues: 748 /reorder devicel ist
-	EnumReorderedVideoDevices(data.devices);
+	Device::EnumVideoDevices(data.devices);
 	VideoDevice dev;
 	if (!data.GetDevice(dev, video_device_id.c_str())) {
 		//PRISM/Xiewei/20230712/noissue/add log
 		do_log(LOG_WARNING, "%s: data.GetDevice failed", obs_source_get_name(source));
+		//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+		activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_FOUND;
 		return false;
 	}
 
@@ -1296,6 +1363,8 @@ bool DShowInput::UpdateVideoConfig(obs_data_t *settings)
 			//PRISM/Xiewei/20230712/noissue/add log
 			do_log(LOG_WARNING, "%s: ResolutionValid failed, %s", obs_source_get_name(source),
 			       resolution.c_str());
+			//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+			activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_POPERTY;
 			return false;
 		}
 
@@ -1318,6 +1387,8 @@ bool DShowInput::UpdateVideoConfig(obs_data_t *settings)
 			//PRISM/Xiewei/20230712/noissue/add log
 			do_log(LOG_WARNING, "%s: Video format match failed, %s", obs_source_get_name(source),
 			       GetVideoFormatName(format)->array);
+			//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+			activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_POPERTY;
 			return false;
 		}
 
@@ -1331,13 +1402,9 @@ bool DShowInput::UpdateVideoConfig(obs_data_t *settings)
 	videoConfig.cy_abs = abs(cy);
 	videoConfig.cy_flip = cy < 0;
 	videoConfig.frameInterval = interval;
-	//PRISM/Xiewei/20230906/voc/set ARGB as default format for PRISM lens devices
-	if (IsPRISMLensDevice(id.name) && VideoFormat::Any == format) {
-		videoConfig.useDefaultConfig = false;
-		videoConfig.internalFormat = VideoFormat::ARGB;
-	} else {
-		videoConfig.internalFormat = format;
-	}
+
+	//PRISM/FanZirong/20251022/PRISM_PC-4256/set format
+	videoConfig.internalFormat = format;
 
 	deviceHasAudio = dev.audioAttached;
 	deviceHasSeparateAudioFilter = dev.separateAudioFilter;
@@ -1512,16 +1579,78 @@ inline enum video_range_type DShowInput::GetColorRange(obs_data_t *settings) con
 	return VIDEO_RANGE_DEFAULT;
 }
 
+//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+void DShowInput::subscribe_device_event(obs_data_t *settings)
+{
+	//PRISM/Xiewei/20240621/none/add more logs to trace video data start
+	string video_device_id = obs_data_get_string(settings, VIDEO_DEVICE_ID);
+	DeviceId id;
+	if (DecodeDeviceId(id, video_device_id.c_str())) {
+		BPtr<char> name_utf8;
+		os_wcs_to_utf8_ptr(id.name.c_str(), id.name.size(), &name_utf8);
+		DeviceNotification::instance()->Unsubscribe(subscribeId);
+		subscribeId = DeviceNotification::instance()->Subscribe([this, path = id.path](const std::wstring &id,
+											       DeviceEvent e) {
+			if (0 == wstrcmpi(id.c_str(), path.c_str())) {
+				do_log(LOG_INFO, "device %s", (DeviceEvent::Inserted == e) ? "inserted" : "removed");
+				if (data_monitor)
+					data_monitor->Reset();
+				//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+				if (e == DeviceEvent::Removed) {
+					activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_REMOVED;
+					//PRISM/FanZirong/20250317/PRISM_PC-5481/clear output when device removed to avoid last frame
+					obs_source_output_video2(source, nullptr);
+					dshow_capture_status_notify(activate_result);
+				} else if (e == DeviceEvent::Inserted) {
+					//PRISM/FanZirong/20251201/PRISM_PC-4548/Automatic activation upon device insertion
+					if (active && (!deactivateWhenNotShowing || obs_source_showing(source))) {
+						//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-Key param changes
+						onlyUpdateNonKeyParams = false;
+						SetActive(true);
+					} else if (activate_result ==
+						   OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_REMOVED) {
+						activate_result = OBS_SOURCE_STATUS_SUCCESS;
+						dshow_capture_status_notify(activate_result);
+					}
+				}
+			}
+		});
+	}
+}
+
 inline bool DShowInput::Activate(obs_data_t *settings)
 {
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-Key param changes
+	bool use_lens_v = use_lens_video(settings);
+	if (onlyUpdateNonKeyParams && !use_lens_v &&
+	    pls_source_get_failed_status_sub_code(source) == OBS_SOURCE_STATUS_SUCCESS) {
+		do_log(LOG_INFO, "onlyUpdateNonKeyParams=%d", onlyUpdateNonKeyParams.load());
+		UpdateNonKeyParamsOnly(settings);
+		return true;
+	}
+
+	//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+	//because lens source will render logo soon even no video, so no loading
+	if (!use_lens_v)
+		pls_update_source_loading(source, true);
+
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	reset_lens_source(lens_source);
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	pls_unregister_lens_events(this);
+
 	if (!device.ResetGraph()) {
 		obs_source_set_audio_active(source, false);
 		return false;
 	}
 
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	subscribe_device_event(settings);
+
 	//PRISM/Xiewei/20230712/noissue/add log
 	is_first_video = true;
 	is_first_audio = true;
+
 	//PRISM/Xiewei/202312125/noissue/add debug log start
 #if defined(_DEBUG_AV_DATA)
 	m_lastAudioOriginPts = std::nullopt;
@@ -1535,7 +1664,21 @@ inline bool DShowInput::Activate(obs_data_t *settings)
 	//PRISM/FanZirong/20240823/PRISM_PC-1042/reduce log
 	decodeErrorNum = 0;
 
-	if (!UpdateVideoConfig(settings)) {
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	int lens_video_idx = -1;
+	bool use_lens_video = false;
+	bool use_lens_audio = false;
+	check_use_lens(source, lens_source, settings, use_lens_video, lens_video_idx, use_lens_audio);
+	if (use_lens_video) {
+		// now UpdateVideoConfig will not be called, so we need to set the value out of UpdateVideoConfig
+		deactivateWhenNotShowing = obs_data_get_bool(settings, DEACTIVATE_WNS);
+	}
+
+	//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+	if (!use_lens_video)
+		obs_source_output_video2(source, nullptr);
+
+	if (!use_lens_video && !UpdateVideoConfig(settings)) {
 		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
 		blogex(false, LOG_WARNING, fields, 1, "%s: Video configuration failed", obs_source_get_name(source));
@@ -1543,52 +1686,45 @@ inline bool DShowInput::Activate(obs_data_t *settings)
 		return false;
 	}
 
-	if (!UpdateAudioConfig(settings)) {
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2 (keep the order in if)
+	if (!use_lens_audio && !UpdateAudioConfig(settings)) {
 		//PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 		const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}};
 		blogex(false, LOG_WARNING, fields, 1, "%s: Audio configuration failed, ignoring audio",
 		       obs_source_get_name(source));
 	}
 
-	if (!device.ConnectFilters())
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2 (keep the order in if)
+	if (!device.ConnectFilters() && !use_lens_video)
 		return false;
+
+	//PRISM/Xiewei/20230712/noissue/add log
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2 (keep the order in if)
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	Result ret = device.Start();
+	if (ret != Result::Success && !use_lens_video) {
+		do_log(LOG_WARNING, "start device failed");
+		if (ret == Result::InUse)
+			activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_IN_USED;
+		return false;
+	}
 
 	//PRISM/FanZirong/start/20240131/#3752/one of av device is lens, transform PTS to start from 0
 	is_need_transform_pts = false;
-	bool useCustomAudio = obs_data_get_bool(settings, USE_CUSTOM_AUDIO);
-	if (useCustomAudio) {
-		bool audioDeviceIsLens = (audioConfig.name.find(L"PRISM Lens") != std::wstring::npos);
-		bool videoDeviceIsLens = (videoConfig.name.find(L"PRISM Lens") != std::wstring::npos);
-
-		if ((audioDeviceIsLens && !videoDeviceIsLens) || (!audioDeviceIsLens && videoDeviceIsLens)) {
-			do_log(LOG_INFO, "only %s device use lens", audioDeviceIsLens ? "audio" : "video");
-			is_need_transform_pts = true;
-		}
-	}
-	//PRISM/FanZirong/end/20240131/#3752/one of av device is lens, transform PTS to start from 0
-
-	//PRISM/Xiewei/20230712/noissue/add log
-	if (device.Start() != Result::Success) {
-		do_log(LOG_WARNING, "start device failed");
-		return false;
+	if (use_lens_audio && !use_lens_video) {
+		do_log(LOG_INFO, "only audio device use lens");
+		is_need_transform_pts = true;
+		force_new_timestamp(lens_source);
 	}
 
 	//PRISM/Xiewei/20240621/none/add more logs to trace video data start
-	BPtr<char> name_utf8;
-	os_wcs_to_utf8_ptr(videoConfig.name.c_str(), videoConfig.name.size(), &name_utf8);
-	DeviceNotification::instance()->Unsubscribe(subscribeId);
-	subscribeId = DeviceNotification::instance()->Subscribe(
-		[this, path = videoConfig.path](const std::wstring &id, DeviceEvent e) {
-			if (0 == wstrcmpi(id.c_str(), path.c_str())) {
-				do_log(LOG_INFO, "device %s", (DeviceEvent::Inserted == e) ? "inserted" : "removed");
-				if (data_monitor)
-					data_monitor->Reset();
-			}
-		});
 	if (data_monitor)
 		data_monitor->Reset();
 	if (videoConfig.frameInterval > 0)
 		monitor_video.SetFPS(10000000.0 / double(videoConfig.frameInterval));
+
+	BPtr<char> name_utf8;
+	os_wcs_to_utf8_ptr(videoConfig.name.c_str(), videoConfig.name.size(), &name_utf8);
 	monitor_video.SetDevName((const char *)name_utf8);
 	monitor_video.SetContext((void *)source);
 	//PRISM/Xiewei/20240621/none/add more logs to trace video data end
@@ -1625,14 +1761,16 @@ inline bool DShowInput::Activate(obs_data_t *settings)
 	}
 
 	//PRISM/Zengqin/20231229/#3744/notify ui to not support HDR color space.
-	if ((videoConfig.format == VideoFormat::ARGB || videoConfig.format == VideoFormat::XRGB ||
-	     videoConfig.format == VideoFormat::RGB24) &&
-	    (trc == VIDEO_TRC_PQ || trc == VIDEO_TRC_HLG)) {
-		pls_source_send_notify(source, OBS_SOURCE_PROPERTY_ERROR_STATUS, 1);
-		not_support_hdr = true;
-	} else {
-		pls_source_send_notify(source, OBS_SOURCE_PROPERTY_ERROR_STATUS, 0);
+	if (use_lens_video) {
 		not_support_hdr = false;
+	} else {
+		if ((videoConfig.format == VideoFormat::ARGB || videoConfig.format == VideoFormat::XRGB ||
+		     videoConfig.format == VideoFormat::RGB24) &&
+		    (trc == VIDEO_TRC_PQ || trc == VIDEO_TRC_HLG)) {
+			not_support_hdr = true;
+		} else {
+			not_support_hdr = false;
+		}
 	}
 	obs_data_set_bool(settings, "not_support_hdr", not_support_hdr);
 
@@ -1640,23 +1778,141 @@ inline bool DShowInput::Activate(obs_data_t *settings)
 	char source_p[50];
 	snprintf(source_p, sizeof(source_p), "%p", source);
 	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}, {"source", source_p}};
-	do_logex(false, LOG_INFO, fields, 2, "sucess to init OBS camera")
+	do_logex(false, LOG_INFO, fields, 2, "sucess to init OBS camera");
 
-		//PRISM/FanZirong/20231227/noissue/add log
-		uint64_t source_update_time = os_gettime_ns();
+	//PRISM/FanZirong/20231227/noissue/add log
+	uint64_t source_update_time = os_gettime_ns();
 	obs_source_notify_update(source, source_update_time);
+
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	if (not_support_hdr) {
+		activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_HDR;
+	} else {
+		activate_result = OBS_SOURCE_STATUS_SUCCESS;
+	}
+
+	if (use_lens_video) {
+		auto active_cb = [this, lens_video_idx](int lens, bool actived) {
+			if (lens < 0 || lens >= MAX_LENS_COUNT)
+				return;
+			if (lens_video_idx == lens) {
+				if (actived) {
+					activate_result = OBS_SOURCE_STATUS_SUCCESS;
+					dshow_capture_status_notify(activate_result);
+				} else {
+					activate_result = OBS_SOURCE_DSHOW_CAPTURE_LENS_FAILED_SUB_NOT_ACTIVE;
+					dshow_capture_status_notify(activate_result);
+				}
+			}
+		};
+
+		LensEvents evts;
+		evts.active_cb = active_cb;
+		pls_unregister_lens_events(this);
+		pls_register_lens_events(this, evts);
+
+		if (lens_video_idx != -1 && !pls_is_lens_active(lens_video_idx)) {
+			activate_result = OBS_SOURCE_DSHOW_CAPTURE_LENS_FAILED_SUB_NOT_ACTIVE;
+		}
+	}
 
 	return true;
 }
 
 inline void DShowInput::Deactivate()
 {
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	reset_lens_source(lens_source);
+	//PRISM/FanZirong/20251127/PRISM_PC-4592/Added invalid status of source in source list
+	pls_unregister_lens_events(this);
+
 	device.ResetGraph();
 	obs_source_output_video2(source, nullptr);
 
 	//PRISM/Xiewei/20240621/none/add more logs to trace video data
 	if (data_monitor)
 		data_monitor->Reset();
+}
+
+//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+void DShowInput::UpdateNonKeyParamsOnly(obs_data_t *settings)
+{
+	deactivateWhenNotShowing = obs_data_get_bool(settings, DEACTIVATE_WNS);
+	flip = obs_data_get_bool(settings, FLIP_IMAGE);
+	flip_h = obs_data_get_bool(settings, FLIP_IMAGE_H);
+	autorotation = obs_data_get_bool(settings, AUTOROTATION);
+	hw_decode = obs_data_get_bool(settings, HW_DECODE);
+
+	{
+		CriticalScope scope(colorMutex);
+		// Update color space and range
+		cs = GetColorSpace(settings);
+	}
+
+	const enum video_range_type range = GetColorRange(settings);
+
+	enum video_trc trc = VIDEO_TRC_DEFAULT;
+	switch (cs) {
+	case VIDEO_CS_DEFAULT:
+	case VIDEO_CS_601:
+	case VIDEO_CS_709:
+	case VIDEO_CS_SRGB:
+		trc = VIDEO_TRC_SRGB;
+		break;
+	case VIDEO_CS_2100_PQ:
+		trc = VIDEO_TRC_PQ;
+		break;
+	case VIDEO_CS_2100_HLG:
+		trc = VIDEO_TRC_HLG;
+		break;
+	}
+
+	{
+		CriticalScope scope(colorMutex);
+		frame.range = range;
+		frame.trc = trc;
+
+		bool success = video_format_get_parameters_for_format(cs, range, ConvertVideoFormat(videoConfig.format),
+								      frame.color_matrix, frame.color_range_min,
+								      frame.color_range_max);
+		if (!success) {
+			blog(LOG_ERROR,
+			     "Failed to get video format parameters for "
+			     "video format %u",
+			     cs);
+		}
+	}
+
+	SetupBuffering(settings);
+
+	if ((videoConfig.format == VideoFormat::ARGB || videoConfig.format == VideoFormat::XRGB ||
+	     videoConfig.format == VideoFormat::RGB24) &&
+	    (trc == VIDEO_TRC_PQ || trc == VIDEO_TRC_HLG)) {
+		activate_result = OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_HDR;
+		not_support_hdr = true;
+	} else {
+		activate_result = OBS_SOURCE_STATUS_SUCCESS;
+		not_support_hdr = false;
+	}
+	obs_data_set_bool(settings, "not_support_hdr", not_support_hdr);
+}
+
+//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+bool DShowInput::CheckKeyParamsChanged(obs_data_t *settings)
+{
+	CriticalScope scope(oldSettingMutex);
+	if (!oldSettings) {
+		return true;
+	}
+
+	static const pls_key_param_config key_params[] = {
+		{VIDEO_DEVICE_ID, OBS_DATA_STRING},   {RES_TYPE, OBS_DATA_NUMBER},
+		{RESOLUTION, OBS_DATA_STRING},        {VIDEO_FORMAT, OBS_DATA_NUMBER},
+		{AUDIO_DEVICE_ID, OBS_DATA_STRING},   {USE_CUSTOM_AUDIO, OBS_DATA_BOOLEAN},
+		{AUDIO_OUTPUT_MODE, OBS_DATA_NUMBER}, {FRAME_INTERVAL, OBS_DATA_NUMBER}};
+
+	return pls_check_key_params_changed(settings, oldSettings, key_params,
+					    sizeof(key_params) / sizeof(key_params[0]), nullptr);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1670,11 +1926,24 @@ static void proc_activate(void *data, calldata_t *cd)
 {
 	bool activate = calldata_bool(cd, "active");
 	DShowInput *input = reinterpret_cast<DShowInput *>(data);
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/FanZirong/20260112/PRISM_PC-5167/action log
+	if (activate) {
+		pls_on_source_property_changed(input->source, "proc_activate");
+		pls_set_property_update_delay(true);
+	}
+#endif
+
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-Key param changes
+	input->onlyUpdateNonKeyParams = false;
 	input->SetActive(activate);
 }
 
 static void *CreateDShowInput(obs_data_t *settings, obs_source_t *source)
 {
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	adapt_lens_settings(settings);
+
 	DShowInput *dshow = nullptr;
 
 	try {
@@ -1695,14 +1964,24 @@ static void DestroyDShowInput(void *data)
 
 static void UpdateDShowInput(void *data, obs_data_t *settings)
 {
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/FanZirong/20260112/PRISM_PC-5167/action log
+	pls_set_property_update_delay(true);
+#endif
+
 	DShowInput *input = reinterpret_cast<DShowInput *>(data);
-	if (input->active)
+	if (input->active) {
+		//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+		input->onlyUpdateNonKeyParams = !input->CheckKeyParamsChanged(settings);
+		input->SaveOldSetting(settings);
 		input->QueueActivate(settings);
+	}
 }
 
 static void GetDShowDefaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, FRAME_INTERVAL, FPS_MATCHING);
+	//PRISM/FanZirong/20250825/PRISM_PC-3614/Modify the default configuration
 	obs_data_set_default_int(settings, RES_TYPE, ResType_Preferred);
 	obs_data_set_default_int(settings, VIDEO_FORMAT, (int)VideoFormat::Any);
 	obs_data_set_default_bool(settings, "active", true);
@@ -1711,6 +1990,20 @@ static void GetDShowDefaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, AUDIO_OUTPUT_MODE, (int)AudioMode::Capture);
 	obs_data_set_default_bool(settings, AUTOROTATION, true);
 	obs_data_set_default_bool(settings, HW_DECODE, false);
+}
+
+//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-key param changes
+void DShowInput::SaveOldSetting(obs_data_t *settings)
+{
+	CriticalScope scope(oldSettingMutex);
+	if (!oldSettings) {
+		oldSettings = obs_data_create();
+		GetDShowDefaults(oldSettings);
+	} else {
+		obs_data_clear(oldSettings);
+	}
+
+	obs_data_apply(oldSettings, settings);
 }
 
 struct Resolution {
@@ -1929,6 +2222,9 @@ static bool DeviceSelectionChanged(obs_properties_t *props, obs_property_t *p, o
 	string id = obs_data_get_string(settings, VIDEO_DEVICE_ID);
 	string old_id = obs_data_get_string(settings, LAST_VIDEO_DEV_ID);
 
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	on_selected_device_changed(id, props);
+
 	bool device_list_updated = UpdateDeviceList(p, id);
 
 	if (!data->GetDevice(device, id.c_str()))
@@ -1954,6 +2250,12 @@ static bool DeviceSelectionChanged(obs_properties_t *props, obs_property_t *p, o
 
 	/* only refresh properties if device legitimately changed */
 	if (!id.size() || !old_id.size() || id != old_id) {
+		//PRISM/FanZirong/20250923/PRISM_PC-3614/Modify the default configuration
+		// After switching devices, the default mode is ResType_Custom and the maximum resolution is used.
+		// It need to clear LAST_RESOLUTION.
+		obs_data_set_int(settings, RES_TYPE, ResType_Custom);
+		obs_data_set_string(settings, LAST_RESOLUTION, "");
+
 		p = obs_properties_get(props, RES_TYPE);
 		ResTypeChanged(props, p, settings);
 		obs_data_set_string(settings, LAST_VIDEO_DEV_ID, id.c_str());
@@ -2041,7 +2343,7 @@ static bool AddAudioDevice(obs_property_t *device_list, const AudioDevice &devic
 
 	//PRISM/Xiewei/20240520/#5406/add log start
 	const auto &caps = device.caps;
-	if (std::string(name->array ? name : "").find("PRISM Lens audio") != std::string::npos) {
+	if (device.path.find(LENS_PATH_PREFIX_W) != std::wstring::npos) {
 		for (size_t i = 0; i < caps.size(); i++) {
 			std::string log;
 			auto info = caps[i];
@@ -2086,6 +2388,73 @@ static bool ResTypeChanged(obs_properties_t *props, obs_property_t *p, obs_data_
 	obs_property_set_enabled(p, enabled);
 
 	if (val == ResType_Custom) {
+		// PRISM//FanZirong//20250923//PRISM_PC-3614//Modify the default configuration
+		// If the resolution has not been selected before, the resolution closest to 1920x1080 will be automatically selected.
+		// If multiple resolutions have the same distance, prioritize landscape orientation and resolutions larger than 1920x1080
+		string last_res = obs_data_get_string(settings, LAST_RESOLUTION);
+		PropertiesData *data = (PropertiesData *)obs_properties_get_param(props);
+		const char *id = obs_data_get_string(settings, VIDEO_DEVICE_ID);
+		VideoDevice device;
+		if (last_res.empty() && data && data->GetDevice(device, id)) {
+			vector<Resolution> resolutions;
+			for (const VideoInfo &cap : device.caps)
+				AddCap(resolutions, cap);
+			if (!resolutions.empty()) {
+				const int targetWidth = 1920;
+				const int targetHeight = 1080;
+				const int targetPixels = targetWidth * targetHeight;
+
+				Resolution bestRes(0, 0);
+				int bestDistance = INT_MAX;
+				bool isLandscape = false;
+
+				for (auto it = resolutions.rbegin(); it != resolutions.rend(); ++it) {
+					const Resolution &res = *it;
+					// If the exact 1920x1080 resolution is found, use it directly and jump out of the loop
+					if (res.cx == targetWidth && res.cy == targetHeight) {
+						bestRes = res;
+						break;
+					}
+
+					// Calculate distance to target resolution
+					int distance = abs(res.cx * res.cy - targetPixels);
+					bool currentIsLandscape = (res.cx >= res.cy);
+
+					bool shouldSelect = false;
+
+					if (bestRes.cx == 0) {
+						// First resolution
+						shouldSelect = true;
+					} else if (distance < bestDistance) {
+						// Closer distance
+						shouldSelect = true;
+					} else if (distance == bestDistance) {
+						// If the distance is the same, horizontal screen is preferred
+						if (currentIsLandscape && !isLandscape) {
+							shouldSelect = true;
+						} else if (currentIsLandscape == isLandscape) {
+							// All horizontal or all vertical screens, choose a screen larger than 1920x1080
+							if (res.cx * res.cy > targetPixels &&
+							    bestRes.cx * bestRes.cy <= targetPixels) {
+								shouldSelect = true;
+							}
+						}
+					}
+
+					if (shouldSelect) {
+						bestRes = res;
+						bestDistance = distance;
+						isLandscape = currentIsLandscape;
+					}
+				}
+
+				if (bestRes.cx > 0) {
+					string bestResStr = to_string(bestRes.cx) + "x" + to_string(bestRes.cy);
+					obs_data_set_string(settings, RESOLUTION, bestResStr.c_str());
+				}
+			}
+		}
+
 		p = obs_properties_get(props, RESOLUTION);
 		DeviceResolutionChanged(props, p, settings);
 	} else {
@@ -2356,7 +2725,8 @@ static bool CustomAudioClicked(obs_properties_t *props, obs_property_t *p, obs_d
 static bool ActivateClicked(obs_properties_t *, obs_property_t *p, void *data)
 {
 	DShowInput *input = reinterpret_cast<DShowInput *>(data);
-
+	//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-Key param changes
+	input->onlyUpdateNonKeyParams = false;
 	if (input->active) {
 		input->SetActive(false);
 		obs_property_set_description(p, TEXT_ACTIVATE);
@@ -2370,6 +2740,8 @@ static bool ActivateClicked(obs_properties_t *, obs_property_t *p, void *data)
 
 static obs_properties_t *GetDShowProperties(void *obj)
 {
+	pls_init_lens_resolution(); //PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+
 	DShowInput *input = reinterpret_cast<DShowInput *>(obj);
 	obs_properties_t *ppts = obs_properties_create();
 	PropertiesData *data = new PropertiesData;
@@ -2383,8 +2755,8 @@ static obs_properties_t *GetDShowProperties(void *obj)
 
 	obs_property_set_modified_callback(p, DeviceSelectionChanged);
 
-	//PRISM/Xiewei/20230616/prism cam issues: 748/reorder devicel ist
-	EnumReorderedVideoDevices(data->devices);
+	Device::EnumVideoDevices(data->devices);
+	insert_lens_video_devices(data->devices); //PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
 	for (const VideoDevice &device : data->devices)
 		AddDevice(p, device);
 
@@ -2400,6 +2772,9 @@ static obs_properties_t *GetDShowProperties(void *obj)
 
 	obs_properties_add_bool(ppts, DEACTIVATE_WNS, TEXT_DWNS);
 
+	//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+	obs_properties_add_bool(ppts, FLIP_IMAGE, TEXT_FLIP_IMAGE);
+	obs_properties_add_bool(ppts, FLIP_IMAGE_H, TEXT_FLIP_IMAGE_H);
 	/* ------------------------------------- */
 	/* video settings */
 
@@ -2442,8 +2817,6 @@ static obs_properties_t *GetDShowProperties(void *obj)
 
 	obs_property_set_long_description(p, obs_module_text("Buffering.ToolTip"));
 
-	obs_properties_add_bool(ppts, FLIP_IMAGE, TEXT_FLIP_IMAGE);
-
 	obs_properties_add_bool(ppts, AUTOROTATION, TEXT_AUTOROTATION);
 
 	obs_properties_add_bool(ppts, HW_DECODE, TEXT_HW_DECODE);
@@ -2452,6 +2825,7 @@ static obs_properties_t *GetDShowProperties(void *obj)
 	/* audio settings */
 
 	Device::EnumAudioDevices(data->audioDevices);
+	insert_lens_audio_devices(data->audioDevices); //PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
 
 	p = obs_properties_add_list(ppts, AUDIO_OUTPUT_MODE, TEXT_AUDIO_MODE, OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_INT);
@@ -2471,11 +2845,6 @@ static obs_properties_t *GetDShowProperties(void *obj)
 
 	for (const AudioDevice &device : data->audioDevices)
 		AddAudioDevice(p, device);
-
-	//PRISM/Zengqin/20231229/#3744/notify ui to not support HDR color space.
-	if (input) {
-		pls_source_send_notify(input->source, OBS_SOURCE_PROPERTY_ERROR_STATUS, input->not_support_hdr);
-	}
 
 	return ppts;
 }
@@ -2519,8 +2888,35 @@ static void ShowDShowInput(void *data)
 {
 	DShowInput *input = reinterpret_cast<DShowInput *>(data);
 
-	if (input->deactivateWhenNotShowing && input->active)
+	if (input->deactivateWhenNotShowing && input->active) {
+		//PRISM/FanZirong/20251125/PRISM_PC-4540/avoid reactivating DShow device for non-Key param changes
+		input->onlyUpdateNonKeyParams = false;
 		input->QueueAction(Action::Activate);
+	}
+}
+
+//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+static uint32_t lens_v2_width(void *data)
+{
+	struct DShowInput *s = (struct DShowInput *)data;
+	auto ret = s->lens_source && s->active.load() ? obs_source_get_width(s->lens_source) : 0;
+	return ret;
+}
+
+//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+static uint32_t lens_v2_height(void *data)
+{
+	struct DShowInput *s = (struct DShowInput *)data;
+	auto ret = s->lens_source && s->active.load() ? obs_source_get_height(s->lens_source) : 0;
+	return ret;
+}
+
+//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+static void lens_v2_render(void *data, gs_effect_t *effect)
+{
+	struct DShowInput *s = (struct DShowInput *)data;
+	if (s->lens_source && s->active.load())
+		obs_source_video_render(s->lens_source);
 }
 
 void RegisterDShowSource()
@@ -2540,250 +2936,13 @@ void RegisterDShowSource()
 	info.get_defaults = GetDShowDefaults;
 	info.get_properties = GetDShowProperties;
 	info.icon_type = OBS_ICON_TYPE_CAMERA;
-	obs_register_source(&info);
-}
 
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static bool EnumReorderedLensVideoDevices(std::vector<VideoDevice> &devices)
-{
-	bool ok = Device::EnumVideoDevices(devices);
-	if (!ok)
-		return false;
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	//Because we call pls_set_lens_camera(true) after creating lens_source and it will not be released until destructure function is called.
+	//Below functions will not be called until pls_set_lens_camera(true) is set. So in below functions there is no mult-thread issue even there is no mutex for lens_source.
+	info.get_width = lens_v2_width;
+	info.get_height = lens_v2_height;
+	info.video_render = lens_v2_render;
 
-	static const int vcam_number = 3;
-	const wchar_t *device_name[vcam_number] = {_T(TEXT_PRISM_LENS_1), _T(TEXT_PRISM_LENS_2), _T(TEXT_PRISM_LENS_3)};
-
-	auto find_func = [device_name](const wchar_t *name) {
-		for (int i = 0; i < vcam_number; i++) {
-			if (wstrcmpi(name, device_name[i]) == 0)
-				return i;
-		}
-		return -1;
-	};
-	std::vector<VideoDevice> prismLensDevices;
-	for (auto iter = devices.begin(); iter != devices.end(); iter++) {
-		auto i = find_func((*iter).name.c_str());
-		if (i == -1) {
-			continue;
-		}
-		prismLensDevices.push_back((*iter));
-	}
-	devices.swap(prismLensDevices);
-	return true;
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-template<typename T> static string GetDeviceId(const T &device)
-{
-	DStr name, path, device_id;
-
-	dstr_from_wcs(name, device.name.c_str());
-	dstr_from_wcs(path, device.path.c_str());
-
-	encode_dstr(path);
-
-	dstr_copy_dstr(device_id, name);
-	encode_dstr(device_id);
-	dstr_cat(device_id, ":");
-	dstr_cat_dstr(device_id, path);
-	return device_id->array;
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static bool PrismLensDeviceSelectionChanged(void *obj, obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
-{
-	DShowInput *input = reinterpret_cast<DShowInput *>(obj);
-
-	string id = obs_data_get_string(settings, VIDEO_DEVICE_ID);
-	string oldId = obs_data_get_string(settings, LAST_VIDEO_DEV_ID);
-	DeviceSelectionChanged(props, p, settings);
-
-	if (id == oldId) {
-		return false;
-	}
-
-	string subStr = id.substr(0, strlen(TEXT_PRISM_LENS_1));
-	wstring audioName;
-	if (0 == subStr.compare(TEXT_PRISM_LENS_1)) {
-		audioName = _T(TEXT_PRISM_LENS_AUDIO_1);
-	} else if (0 == subStr.compare(TEXT_PRISM_LENS_2)) {
-		audioName = _T(TEXT_PRISM_LENS_AUDIO_2);
-	} else if (0 == subStr.compare(TEXT_PRISM_LENS_3)) {
-		audioName = _T(TEXT_PRISM_LENS_AUDIO_3);
-	}
-
-	PropertiesData *data = (PropertiesData *)obs_properties_get_param(props);
-	vector<AudioDevice> devices = data->audioDevices;
-	for (auto iter = devices.cbegin(); iter != devices.cend(); iter++) {
-		wstring name = (*iter).name;
-		if (0 == name.compare(audioName)) {
-			string audioDeviceId = GetDeviceId<AudioDevice>(*iter);
-			obs_data_set_string(settings, AUDIO_DEVICE_ID, audioDeviceId.c_str());
-			if (!obs_data_has_default_value(settings, AUDIO_DEVICE_ID)) {
-				obs_data_set_default_string(settings, AUDIO_DEVICE_ID, audioDeviceId.c_str());
-			}
-			obs_source_update(input->source, settings);
-		}
-	}
-
-	return true;
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static bool PrismLensCustomAudioClicked(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
-{
-	bool useCustomAudio = obs_data_get_bool(settings, USE_CUSTOM_AUDIO);
-	p = obs_properties_get(props, AUDIO_DEVICE_ID);
-	obs_property_set_enabled(p, useCustomAudio);
-	return true;
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static string GetVideoDeviceDefaultValue(wstring videoDeviceName, const std::vector<VideoDevice> &devices)
-{
-	for (auto iter = devices.cbegin(); iter != devices.cend(); iter++) {
-		wstring name = (*iter).name;
-		if (0 == name.compare(videoDeviceName)) {
-			return GetDeviceId<VideoDevice>(*iter);
-		}
-	}
-
-	return string();
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static obs_properties_t *GetPrismLensInternalProperties(void *obj, const char *keyTip, wstring lensName)
-{
-	DShowInput *input = reinterpret_cast<DShowInput *>(obj);
-	obs_properties_t *ppts = obs_properties_create();
-	PropertiesData *data = new PropertiesData;
-
-	data->input = input;
-
-	obs_properties_set_param(ppts, data, PropertiesDataDestroy);
-
-	obs_property_t *p = obs_properties_add_list(ppts, VIDEO_DEVICE_ID, TEXT_PRISM_LENS_DEVICE, OBS_COMBO_TYPE_LIST,
-						    OBS_COMBO_FORMAT_STRING);
-	obs_property_set_modified_callback2(p, PrismLensDeviceSelectionChanged, obj);
-
-	EnumReorderedLensVideoDevices(data->devices);
-	Device::EnumAudioDevices(data->audioDevices);
-
-	for (const VideoDevice &device : data->devices)
-		AddDevice(p, device);
-
-	if (!data->devices.empty()) {
-		OBSDataAutoRelease settings = obs_source_get_settings(input->source);
-		string deviceId = GetVideoDeviceDefaultValue(lensName, data->devices);
-		if (!obs_data_has_default_value(settings, VIDEO_DEVICE_ID)) {
-			obs_data_set_default_string(settings, VIDEO_DEVICE_ID, deviceId.c_str());
-			PrismLensDeviceSelectionChanged(obj, ppts, p, settings);
-			obs_source_update(input->source, settings);
-		}
-		if (!obs_data_has_user_value(settings, VIDEO_DEVICE_ID)) {
-			obs_data_set_string(settings, VIDEO_DEVICE_ID, deviceId.c_str());
-		}
-	}
-
-	const char *activateText = TEXT_ACTIVATE;
-	if (input) {
-		if (input->active)
-			activateText = TEXT_DEACTIVATE;
-	}
-
-	obs_properties_add_button(ppts, "activate", activateText, ActivateClicked);
-	pls_properties_add_tips(ppts, "tip", keyTip);
-
-	/* audio settings */
-
-	p = obs_properties_add_bool(ppts, USE_CUSTOM_AUDIO, TEXT_CUSTOM_AUDIO);
-
-	obs_property_set_modified_callback(p, PrismLensCustomAudioClicked);
-	p = obs_properties_add_list(ppts, AUDIO_DEVICE_ID, TEXT_PRISM_LENS_AUDIO_DEVICE, OBS_COMBO_TYPE_LIST,
-				    OBS_COMBO_FORMAT_STRING);
-
-	for (const AudioDevice &device : data->audioDevices) {
-		AddAudioDevice(p, device);
-	}
-
-	return ppts;
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static obs_properties_t *GetPrismLensProperties(void *obj)
-{
-	return GetPrismLensInternalProperties(obj, TEXT_PRISM_LENS_TIPS, _T(TEXT_PRISM_LENS_1));
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static obs_properties_t *GetPrismLensMobileProperties(void *obj)
-{
-	return GetPrismLensInternalProperties(obj, TEXT_PRISM_LENS_MOBILE_TIPS, _T(TEXT_PRISM_LENS_3));
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static void GetPrismLensDefaults(obs_data_t *settings)
-{
-	GetDShowDefaults(settings);
-	obs_data_set_default_bool(settings, USE_CUSTOM_AUDIO, true);
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static void GetPrismMobileDefaults(obs_data_t *settings)
-{
-	GetDShowDefaults(settings);
-	obs_data_set_default_bool(settings, USE_CUSTOM_AUDIO, true);
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static const char *GetPrismLensInputName(void *)
-{
-	return TEXT_PRISM_LENS_NAME;
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-static const char *GetPrismMobileInputName(void *)
-{
-	return TEXT_PRISM_LENS_MOBILE_NAME;
-}
-
-void RegisterPrismLensSource()
-{
-	SetLogCallback(DShowModuleLogCallback, nullptr);
-
-	obs_source_info info = {};
-	info.id = TEXT_PRISM_LENS_ID;
-	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_ASYNC | OBS_SOURCE_DO_NOT_DUPLICATE;
-	info.show = ShowDShowInput;
-	info.hide = HideDShowInput;
-	info.get_name = GetPrismLensInputName;
-	info.create = CreateDShowInput;
-	info.destroy = DestroyDShowInput;
-	info.update = UpdateDShowInput;
-	info.get_defaults = GetPrismLensDefaults;
-	info.get_properties = GetPrismLensProperties;
-	info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_LENS);
-	obs_register_source(&info);
-}
-
-//PRISM/Liuying/20230808/new ux : add prism lens source
-void RegisterPrismMobileSource()
-{
-	SetLogCallback(DShowModuleLogCallback, nullptr);
-
-	obs_source_info info = {};
-	info.id = TEXT_PRISM_LENS_MOBILE_ID;
-	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_ASYNC | OBS_SOURCE_DO_NOT_DUPLICATE;
-	info.show = ShowDShowInput;
-	info.hide = HideDShowInput;
-	info.get_name = GetPrismMobileInputName;
-	info.create = CreateDShowInput;
-	info.destroy = DestroyDShowInput;
-	info.update = UpdateDShowInput;
-	info.get_defaults = GetPrismMobileDefaults;
-	info.get_properties = GetPrismLensMobileProperties;
-	info.icon_type = static_cast<obs_icon_type>(PLS_ICON_TYPE_PRISM_MOBILE);
 	obs_register_source(&info);
 }

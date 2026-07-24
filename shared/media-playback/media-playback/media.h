@@ -117,6 +117,9 @@ struct mp_media {
 
 	//PRISM/chenguoxi/20241216/PRISM_PC-1778/audio has cover
 	obs_source_t *source;
+
+	//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+	volatile bool is_deconnected;
 };
 
 typedef struct mp_media mp_media_t;
@@ -132,6 +135,9 @@ extern int64_t mp_media_get_current_time(mp_media_t *m);
 extern int64_t mp_media_get_frames(mp_media_t *m);
 extern int64_t mp_media_get_duration(mp_media_t *m);
 extern void mp_media_seek(mp_media_t *m, int64_t pos);
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player
+extern void mp_media_disconnect(mp_media_t *c);
 
 /* #define DETAILED_DEBUG_INFO */
 

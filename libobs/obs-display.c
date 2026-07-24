@@ -373,7 +373,13 @@ void render_display(struct obs_display *display)
 		if (display->display_present_profile)
 			profile_start(display->display_present_profile);
 
+		//PRISM/wangshaohui/20260211/4238/taken time
+		pls_begin_taken_time(display, "", "gs_present");
+
 		gs_present();
+
+		//PRISM/wangshaohui/20260211/4238/time
+		pls_end_taken_time(display, "", "gs_present", time_ns_3ms); 
 
 		//PRISM/Zengqin/20240528/none/add display present profile
 		if (display->display_present_profile)

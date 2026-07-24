@@ -734,7 +734,7 @@ static void gl_capture(HDC hdc)
 			gl_shmem_capture();
 
 		//PRISM/wangshaohui/20240801/PRISM_PC-846/add sre for render type
-		send_game_render_type("opengl");
+		send_game_render_type(RenderType_OpenGL);
 	}
 }
 

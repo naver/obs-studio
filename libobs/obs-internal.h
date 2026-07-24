@@ -40,6 +40,7 @@
 //PRISM/wangshaohui/20230724/#2093/check source alive
 #include "pls/pls-source.h"
 #include "pls/pls-base.h"
+#include "pls/pls-output.h"
 
 //PRISM/fanzirong/20240704/none/separate stop and free
 #include "pls/pls-obs-api.h"
@@ -54,6 +55,8 @@
 
 #include <obsversion.h>
 #include <caption/caption.h>
+//PRISM/FanZirong/20251112/PRISM_PC-3577/source capture failed guidance
+#include <pls/pls-obs-api.h>
 
 /* Custom helpers for the UUID hash table */
 #define HASH_FIND_UUID(head, uuid, out) HASH_FIND(hh_uuid, head, uuid, UUID_STR_LENGTH, out)
@@ -793,6 +796,9 @@ struct obs_source {
 	//PRISM/fanzirong/20240717/none/reduce log
 	int handle_ts_jump_count;
 	int handle_sys_jump_count;
+	
+	//PRISM/fanzirong/20250627/none/reduce audio lag log
+	int audio_lag_log_count;
 
 	/* audio */
 	bool audio_failed;
@@ -840,6 +846,8 @@ struct obs_source {
 	int async_channel_count;
 	long async_rotation;
 	bool async_flip;
+	//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+	volatile bool async_flip_h;
 	bool async_linear_alpha;
 	bool async_active;
 	bool async_update_texture;
@@ -949,6 +957,24 @@ struct obs_source {
 	//PRISM/chenguoxi/20241216/PRISM_PC-1778/audio has cover
 	volatile bool is_audio_has_cover;
 	volatile bool is_audio_has_cover_ready;
+
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	bool is_lens_camera; // true: it's dshow source but the capture should use lens v2
+
+	//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+	volatile bool is_source_loading;
+	volatile long loading_start_ms; 
+
+	//PRISM/FanZirong/20251112/PRISM_PC-3577/source capture failed guidance
+	volatile enum obs_source_failed_status_sub_code failed_code;
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	void *action_helper_ptr;
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	void *action_parent;
+#endif
 };
 
 extern struct obs_source_info *get_source_info(const char *id);
@@ -1246,6 +1272,10 @@ struct obs_output {
 	uint64_t token_sent_time; // in ns
 	uint64_t start_time;      // in ns
 	double avg_send_speed;    // in ns
+
+	//PRISM/wangshaohui/20251027/noissue/add log for rtmp
+	int start_order;
+	struct pls_platform_info platform_info;
 };
 
 static inline void do_output_signal(struct obs_output *output, const char *signal)
@@ -1350,6 +1380,9 @@ struct obs_encoder {
 
 	// Number of frames successfully encoded
 	uint32_t encoded_frames;
+
+	//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+	uint32_t requested_frames;
 
 	/* Regions of interest to prioritize during encoding */
 	pthread_mutex_t roi_mutex;

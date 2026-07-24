@@ -6,8 +6,21 @@
 //
 
 #import "OBSAVCapture.h"
+#include <pls/pls-obs-api.h>
+#include <pls/pls-lens-info.h>
+#include "lens-utils.h"
 
 @implementation OBSAVCapture
+
+static dispatch_queue_t get_global_av_queue()
+{
+    static dispatch_queue_t global_queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        global_queue = dispatch_queue_create("session queue", DISPATCH_QUEUE_SERIAL);
+    });
+    return global_queue;
+}
 
 - (instancetype)init
 {
@@ -43,7 +56,7 @@
             AVCaptureSessionPreset3840x2160: @"3840x2160",
         };
 
-        _sessionQueue = dispatch_queue_create("session queue", DISPATCH_QUEUE_SERIAL);
+        _sessionQueue = get_global_av_queue();
 
         OBSAVCaptureVideoInfo newInfo = {0};
         _videoInfo = newInfo;
@@ -101,9 +114,24 @@
 
                         if (isSessionConfigured) {
                             [instance startCaptureSession];
+                        } else {
+                            //PRISM/sam.zhang/20251204/notify av capture error
+                            pls_source_send_notify(strong_source, OBS_SOURCE_FAILED_STATUS,
+                                                   OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_POPERTY);
+                        }
+                    } else {
+                        //PRISM/sam.zhang/20251204/notify av capture error
+                        if (UUID.length > 0) {
+                            [self handleDeviceError:error];
+                        } else {
+                            pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                                   OBS_SOURCE_STATUS_SUCCESS);
                         }
                     }
                 } else {
+                    //PRISM/sam.zhang/20251204/notify av capture error
+                    pls_source_send_notify(strong_source, OBS_SOURCE_FAILED_STATUS,
+                                           OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_UNKNOWN);
                     [instance AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
                 }
 
@@ -224,6 +252,16 @@
             self.deviceUUID = uuid;
             return NO;
         } else {
+            //PRISM/sam.zhang/20251204/notify av capture error
+            if (error) {
+                NSDictionary *userInfo = @{
+                    NSLocalizedDescriptionKey:
+                        [NSString stringWithFormat:@"Unable to initialize device with unique ID '%@'", uuid]
+                };
+
+                *error = [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorDeviceNotConnected
+                                         userInfo:userInfo];
+            }
             [self AVCaptureLog:LOG_WARNING withFormat:@"Unable to initialize device with unique ID '%@'", uuid];
             return NO;
         }
@@ -457,6 +495,11 @@
         }
 
         if ([self.session canSetSessionPreset:preset]) {
+            //PRISM/ai.guanghua/20251117/PRISM_PC-4476
+            NSValue *resolutionValue = [self presetSizes][preset];
+            if (!resolutionValue) {
+                self.videoOutput.videoSettings = nil;
+            }
             self.session.sessionPreset = preset;
         }
         //PRISM/cao.kewei/20240712/session preset
@@ -567,7 +610,10 @@
     self.isDeviceLocked = [self.deviceInput.device lockForConfiguration:error];
 
     if (!self.isDeviceLocked) {
-        [self AVCaptureLog:LOG_DEBUG withFormat:@"Could not lock devie for configuration"];
+        //PRISM/keven/20250819/PRISM_PC_NELO-410/avcapture fix
+        [self AVCaptureLog:LOG_DEBUG withFormat:@"Could not lock device for configuration"];
+        [self.session commitConfiguration];
+        self.configurating = false;
         return NO;
     }
 
@@ -609,6 +655,12 @@
     [self.session commitConfiguration];
     //PRISM/aiguanghua/20250121/PRISM_PC_NELO-164
     self.configurating = false;
+
+    //PRISM/keven/20250819/PRISM_PC_NELO-410/avcapture fix
+    if (self.isDeviceLocked) {
+        [self.deviceInput.device unlockForConfiguration];
+        self.isDeviceLocked = NO;
+    }
 
     return YES;
 }
@@ -668,6 +720,12 @@
     if (![self.deviceUUID isEqualToString:newDeviceUUID]) {
         if (![self switchCaptureDevice:newDeviceUUID withError:error]) {
             obs_source_update_properties(self.captureInfo->source);
+            //PRISM/sam.zhang/20251204/notify av capture error
+            if (newDeviceUUID.length > 0) {
+                [self handleDeviceError:error ? *error : nil];
+            } else {
+                pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_STATUS_SUCCESS);
+            }
             return NO;
         }
     } else if (self.isPresetBased && isPresetEnabled && [presetName isEqualToString:self.session.sessionPreset]) {
@@ -680,6 +738,15 @@
         } else {
             if (![self configureSession:error]) {
                 obs_source_update_properties(self.captureInfo->source);
+
+                //PRISM/sam.zhang/20251204/notify av capture error
+                if (newDeviceUUID.length > 0) {
+                    pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                           OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_POPERTY);
+                } else {
+                    pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                           OBS_SOURCE_STATUS_SUCCESS);
+                }
                 return NO;
             }
         }
@@ -701,6 +768,32 @@
     }
 
     return YES;
+}
+
+//PRISM/sam.zhang/20251204/notify av capture error
+- (void)handleDeviceError:(NSError *)error
+{
+    AVAuthorizationStatus videoStatus = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    if (videoStatus == AVAuthorizationStatusDenied) {
+        pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                               OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NO_PERMISSION);
+    } else if (error) {
+        if ([error.domain isEqualToString:AVFoundationErrorDomain] &&
+            (error.code == AVErrorDeviceInUseByAnotherApplication ||
+             error.code == AVErrorDeviceAlreadyUsedByAnotherSession)) {
+            pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                   OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_IN_USED);
+        } else if ([error.domain isEqualToString:AVFoundationErrorDomain] && error.code == AVErrorDeviceNotConnected) {
+            pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                   OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NOT_FOUND);
+        } else {
+            pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                   OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_UNKNOWN);
+        }
+    } else {
+        pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                               OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_UNKNOWN);
+    }
 }
 
 #pragma mark - OBS Settings Helpers
@@ -1089,12 +1182,17 @@
                 [self startCaptureSession];
             });
         } else {
+            //PRISM/sam.zhang/20251204/notify av capture error
+            [self handleDeviceError:error];
+
             //PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
             if (error.localizedDescription) {
                 [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
             }
         }
     } else {
+        [self handleDeviceError:error];
+
         //PRISM/aiguanghua/20241213/PRISM_PC_NELO-128
         if (error.localizedDescription) {
             [self AVCaptureLog:LOG_ERROR withFormat:error.localizedDescription];
@@ -1126,6 +1224,10 @@
         obs_source_update_properties(self.captureInfo->source);
         return;
     }
+
+    //PRISM/sam.zhang/20251204/notify av capture error
+    pls_source_send_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                           OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_REMOVED);
 
     [self AVCaptureLog:LOG_INFO
             withFormat:@"Received disconnect event for device '%@' (UUID %@)", device.localizedName, device.uniqueID];
@@ -1166,6 +1268,20 @@
 
     if (!_captureInfo || sampleCount < 1) {
         return;
+    }
+
+    //PRISM/sam.zhang/20251204/notify av capture error
+    NSArray<NSString *> *ids = @[
+        [NSString stringWithCString:UUID_PRISM_LEN1 encoding:NSUTF8StringEncoding],
+        [NSString stringWithCString:UUID_PRISM_LEN2 encoding:NSUTF8StringEncoding],
+        [NSString stringWithCString:UUID_PRISM_LEN3 encoding:NSUTF8StringEncoding]
+    ];
+    NSUInteger index = [ids indexOfObject:self.deviceUUID];
+    if (index == NSNotFound || is_lens_active(index)) {
+        pls_source_send_distinct_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_STATUS_SUCCESS);
+    } else {
+        pls_source_send_distinct_notify(self.captureInfo->source, OBS_SOURCE_FAILED_STATUS,
+                                        OBS_SOURCE_MAC_AVCAPTURE_LENS_FAILED_SUB_NOT_ACTIVE);
     }
 
     CMTime presentationTimeStamp = CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer);
@@ -1254,7 +1370,7 @@
                     if (frame->format != VIDEO_FORMAT_NONE && frame->format != videoFormat) {
                         [self AVCaptureLog:LOG_DEBUG
                                 withFormat:@"Switching fourcc: '%@' (0x%x) -> '%@' (0x%x)",
-                                           [OBSAVCapture stringFromFourCharCode:frame->format], frame -> format,
+                                           [OBSAVCapture stringFromFourCharCode:frame->format], frame->format,
                                            [OBSAVCapture stringFromFourCharCode:mediaSubType], mediaSubType];
                     }
 #endif
@@ -1264,6 +1380,7 @@
                     frame->format = videoFormat;
                     frame->width = sampleBufferDimensions.width;
                     frame->height = sampleBufferDimensions.height;
+                    frame->flags = index == NSNotFound ? 0 : OBS_SOURCE_FRAME_LINEAR_ALPHA;
 
                     BOOL isSampleBufferFullRange = [OBSAVCapture isFullRangeFormat:mediaSubType];
 
@@ -1467,6 +1584,8 @@
     };
 }
 
+//PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset
+//PRISM/ai.guanghua/20251117/PRISM_PC-4476
 - (void)checkAndUpdateVideoSettingsWithDevice:(AVCaptureDevice *)device preset:(NSString *)preset
 {
     NSString *deviceName = device.localizedName;
@@ -1474,25 +1593,21 @@
     if ([deviceName containsString:@"PRISM Lens "]) {
         // copy video settings to update
         NSMutableDictionary *videoSettings = [self.videoOutput.videoSettings mutableCopy];
-        // get current pixel format from video setting
-        OSType pixelFormat = [videoSettings[(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey] unsignedIntValue];
-        // handle 32BGRA pixel format only
-        if (pixelFormat == kCVPixelFormatType_32BGRA) {
-            // get the width and height for preset
-            NSValue *resolutionValue = [self presetSizes][preset];
-            if (!resolutionValue) {
-                // if preset not in the list, give it a default value
-                resolutionValue = [self presetSizes][AVCaptureSessionPreset1920x1080];
-            }
 
+        // get the width and height for preset
+        NSValue *resolutionValue = [self presetSizes][preset];
+        if (resolutionValue) {
             NSSize resolution = resolutionValue.sizeValue;
             // assign width and height to video settings
             videoSettings[(__bridge NSString *) kCVPixelBufferWidthKey] = @(resolution.width);
             videoSettings[(__bridge NSString *) kCVPixelBufferHeightKey] = @(resolution.height);
-
-            // set video settings
-            self.videoOutput.videoSettings = videoSettings;
+        } else {
+            [videoSettings setObject:@(kCVPixelFormatType_32BGRA)
+                              forKey:(__bridge NSString *) kCVPixelBufferPixelFormatTypeKey];
         }
+
+        // set video settings
+        self.videoOutput.videoSettings = videoSettings;
     }
 }
 //PRISM/cao.kewei/20231024/#/PPRISM Lens 32BGRA sessionPreset

@@ -86,6 +86,8 @@ static obs_properties_t *av_capture_properties(void *av_capture)
     // Create Properties
     obs_property_t *device_list = obs_properties_add_list(properties, "device", obs_module_text("Device"),
                                                           OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    //PRISM/keven.cao/20251229/PRISM_PC-4825/lens button
+    obs_property_t *lens_button = obs_properties_add_button(properties, "lens_button", obs_module_text("LensButton"), NULL);
     obs_property_t *use_preset = obs_properties_add_bool(properties, "use_preset", obs_module_text("UsePreset"));
     obs_property_t *preset_list = obs_properties_add_list(properties, "preset", obs_module_text("Preset"),
                                                           OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -105,6 +107,7 @@ static obs_properties_t *av_capture_properties(void *av_capture)
 
         // Add Property Visibility and Callbacks
         configure_property(device_list, true, true, properties_changed, capture);
+	configure_property(lens_button, true, true, NULL, capture);
         configure_property(use_preset, !isFastPath, !isFastPath, (!isFastPath) ? properties_changed_use_preset : NULL,
                            capture);
         configure_property(preset_list, !isFastPath, !isFastPath, (!isFastPath) ? properties_changed_preset : NULL,

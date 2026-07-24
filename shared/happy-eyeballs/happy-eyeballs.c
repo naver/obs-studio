@@ -155,13 +155,25 @@ struct happy_eyeballs_ctx {
 	 * connections, or if we are waiting for things to connect or time out.
 	 */
 	volatile bool is_starting;
+
+	//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+	/**
+	 * Remote platform IP address family
+	 */
+	int ip_family_type;
+	/**
+	 * Successufly connected remote platform IP index
+	 */
+	int index;
 };
 
+//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
 struct happy_connect_worker_args {
 	SOCKET sockfd;
 	struct happy_eyeballs_ctx *context;
 	struct happy_eyeballs_candidate *candidate;
 	struct addrinfo *address;
+	int index;
 };
 
 static int check_comodo(struct happy_eyeballs_ctx *context)
@@ -183,6 +195,15 @@ static int check_comodo(struct happy_eyeballs_ctx *context)
 	(void)context;
 #endif
 	return STATUS_SUCCESS;
+}
+
+//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+int happy_eyeballs_connect_ip_family_type(struct happy_eyeballs_ctx *context)
+{
+	if (context == NULL)
+		return STATUS_FAILURE;
+
+	return context->ip_family_type;
 }
 
 static int build_addr_list(const char *hostname, int port, struct happy_eyeballs_ctx *context)
@@ -213,9 +234,17 @@ static int build_addr_list(const char *hostname, int port, struct happy_eyeballs
 		return STATUS_FAILURE;
 	}
 
+	context->ip_family_type = AF_UNSPEC;
+
 	/* Reorder addresses interleaving address family */
 	struct addrinfo *prev = context->addresses;
 	struct addrinfo *cur = prev->ai_next;
+
+	//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+	if (prev != NULL) {
+		/* only one address, set the family type accordingly */
+		context->ip_family_type = prev->ai_family;
+	}
 
 	while (cur) {
 		if (prev->ai_family == cur->ai_family && (cur->ai_family == AF_INET || cur->ai_family == AF_INET6)) {
@@ -241,6 +270,9 @@ static int build_addr_list(const char *hostname, int port, struct happy_eyeballs
 			prev->ai_next = it;
 			prev_it->ai_next = it->ai_next;
 			it->ai_next = cur;
+		} else {
+			//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+			context->ip_family_type = AF_UNSPEC;
 		}
 		prev = cur;
 		cur = cur->ai_next;
@@ -359,6 +391,8 @@ static void *happy_connect_worker(void *arg)
 			context->socket_fd = args->sockfd;
 			memcpy(&context->winner_addr, args->address->ai_addr, args->address->ai_addrlen);
 			context->winner_addr_len = (socklen_t)args->address->ai_addrlen;
+			//PRISM/Lizhiyong/20250105/noissue/add log for rtmp
+			context->index = args->index;
 			signal_end(context);
 		}
 
@@ -401,7 +435,7 @@ success:
 	return NULL;
 }
 
-static int launch_worker(struct happy_eyeballs_ctx *context, struct addrinfo *addr)
+static int launch_worker(struct happy_eyeballs_ctx *context, struct addrinfo *addr, int index)
 {
 #ifdef _WIN32
 	SOCKET fd = WSASocket(addr->ai_family, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
@@ -442,6 +476,7 @@ static int launch_worker(struct happy_eyeballs_ctx *context, struct addrinfo *ad
 	args->address = addr;
 	args->context = context;
 	args->candidate = candidate;
+	args->index = index;
 	pthread_mutex_unlock(&context->candidate_mutex);
 
 	/* Launch worker thread; `args` ownership is passed to this thread */
@@ -544,7 +579,7 @@ int happy_eyeballs_connect(struct happy_eyeballs_ctx *context, const char *hostn
 	 *      happy eyeballs and let the previous attempt go it alone. */
 	for (int i = 0; i < HAPPY_EYEBALLS_MAX_ATTEMPTS && next && next->ai_family != prev_family; i++) {
 		/* Launch a worker thread for this address */
-		int result = launch_worker(context, next);
+		int result = launch_worker(context, next, i);
 		if (result != STATUS_SUCCESS)
 			return result;
 
@@ -713,6 +748,11 @@ int happy_eyeballs_get_remote_addr(const struct happy_eyeballs_ctx *context, str
 	if (context->winner_addr_len > 0)
 		memcpy(addr, &context->winner_addr, context->winner_addr_len);
 	return context->winner_addr_len;
+}
+
+int happy_eyeballs_get_index(const struct happy_eyeballs_ctx *context)
+{
+	return context ? context->index : STATUS_FAILURE;
 }
 
 int happy_eyeballs_get_error_code(const struct happy_eyeballs_ctx *context)

@@ -8,9 +8,16 @@
 #ifdef OBS_LEGACY
 #include "../../libobs/util/platform.h"
 #include "../../libobs-winrt/winrt-capture.h"
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+#include "../../libobs/pls/pls-obs-api.h"
+#include "../../libobs/pls/pls-properties.h"
 #else
 #include <util/platform.h>
 #include <winrt-capture.h>
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+#include <pls/pls-obs-api.h>
+#include "pls/pls-properties.h"
+#include "pls/pls-source.h"
 #endif
 
 #define do_log(level, format, ...) \
@@ -98,6 +105,11 @@ struct duplicator_capture {
 	struct winrt_capture *capture_winrt;
 	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
 	bool wgc_init;
+
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	int last_failed_code;    // Last reported failure code
+	int current_failed_code; // Current failure code
+	bool unknown_error;
 };
 
 struct duplicator_monitor_info {
@@ -109,6 +121,9 @@ struct duplicator_monitor_info {
 	HMONITOR handle;
 };
 
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+#define GUIDANCE_URL "https://guide.prismlive.com/desktop/guides/error-solution/source/how-to-fix-window-display-capture-failure"
+#define SETTINGS_GUIDANCE "guidance"
 /* ------------------------------------------------------------------------- */
 
 static const char *get_method_name(int method)
@@ -124,6 +139,26 @@ static const char *get_method_name(int method)
 	}
 
 	return method_name;
+}
+
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+// Send failure status notification to UI
+static void mc_send_failed_status(struct duplicator_capture *capture, int code)
+{
+	const char *error_desc = "Unknown error";
+	switch (code) {
+	case OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_MONITOR_INVALID:
+		error_desc = "Monitor invalid";
+		break;
+	case OBS_SOURCE_STATUS_SUCCESS:
+		error_desc = "Capture recovered";
+		break;
+	}
+
+	blog(LOG_WARNING, "[duplicator-capture: '%s'] Capture status changed: %s (code=%d)",
+	     obs_source_get_name(capture->source), error_desc, code);
+
+	pls_source_send_notify(capture->source, OBS_SOURCE_FAILED_STATUS, code);
 }
 
 static bool GetMonitorTarget(LPCWSTR device, DISPLAYCONFIG_TARGET_DEVICE_NAME *target)
@@ -390,6 +425,11 @@ static void duplicator_capture_update(void *data, obs_data_t *settings)
 	update_settings(mc, settings, mc->wgc_init);
 	log_settings(mc, mc->monitor_name, mc->logged_width, mc->logged_height);
 
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	// Reset failure detection state
+	mc_send_failed_status(mc, OBS_SOURCE_STATUS_SUCCESS);
+	mc->last_failed_code = OBS_SOURCE_STATUS_SUCCESS;
+	mc->unknown_error = false;
 	mc->reset_wgc = true;
 }
 
@@ -432,6 +472,10 @@ static void *duplicator_capture_create(obs_data_t *settings, obs_source_t *sourc
 
 	capture = bzalloc(sizeof(struct duplicator_capture));
 	capture->source = source;
+
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	capture->last_failed_code = OBS_SOURCE_STATUS_SUCCESS;
+	capture->unknown_error = false;
 
 	pthread_mutex_init(&capture->update_mutex, NULL);
 
@@ -536,6 +580,7 @@ static void duplicator_capture_tick(void *data, float seconds)
 			capture->reset_timeout += seconds;
 
 			if (capture->reset_timeout >= RESET_INTERVAL_SEC) {
+
 				if (!capture->handle)
 					update_monitor_handle(capture);
 
@@ -550,6 +595,13 @@ static void duplicator_capture_tick(void *data, float seconds)
 								capture->exports.winrt_capture_init_monitor(
 									capture->capture_cursor, capture->handle,
 									capture->force_sdr);
+							//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+							if (capture->capture_winrt == NULL) {
+								capture->unknown_error = true;
+							} else {
+								capture->unknown_error = false;
+							}
+								
 						}
 					}
 				}
@@ -557,6 +609,15 @@ static void duplicator_capture_tick(void *data, float seconds)
 				capture->reset_timeout = 0.0f;
 			}
 		}
+
+		//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+		if (!capture->handle) {
+			if (strcmp(capture->monitor_id, INVALID_DISPLAY) != 0)
+				capture->current_failed_code = OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_MONITOR_INVALID;
+		} else if (capture->unknown_error && capture->capture_winrt == NULL) {
+			capture->current_failed_code = OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_UNKNOWN;
+		}
+
 	} else {
 		if (capture->capture_winrt) {
 			capture->exports.winrt_capture_free(capture->capture_winrt);
@@ -567,6 +628,7 @@ static void duplicator_capture_tick(void *data, float seconds)
 			capture->reset_timeout += seconds;
 
 			if (capture->reset_timeout >= RESET_INTERVAL_SEC) {
+
 				if (!capture->handle)
 					update_monitor_handle(capture);
 
@@ -583,11 +645,25 @@ static void duplicator_capture_tick(void *data, float seconds)
 
 					if (dxgi_index != -1) {
 						capture->duplicator = gs_duplicator_create(dxgi_index);
+						//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+						if (capture->duplicator == NULL) {
+							capture->unknown_error = true;
+						} else {
+							capture->unknown_error = false;
+						}
 					}
 				}
 
 				capture->reset_timeout = 0.0f;
 			}
+		}
+
+		//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+		if (!capture->handle) {
+			if (strcmp(capture->monitor_id, INVALID_DISPLAY) != 0)
+				capture->current_failed_code = OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_MONITOR_INVALID;
+		} else if (capture->unknown_error && !capture->duplicator) {
+			capture->current_failed_code = OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_UNKNOWN;
 		}
 
 		if (capture->duplicator) {
@@ -607,6 +683,24 @@ static void duplicator_capture_tick(void *data, float seconds)
 
 	if (!capture->showing)
 		capture->showing = true;
+}
+
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+static void duplicator_capture_tick2(void *data, float seconds)
+{
+	struct duplicator_capture *capture = data;
+
+	if (!obs_source_showing (capture->source)) {
+		capture->current_failed_code = capture->last_failed_code;
+	} else {
+		capture->current_failed_code = OBS_SOURCE_STATUS_SUCCESS;
+	}
+	
+	duplicator_capture_tick(data, seconds);
+	if (capture->current_failed_code != capture->last_failed_code) {
+		mc_send_failed_status(capture, capture->current_failed_code);
+		capture->last_failed_code = capture->current_failed_code;
+	}
 }
 
 static uint32_t duplicator_capture_width(void *data)
@@ -729,6 +823,9 @@ static void duplicator_capture_render(void *data, gs_effect_t *unused)
 				draw_cursor(capture);
 			}
 		}
+
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_on_source_property_render(capture->source, PROPERTY_RENDER_TIMEOUT);
 	}
 }
 
@@ -773,7 +870,8 @@ static void update_settings_visibility(obs_properties_t *props, struct duplicato
 {
 	pthread_mutex_lock(&capture->update_mutex);
 
-	const enum window_capture_method method = capture->method;
+	//PRISM/wangshaohui/20251014/#4217/fix compile error after upgrading vs2022: window_capture_method -> display_capture_method
+	const enum display_capture_method method = capture->method;
 	const bool dxgi_options = method == METHOD_DXGI;
 	const bool wgc_options = method == METHOD_WGC;
 
@@ -810,6 +908,9 @@ static obs_properties_t *duplicator_capture_properties(void *data)
 	obs_properties_t *props = obs_properties_create();
 	obs_properties_set_param(props, capture, NULL);
 
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	obs_property_t *help = pls_properties_add_capture_guide(props, SETTINGS_GUIDANCE, "", GUIDANCE_URL);
+
 	obs_property_t *p =
 		obs_properties_add_list(props, "method", TEXT_METHOD, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(p, TEXT_METHOD_AUTO, METHOD_AUTO);
@@ -818,6 +919,7 @@ static obs_properties_t *duplicator_capture_properties(void *data)
 	//PRISM/Xiewei/20240710/#5555/Fix a crash where access the invalid winrt exported functions
 	obs_property_list_item_disable(p, 2, !wgc_supported || (capture && !capture->wgc_init));
 	obs_property_set_modified_callback(p, display_capture_method_changed);
+
 
 	obs_property_t *monitors = obs_properties_add_list(props, "monitor_id", TEXT_MONITOR, OBS_COMBO_TYPE_LIST,
 							   OBS_COMBO_FORMAT_STRING);
@@ -868,7 +970,7 @@ struct obs_source_info duplicator_capture_info = {
 	.create = duplicator_capture_create,
 	.destroy = duplicator_capture_destroy,
 	.video_render = duplicator_capture_render,
-	.video_tick = duplicator_capture_tick,
+	.video_tick = duplicator_capture_tick2, //PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
 	.update = duplicator_capture_update,
 	.get_width = duplicator_capture_width,
 	.get_height = duplicator_capture_height,

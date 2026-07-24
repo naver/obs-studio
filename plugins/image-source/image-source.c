@@ -4,6 +4,9 @@
 #include <util/platform.h>
 #include <util/dstr.h>
 #include <sys/stat.h>
+#include <pls/pls-base.h>
+//PRISM/chenguoxi/20260121/none/ui action log
+#include <pls/pls-source.h>
 
 #define blog(log_level, format, ...) \
 	blog(log_level, "[image_source: '%s'] " format, obs_source_get_name(context->source), ##__VA_ARGS__)
@@ -28,6 +31,18 @@ struct image_source {
 	volatile bool texture_loaded;
 
 	gs_image_file4_t if4;
+
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	pthread_t load_thread;
+	pthread_mutex_t load_mutex;
+	bool load_thread_created;
+	volatile bool load_thread_active;
+	volatile bool load_requested;
+	volatile bool pending_unload;
+	char *pending_file;
+	bool pending_linear_alpha;
+	time_t pending_timestamp;
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
 };
 
 static time_t get_modified_timestamp(const char *filename)
@@ -44,17 +59,26 @@ static const char *image_source_get_name(void *unused)
 	return obs_module_text("ImageInput");
 }
 
+//PRISM/chenguoxi/20251222/PRISM_PC-4765/async image source -- begin
+// image is async, no use here. The funtion only for slideshow
 void image_source_preload_image(void *data)
 {
 	struct image_source *context = data;
-	if (os_atomic_load_bool(&context->file_decoded))
+	if (os_atomic_load_bool(&context->file_decoded) && os_atomic_load_bool(&context->texture_loaded))
 		return;
 
 	context->file_timestamp = get_modified_timestamp(context->file);
 	gs_image_file4_init(&context->if4, context->file,
 			    context->linear_alpha ? GS_IMAGE_ALPHA_PREMULTIPLY_SRGB : GS_IMAGE_ALPHA_PREMULTIPLY);
 	os_atomic_set_bool(&context->file_decoded, true);
+
+	// Also load texture for slideshow usage
+	obs_enter_graphics();
+	gs_image_file4_init_texture(&context->if4);
+	obs_leave_graphics();
+	os_atomic_set_bool(&context->texture_loaded, true);
 }
+//PRISM/chenguoxi/20251222/PRISM_PC-4765/async image source -- end
 
 static void image_source_load_texture(void *data)
 {
@@ -77,22 +101,131 @@ static void image_source_load_texture(void *data)
 static void image_source_unload(void *data)
 {
 	struct image_source *context = data;
-	os_atomic_set_bool(&context->file_decoded, false);
-	os_atomic_set_bool(&context->texture_loaded, false);
 
-	obs_enter_graphics();
-	gs_image_file4_free(&context->if4);
-	obs_leave_graphics();
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	pthread_mutex_lock(&context->load_mutex);
+	context->pending_unload = true;
+	context->load_requested = false; // Cancel any pending load
+	pthread_mutex_unlock(&context->load_mutex);
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
+}
+
+//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source
+static void *async_load_thread(void *data)
+{
+	struct image_source *context = data;
+
+	info("async_load_thread start. source=[%p]", context->source);
+
+	while (true) {
+		pthread_mutex_lock(&context->load_mutex);
+		
+		if (!context->load_thread_active) {
+			pthread_mutex_unlock(&context->load_mutex);
+			break;
+		}
+
+		// Check for unload request
+		if (context->pending_unload) {
+			context->pending_unload = false;
+			pthread_mutex_unlock(&context->load_mutex);
+
+			debug("async unloading image");
+
+			// Unload image
+			os_atomic_set_bool(&context->file_decoded, false);
+			os_atomic_set_bool(&context->texture_loaded, false);
+			obs_enter_graphics();
+			gs_image_file4_free(&context->if4);
+			obs_leave_graphics();
+
+#ifdef PLS_UI_ACTION_STATS
+			//PRISM/chenguoxi/20260121/none/ui action log
+			pls_on_source_property_updated(context->source);
+#endif
+
+			continue;
+		}
+
+		if (!context->load_requested) {
+			pthread_mutex_unlock(&context->load_mutex);
+			os_sleep_ms(50);
+			continue;
+		}
+
+		// Copy parameters
+		char *file = bstrdup(context->pending_file);
+		bool linear_alpha = context->pending_linear_alpha;
+		time_t timestamp = context->pending_timestamp;
+		context->load_requested = false;
+
+		pthread_mutex_unlock(&context->load_mutex);
+
+		info("async loading image '%s'", file);
+
+		// Load new image first (decode phase) - use heap allocation to avoid stack overflow
+		gs_image_file4_t *new_if4 = bzalloc(sizeof(gs_image_file4_t));
+		time_t new_timestamp = timestamp;
+		gs_image_file4_init(new_if4, file,
+				    linear_alpha ? GS_IMAGE_ALPHA_PREMULTIPLY_SRGB : GS_IMAGE_ALPHA_PREMULTIPLY);
+
+		// Load texture for new image and swap in one graphics context
+		debug("loading texture '%s'", file);
+		os_atomic_set_bool(&context->file_decoded, false);
+		os_atomic_set_bool(&context->texture_loaded, false);
+		obs_enter_graphics();
+		gs_image_file4_init_texture(new_if4);
+		gs_image_file4_free(&context->if4);
+		obs_leave_graphics();
+
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/chenguoxi/20260121/none/ui action log
+		pls_on_source_property_updated(context->source);
+#endif
+
+		if (!new_if4->image3.image2.image.loaded)
+			warn("failed to load texture '%s'", file);
+
+		// Swap the structures
+		context->if4 = *new_if4;
+		bfree(new_if4);
+		context->file_timestamp = new_timestamp;
+		context->update_time_elapsed = 0;
+		os_atomic_set_bool(&context->file_decoded, true);
+		os_atomic_set_bool(&context->texture_loaded, true);
+
+		bfree(file);
+
+	}
+
+	info("async_load_thread stop. source=[%p]", context->source);
+
+	return NULL;
 }
 
 static void image_source_load(struct image_source *context)
 {
-	image_source_unload(context);
-
-	if (context->file && *context->file) {
-		image_source_preload_image(context);
-		image_source_load_texture(context);
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	if (!context->file || !*context->file) {
+		image_source_unload(context);
+		return;
 	}
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
+
+
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	pthread_mutex_lock(&context->load_mutex);
+
+	// Set pending load parameters
+	if (context->pending_file)
+		bfree(context->pending_file);
+	context->pending_file = bstrdup(context->file);
+	context->pending_linear_alpha = context->linear_alpha;
+	context->pending_timestamp = get_modified_timestamp(context->file);
+	context->load_requested = true;
+
+	pthread_mutex_unlock(&context->load_mutex);
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
 }
 
 static void image_source_update(void *data, obs_data_t *settings)
@@ -112,6 +245,11 @@ static void image_source_update(void *data, obs_data_t *settings)
 
 	if (is_slide)
 		return;
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_set_property_update_delay(context->source);
+#endif
 
 	/* Load the image if the source is persistent or showing */
 	if (context->persistent || obs_source_showing(context->source))
@@ -170,6 +308,24 @@ static void *image_source_create(obs_data_t *settings, obs_source_t *source)
 	struct image_source *context = bzalloc(sizeof(struct image_source));
 	context->source = source;
 
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	// Initialize async loading
+	pthread_mutex_init(&context->load_mutex, NULL);
+	context->load_thread_created = false;
+	context->load_thread_active = true;
+	context->load_requested = false;
+	context->pending_unload = false;
+	context->pending_file = NULL;
+
+	// Start background loading thread
+	if (pthread_create(&context->load_thread, NULL, async_load_thread, context) != 0) {
+		warn("source[%p]: failed to create async load thread", context->source);
+		context->load_thread_active = false;
+	} else {
+		context->load_thread_created = true;
+	}
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
+
 	image_source_update(context, settings);
 	return context;
 }
@@ -178,7 +334,29 @@ static void image_source_destroy(void *data)
 {
 	struct image_source *context = data;
 
-	image_source_unload(context);
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	// Stop async load thread
+	pthread_mutex_lock(&context->load_mutex);
+	context->load_thread_active = false;
+	pthread_mutex_unlock(&context->load_mutex);
+
+	// Only join if thread was successfully created
+	if (context->load_thread_created) {
+		pthread_join(context->load_thread, NULL);
+	}
+
+	pthread_mutex_destroy(&context->load_mutex);
+
+	if (context->pending_file)
+		bfree(context->pending_file);
+
+	// Synchronously unload since thread is stopped
+	os_atomic_set_bool(&context->file_decoded, false);
+	os_atomic_set_bool(&context->texture_loaded, false);
+	obs_enter_graphics();
+	gs_image_file4_free(&context->if4);
+	obs_leave_graphics();
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
 
 	if (context->file)
 		bfree(context->file);
@@ -200,13 +378,25 @@ static uint32_t image_source_getheight(void *data)
 static void image_source_render(void *data, gs_effect_t *effect)
 {
 	struct image_source *context = data;
-	if (!os_atomic_load_bool(&context->texture_loaded))
+	//PRISM/chenguoxi/20260302/PRISM_PC-5467/ui action log when no image file set
+	if (!os_atomic_load_bool(&context->texture_loaded)) {
+#ifdef PLS_UI_ACTION_STATS
+		if (!context->file || !context->file[0])
+			pls_on_source_property_render(context->source, 0);
+#endif
 		return;
+	}
 
 	struct gs_image_file *const image = &context->if4.image3.image2.image;
 	gs_texture_t *const texture = image->texture;
-	if (!texture)
+	//PRISM/chenguoxi/20260302/PRISM_PC-5467/ui action log when no image file set
+	if (!texture) {
+#ifdef PLS_UI_ACTION_STATS
+		if (!context->file || !context->file[0])
+			pls_on_source_property_render(context->source, 0);
+#endif
 		return;
+	}
 
 	const bool previous = gs_framebuffer_srgb_enabled();
 	gs_enable_framebuffer_srgb(true);
@@ -222,17 +412,20 @@ static void image_source_render(void *data, gs_effect_t *effect)
 	gs_blend_state_pop();
 
 	gs_enable_framebuffer_srgb(previous);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_render(context->source, 0);
+#endif
 }
 
 static void image_source_tick(void *data, float seconds)
 {
 	struct image_source *context = data;
-	if (!os_atomic_load_bool(&context->texture_loaded)) {
-		if (os_atomic_load_bool(&context->file_decoded))
-			image_source_load_texture(context);
-		else
-			return;
-	}
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- begin
+	if (!os_atomic_load_bool(&context->texture_loaded))
+		return;
+	//PRISM/chenguoxi/20251127/PRISM_PC-4282/async image source -- end
 
 	uint64_t frame_time = obs_get_video_frame_time();
 

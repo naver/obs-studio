@@ -39,6 +39,21 @@
 //PRISM/FanZirong/20241203/PRISM_PC-1675/add log fields
 #include <pls/pls-base.h>
 
+//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+bool pls_need_ignore_sync_func(const obs_source_t *source)
+{
+	if (!source || !source->info.id)
+		return false;
+
+	int res = strcmp(source->info.id, "dshow_input");
+	if (res == 0 && !source->is_lens_camera) {
+		// it's dshow source and lens v2 is not used, so ignore its functions for sync render
+		return true;
+	} else {
+		return false;
+	}
+}
+
 #define get_weak(source) ((obs_weak_source_t *)source->context.control)
 
 static bool filter_compatible(obs_source_t *source, obs_source_t *filter);
@@ -206,7 +221,6 @@ static bool obs_source_init(struct obs_source *source)
 		return false;
 	if (pthread_mutex_init(&source->media_actions_mutex, NULL) != 0)
 		return false;
-
 	if (is_audio_source(source) || is_composite_source(source))
 		allocate_audio_output_buffer(source);
 	if (source->info.audio_mix)
@@ -221,6 +235,9 @@ static bool obs_source_init(struct obs_source *source)
 
 	source->deinterlace_top_first = true;
 	source->audio_mixers = 0xFF;
+
+	//PRISM/FanZirong/20251112/PRISM_PC-3577/source capture failed guidance
+	source->failed_code = OBS_SOURCE_STATUS_SUCCESS;
 
 	source->private_settings = obs_data_create();
 	return true;
@@ -334,6 +351,14 @@ static obs_source_t *obs_source_create_internal(const char *id, const char *name
 
 	//PRISM/wangshaohui/20230724/#2093/check source alive
 	pls_add_alive(source);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	source->action_helper_ptr = pls_create_action_helper(ACTION_HELPER_TYPE_SOURCE);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	source->action_parent = NULL;
+#endif
 
 	const struct obs_source_info *info = get_source_info(id);
 	if (!info) {
@@ -751,6 +776,11 @@ static void obs_source_destroy_defer(struct obs_source *source)
 		bfree((void *)source->info.unversioned_id);
 	}
 
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	pls_free_action_helper(source->action_helper_ptr, ACTION_HELPER_TYPE_SOURCE);
+#endif
+
 	//PRISM/wangshaohui/20230724/#2093/check source alive
 	pls_remove_alive(source);
 
@@ -993,7 +1023,24 @@ static void obs_source_deferred_update(obs_source_t *source)
 {
 	if (source->context.data && source->info.update) {
 		long count = os_atomic_load_long(&source->defer_update_count);
+
+		pls_set_property_update_delay(false); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(source, obs_source_get_id(source), "obs_source_deferred_update");
+
 		source->info.update(source->context.data, source->context.settings);
+
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		if (!pls_is_property_update_delay()) {
+			pls_on_source_property_updated(source);
+		}
+#endif
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(source, obs_source_get_id(source), "obs_source_deferred_update", time_ns_3ms);
+
 		os_atomic_compare_swap_long(&source->defer_update_count, count, 0);
 		obs_source_dosignal(source, "source_update", "update");
 	}
@@ -1011,7 +1058,18 @@ void obs_source_update(obs_source_t *source, obs_data_t *settings)
 	if (source->info.output_flags & OBS_SOURCE_VIDEO) {
 		os_atomic_inc_long(&source->defer_update_count);
 	} else if (source->context.data && source->info.update) {
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_set_property_update_delay(false);
+
 		source->info.update(source->context.data, source->context.settings);
+
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		if (!pls_is_property_update_delay()) {
+			pls_on_source_property_updated(source);
+		}
+#endif
+
 		obs_source_dosignal(source, "source_update", "update");
 	}
 }
@@ -1182,19 +1240,30 @@ void obs_source_activate(obs_source_t *source, enum view_type type)
 	}
 }
 
+//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+static bool atomic_dec_long(volatile long *value)
+{
+	for (long old_value = os_atomic_load_long(value); old_value > 0; old_value = os_atomic_load_long(value)) {
+		if (os_atomic_compare_exchange_long(value, &old_value, old_value - 1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void obs_source_deactivate(obs_source_t *source, enum view_type type)
 {
 	if (!obs_source_valid(source, "obs_source_deactivate"))
 		return;
 
-	if (os_atomic_load_long(&source->show_refs) > 0) {
-		os_atomic_dec_long(&source->show_refs);
+	//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+	if (atomic_dec_long(&source->show_refs)) {
 		obs_source_enum_active_tree(source, hide_tree, NULL);
 	}
 
 	if (type == MAIN_VIEW) {
-		if (os_atomic_load_long(&source->activate_refs) > 0) {
-			os_atomic_dec_long(&source->activate_refs);
+		//PRISM/Zhangdewen/20250228/#/fixed reference count problem
+		if (atomic_dec_long(&source->activate_refs)) {
 			obs_source_enum_active_tree(source, deactivate_tree, NULL);
 		}
 	}
@@ -1235,27 +1304,58 @@ void process_media_actions(obs_source_t *source)
 		case MEDIA_ACTION_PLAY_PAUSE:
 			source->info.media_play_pause(source->context.data, action.pause);
 
-			if (action.pause)
+			if (action.pause) {
+				//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+				blog(LOG_INFO, "%s: dosignal media_pause, source: %s (%p)", __FUNCTION__,
+				     obs_source_get_name(source), (void *)source);
 				obs_source_dosignal(source, NULL, "media_pause");
-			else
+			} else {
+				//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+				blog(LOG_INFO, "%s: dosignal media_play, source: %s (%p)", __FUNCTION__,
+				     obs_source_get_name(source), (void *)source);
 				obs_source_dosignal(source, NULL, "media_play");
+			}
 			break;
 
 		case MEDIA_ACTION_RESTART:
+			//PRISM/zhang.shan/20260121/PRISM_PC-5062/action log
+			PLS_UI_ACTION_OBS("%s media action restart", obs_source_get_id(source));
+
 			source->info.media_restart(source->context.data);
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: dosignal media_restart, source: %s (%p)", __FUNCTION__,
+			     obs_source_get_name(source), (void *)source);
 			obs_source_dosignal(source, NULL, "media_restart");
 			break;
 
 		case MEDIA_ACTION_STOP:
+			//PRISM/zhang.shan/20260121/PRISM_PC-5062/action log
+			PLS_UI_ACTION_OBS("%s media action stoped", obs_source_get_id(source));
+
 			source->info.media_stop(source->context.data);
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: dosignal media_stopped, source: %s (%p)", __FUNCTION__,
+			     obs_source_get_name(source), (void *)source);
 			obs_source_dosignal(source, NULL, "media_stopped");
 			break;
 		case MEDIA_ACTION_NEXT:
+			//PRISM/zhang.shan/20260121/PRISM_PC-5062/action log
+			PLS_UI_ACTION_OBS("%s media action next", obs_source_get_id(source));
+
 			source->info.media_next(source->context.data);
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: dosignal media_next, source: %s (%p)", __FUNCTION__,
+			     obs_source_get_name(source), (void *)source);
 			obs_source_dosignal(source, NULL, "media_next");
 			break;
 		case MEDIA_ACTION_PREVIOUS:
+			//PRISM/zhang.shan/20260121/PRISM_PC-5062/action log
+			PLS_UI_ACTION_OBS("%s media action previous", obs_source_get_id(source));
+
 			source->info.media_previous(source->context.data);
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: dosignal media_previous, source: %s (%p)", __FUNCTION__,
+			     obs_source_get_name(source), (void *)source);
 			obs_source_dosignal(source, NULL, "media_previous");
 			break;
 		case MEDIA_ACTION_SET_TIME:
@@ -1264,6 +1364,9 @@ void process_media_actions(obs_source_t *source)
 		case MEDIA_ACTION_FORCE_FREE:
 			//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 			pls_source_free_resources(source);
+			//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+			blog(LOG_INFO, "%s: dosignal media_stopped (FORCE_FREE), source: %s (%p)", __FUNCTION__,
+			     obs_source_get_name(source), (void *)source);
 			obs_source_dosignal(source, NULL, "media_stopped");
 			break;
 		}
@@ -2450,6 +2553,7 @@ bool update_async_textures(struct obs_source *source, const struct obs_source_fr
 	enum convert_type type;
 
 	source->async_flip = frame->flip;
+
 	source->async_linear_alpha = (frame->flags & OBS_SOURCE_FRAME_LINEAR_ALPHA) != 0;
 
 	if (source->async_gpu_conversion && texrender)
@@ -2488,7 +2592,15 @@ static inline void obs_source_draw_texture(struct obs_source *source, gs_effect_
 		gs_effect_set_texture(param, tex);
 	}
 
-	gs_draw_sprite(tex, source->async_flip ? GS_FLIP_V : 0, 0, 0);
+	//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+	uint32_t flip = 0;
+	if (source->async_flip)
+		flip = flip | GS_FLIP_V;
+
+	if (source->async_flip_h)
+		flip = flip | GS_FLIP_U;
+
+	gs_draw_sprite(tex, flip, 0, 0);
 
 	gs_enable_framebuffer_srgb(previous);
 }
@@ -2644,6 +2756,11 @@ static inline void obs_source_render_async_video(obs_source_t *source)
 			gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 		}
 
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_on_source_property_render(source, 0);
+#endif
+
 		obs_source_draw_texture(source, effect);
 
 		if (nonlinear_alpha) {
@@ -2693,6 +2810,10 @@ static uint32_t get_base_width(const obs_source_t *source)
 	bool is_filter = !!source->filter_parent;
 	bool func_valid = source->context.data && source->info.get_width;
 
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	if (pls_need_ignore_sync_func(source))
+		func_valid = false;
+
 	if (source->info.type == OBS_SOURCE_TYPE_TRANSITION) {
 		return source->enabled ? source->transition_actual_cx : 0;
 
@@ -2710,6 +2831,10 @@ static uint32_t get_base_height(const obs_source_t *source)
 {
 	bool is_filter = !!source->filter_parent;
 	bool func_valid = source->context.data && source->info.get_height;
+
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	if (pls_need_ignore_sync_func(source))
+		func_valid = false;
 
 	if (source->info.type == OBS_SOURCE_TYPE_TRANSITION) {
 		return source->enabled ? source->transition_actual_cy : 0;
@@ -2812,7 +2937,22 @@ static void source_render(obs_source_t *source, gs_effect_t *effect)
 			gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 			gs_ortho(0.0f, (float)cx, 0.0f, (float)cy, -100.0f, 100.0f);
 
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_begin_taken_time(source, obs_source_get_id(source), "video_render (if)");
+
+			//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+			pls_set_current_source(source);
+
 			source->info.video_render(data, effect);
+
+			//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+			pls_set_current_source(NULL);
+			if (source->info.type == OBS_SOURCE_TYPE_FILTER) {
+				pls_on_source_property_render(source, 0);
+			}
+
+			//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+			pls_end_taken_time(source, obs_source_get_id(source), "video_render (if)", time_ns_3ms);
 
 			gs_enable_blending(true);
 
@@ -2844,7 +2984,21 @@ static void source_render(obs_source_t *source, gs_effect_t *effect)
 			gs_enable_framebuffer_srgb(previous);
 		}
 	} else {
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(source, obs_source_get_id(source), "video_render (else)");
+
+		pls_set_current_source(source); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+
 		source->info.video_render(data, effect);
+
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_set_current_source(NULL);
+		if (source->info.type == OBS_SOURCE_TYPE_FILTER) {
+			pls_on_source_property_render(source, 0);
+		}
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(source, obs_source_get_id(source), "video_render (else)", time_ns_3ms);
 	}
 	source_profiler_source_render_end(source, start, timer);
 }
@@ -2889,7 +3043,7 @@ static inline void obs_source_main_render(obs_source_t *source)
 	if (source->source_render_profile)
 		profile_start(source->source_render_profile);
 
-	if (default_effect) {
+	if (default_effect && !source->is_lens_camera) { //PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
 		obs_source_default_render(source);
 	} else if (source->context.data) {
 		source_render(source, custom_draw ? NULL : gs_get_effect());
@@ -2947,12 +3101,17 @@ static inline void render_video(obs_source_t *source)
 	GS_DEBUG_MARKER_BEGIN_FORMAT(GS_DEBUG_COLOR_SOURCE, get_type_format(source->info.type),
 				     obs_source_get_name(source));
 
+	//PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
+	bool func_valid = source->info.video_render;
+	if (pls_need_ignore_sync_func(source))
+		func_valid = false;
+
 	//PRISM/zengqin/20250106/PRISM_PC-1992
 	bool ignore_filter = pls_is_dual_output_initialized() && obs_source_is_group(source);
 	if (source->filters.num && !source->rendering_filter && !ignore_filter)
 		obs_source_render_filters(source);
 
-	else if (source->info.video_render)
+	else if (source->info.video_render && func_valid) //PRISM/wangshaohui/20250801/PRISM_PC-3391/support lens v2
 		obs_source_main_render(source);
 
 	else if (source->filter_target)
@@ -3359,14 +3518,19 @@ struct obs_source_frame *filter_async_video(obs_source_t *source, struct obs_sou
 	for (i = source->filters.num; i > 0; i--) {
 		struct obs_source *filter = source->filters.array[i - 1];
 
-		if (!filter->enabled)
+		if (!filter->enabled) {
+			pls_on_source_property_render(filter, 0); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
 			continue;
+		}
 
 		if (filter->context.data && filter->info.filter_video) {
 			in = filter->info.filter_video(filter->context.data, in);
+			pls_on_source_property_render(filter, 0); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
 			if (!in)
 				break;
 		}
+
+		pls_on_source_property_render(filter, 0); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
 	}
 
 	pthread_mutex_unlock(&source->filter_mutex);
@@ -3505,13 +3669,15 @@ static inline void free_async_cache(struct obs_source *source)
 	source->prev_async_frame = NULL;
 }
 
-#define MAX_UNUSED_FRAME_DURATION 5
+//PRISM/wangshaohui/20260128/PRISM_PC-5208/reduce free/create
+#define MAX_UNUSED_FRAME_DURATION 120
+#define MIN_CACHE_FRAMES 2
 
 /* frees frame allocations if they haven't been used for a specific period
  * of time */
 static void clean_cache(obs_source_t *source)
 {
-	for (size_t i = source->async_cache.num; i > 0; i--) {
+	for (size_t i = source->async_cache.num; i > 0 && source->async_cache.num > MIN_CACHE_FRAMES; i--) {
 		struct async_frame *af = &source->async_cache.array[i - 1];
 		if (!af->used) {
 			if (++af->unused_count == MAX_UNUSED_FRAME_DURATION) {
@@ -3657,6 +3823,7 @@ void obs_source_output_video2(obs_source_t *source, const struct obs_source_fram
 	new_frame.full_range = range == VIDEO_RANGE_FULL;
 	new_frame.max_luminance = 0;
 	new_frame.flip = frame->flip;
+
 	new_frame.flags = frame->flags;
 	new_frame.trc = frame->trc;
 
@@ -3665,6 +3832,42 @@ void obs_source_output_video2(obs_source_t *source, const struct obs_source_fram
 	memcpy(&new_frame.color_range_max, &frame->color_range_max, sizeof(frame->color_range_max));
 
 	obs_source_output_video_internal(source, &new_frame);
+}
+
+void pls_source_clear_async_video(obs_source_t *source)
+{
+	if (!obs_source_valid(source, "pls_source_clear_async_video"))
+		return;
+
+	pthread_mutex_lock(&source->async_mutex);
+	source->async_active = false;
+	source->last_frame_ts = 0;
+	free_async_cache(source);
+	pthread_mutex_unlock(&source->async_mutex);
+
+	obs_enter_graphics();
+
+	for (size_t c = 0; c < MAX_AV_PLANES; c++) {
+		gs_texture_t *tex = source->async_textures[c];
+		if (!tex)
+			continue;
+
+		uint32_t w = gs_texture_get_width(tex);
+		uint32_t h = gs_texture_get_height(tex);
+		uint32_t bpp = gs_get_format_bpp(gs_texture_get_color_format(tex));
+		uint32_t linesize = w * bpp / 8;
+		size_t data_size = (size_t)linesize * h;
+
+		uint8_t *zero_data = bzalloc(data_size);
+		gs_texture_set_image(tex, zero_data, linesize, false);
+		bfree(zero_data);
+	}
+
+	if (source->async_texrender) {
+		gs_texrender_reset(source->async_texrender);
+	}
+
+	obs_leave_graphics();
 }
 
 void obs_source_set_async_rotation(obs_source_t *source, long rotation)
@@ -3900,14 +4103,18 @@ static inline struct obs_audio_data *filter_async_audio(obs_source_t *source, st
 	for (i = source->filters.num; i > 0; i--) {
 		struct obs_source *filter = source->filters.array[i - 1];
 
-		if (!filter->enabled)
+		if (!filter->enabled) {
+			pls_on_source_property_render(filter, 0); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
 			continue;
+		}
 
 		if (filter->context.data && filter->info.filter_audio) {
 			in = filter->info.filter_audio(filter->context.data, in);
+			pls_on_source_property_render(filter, 0); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
 			if (!in)
 				return NULL;
 		}
+		pls_on_source_property_render(filter, 0); //PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
 	}
 
 	return in;
@@ -4022,6 +4229,9 @@ static void process_audio_balancing(struct obs_source *source, uint32_t frames, 
 /* resamples/remixes new audio to the designated main audio output format */
 static void process_audio(obs_source_t *source, const struct obs_source_audio *audio)
 {
+	//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+	pls_on_source_property_render(source, PROPERTY_RENDER_TIMEOUT);
+
 	uint32_t frames = audio->frames;
 	bool mono_output;
 
@@ -4271,7 +4481,9 @@ void obs_source_release_frame(obs_source_t *source, struct obs_source_frame *fra
 
 const char *obs_source_get_name(const obs_source_t *source)
 {
-	return obs_source_valid(source, "obs_source_get_name") ? source->context.name : NULL;
+	//PRISM/wangshaohui/20251110/PRISM_PC-4309/avoid crash during using strxxx functions
+	//return obs_source_valid(source, "obs_source_get_name") ? source->context.name : NULL;
+	return obs_source_valid(source, "obs_source_get_name") ? source->context.name : "";
 }
 
 const char *obs_source_get_uuid(const obs_source_t *source)
@@ -4530,7 +4742,9 @@ void obs_source_skip_video_filter(obs_source_t *filter)
 	if (target == parent) {
 		if (!custom_draw && !async)
 			obs_source_default_render(target);
-		else if (target->info.video_render)
+		//PRISM/wangshaohui/20260413/PRISM_PC-5725/support lens v2
+		//else if (target->info.video_render)
+		else if (target->info.video_render && !pls_need_ignore_sync_func(target))
 			obs_source_main_render(target);
 		else if (deinterlacing_enabled(target))
 			deinterlace_render(target);
@@ -4807,15 +5021,17 @@ void obs_source_load2(obs_source_t *source)
 	}
 }
 
+//PRISM/chenguoxi/20260422/PRISM_PC-5948/silence high-frequency null source debug log --begin
 bool obs_source_active(const obs_source_t *source)
 {
-	return obs_source_valid(source, "obs_source_active") ? source->activate_refs != 0 : false;
+	return source ? source->activate_refs != 0 : false;
 }
 
 bool obs_source_showing(const obs_source_t *source)
 {
-	return obs_source_valid(source, "obs_source_showing") ? source->show_refs != 0 : false;
+	return source ? source->show_refs != 0 : false;
 }
+//PRISM/chenguoxi/20260422/PRISM_PC-5948/silence high-frequency null source debug log --end
 
 static inline void signal_flags_updated(obs_source_t *source)
 {
@@ -5764,6 +5980,9 @@ void obs_source_media_play_pause(obs_source_t *source, bool pause)
 	pthread_mutex_lock(&source->media_actions_mutex);
 	da_push_back(source->media_actions, &action);
 	pthread_mutex_unlock(&source->media_actions_mutex);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: media action obs_source_media_play_pause, source: %s (%p)", __FUNCTION__,
+	     obs_source_get_name(source), (void *)source);
 }
 
 void obs_source_media_restart(obs_source_t *source)
@@ -5783,6 +6002,9 @@ void obs_source_media_restart(obs_source_t *source)
 	pthread_mutex_lock(&source->media_actions_mutex);
 	da_push_back(source->media_actions, &action);
 	pthread_mutex_unlock(&source->media_actions_mutex);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: media action obs_source_media_restart, source: %s (%p)", __FUNCTION__,
+	     obs_source_get_name(source), (void *)source);
 }
 
 void obs_source_media_stop(obs_source_t *source)
@@ -5802,6 +6024,9 @@ void obs_source_media_stop(obs_source_t *source)
 	pthread_mutex_lock(&source->media_actions_mutex);
 	da_push_back(source->media_actions, &action);
 	pthread_mutex_unlock(&source->media_actions_mutex);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: media action obs_source_media_stop, source: %s (%p)", __FUNCTION__,
+	     obs_source_get_name(source), (void *)source);
 }
 
 void obs_source_media_next(obs_source_t *source)
@@ -5821,6 +6046,9 @@ void obs_source_media_next(obs_source_t *source)
 	pthread_mutex_lock(&source->media_actions_mutex);
 	da_push_back(source->media_actions, &action);
 	pthread_mutex_unlock(&source->media_actions_mutex);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: media action obs_source_media_next, source: %s (%p)", __FUNCTION__,
+	     obs_source_get_name(source), (void *)source);
 }
 
 void obs_source_media_previous(obs_source_t *source)
@@ -5840,6 +6068,9 @@ void obs_source_media_previous(obs_source_t *source)
 	pthread_mutex_lock(&source->media_actions_mutex);
 	da_push_back(source->media_actions, &action);
 	pthread_mutex_unlock(&source->media_actions_mutex);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: media action obs_source_media_previous, source: %s (%p)", __FUNCTION__,
+	     obs_source_get_name(source), (void *)source);
 }
 
 int64_t obs_source_media_get_duration(obs_source_t *source)
@@ -5885,6 +6116,9 @@ void obs_source_media_set_time(obs_source_t *source, int64_t ms)
 	pthread_mutex_lock(&source->media_actions_mutex);
 	da_push_back(source->media_actions, &action);
 	pthread_mutex_unlock(&source->media_actions_mutex);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: media action obs_source_media_set_time, source: %s (%p)", __FUNCTION__,
+	     obs_source_get_name(source), (void *)source);
 }
 
 enum obs_media_state obs_source_media_get_state(obs_source_t *source)
@@ -5907,6 +6141,9 @@ void obs_source_media_started(obs_source_t *source)
 	if ((source->info.output_flags & OBS_SOURCE_CONTROLLABLE_MEDIA) == 0)
 		return;
 
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: dosignal media_started, source: %s (%p)", __FUNCTION__, obs_source_get_name(source),
+	     (void *)source);
 	obs_source_dosignal(source, NULL, "media_started");
 }
 
@@ -5917,6 +6154,9 @@ void obs_source_media_ended(obs_source_t *source)
 	if ((source->info.output_flags & OBS_SOURCE_CONTROLLABLE_MEDIA) == 0)
 		return;
 
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	blog(LOG_INFO, "%s: dosignal media_ended, source: %s (%p)", __FUNCTION__, obs_source_get_name(source),
+	     (void *)source);
 	obs_source_dosignal(source, NULL, "media_ended");
 }
 

@@ -20,9 +20,18 @@
 #include "audio-helpers.h"
 #include "nt-stuff.h"
 
+#ifdef PLS_UI_ACTION_STATS
+//PRISM/FanZirong/20260112/PRISM_PC-5167/action log
+#include "pls/pls-source.h"
+#endif
+
 //PRISM/Xiewei/20230505/add game capture hook failed log
 #include "pls/pls-obs-api.h"
 #include "pls/pls-base.h"
+#include "pls/pls-source.h"
+#include "pls/pls-win-helper.h"
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+#include "pls/pls-properties.h"
 
 //PRISM/FanZirong/20240730/PRISM_PC-801/add game capture exe log
 #include "util/windows/win-version.h"
@@ -59,6 +68,9 @@
 #define SETTING_HOOK_RATE            "hook_rate"
 #define SETTING_RGBA10A2_SPACE       "rgb10a2_space"
 #define SETTINGS_COMPAT_INFO         "compat_info"
+
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+#define SETTINGS_GUIDANCE	     "guidance"
 
 /* deprecated */
 #define SETTING_ANY_FULLSCREEN   "capture_any_fullscreen"
@@ -102,6 +114,9 @@
 #define TEXT_HOTKEY_STOP         obs_module_text("GameCapture.HotkeyStop")
 
 /* clang-format on */
+
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+#define GUIDANCE_URL "https://guide.prismlive.com/desktop/guides/error-solution/source/how-to-fix-game-capture-failure"
 
 #define DEFAULT_RETRY_INTERVAL 2.0f
 #define ERROR_RETRY_INTERVAL 4.0f
@@ -572,6 +587,54 @@ static void game_capture_update(void *data, obs_data_t *settings)
 		gc->activate_hook = !!window && !!*window;
 	}
 
+	//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+	if (reset_capture) {
+		pls_game_failed_clear();
+
+		bool specific_window = (cfg.class && *cfg.class) || (cfg.title && *cfg.title) ||
+				       (cfg.executable && *cfg.executable);
+		if (cfg.mode == CAPTURE_MODE_WINDOW && specific_window) {
+			pls_update_source_loading(gc->source, true);
+		} else {
+			pls_update_source_loading(gc->source, false);
+		}
+	}
+
+	//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+	bool window_changed = false;
+	if (cfg.mode == CAPTURE_MODE_WINDOW && gc->config.mode == CAPTURE_MODE_WINDOW) {
+		bool class_diff = false;
+		if (cfg.class == NULL && gc->config.class == NULL) {
+			class_diff = false;
+		} else if (cfg.class == NULL || gc->config.class == NULL) {
+			class_diff = true;
+		} else {
+			class_diff = strcmp(cfg.class, gc->config.class) != 0;
+		}
+
+		bool title_diff = false;
+		if (cfg.title == NULL && gc->config.title == NULL) {
+			title_diff = false;
+		} else if (cfg.title == NULL || gc->config.title == NULL) {
+			title_diff = true;
+		} else {
+			title_diff = strcmp(cfg.title, gc->config.title) != 0;
+		}
+
+		bool exe_diff = false;
+		if (cfg.executable == NULL && gc->config.executable == NULL) {
+			exe_diff = false;
+		} else if (cfg.executable == NULL || gc->config.executable == NULL) {
+			exe_diff = true;
+		} else {
+			exe_diff = strcmp(cfg.executable, gc->config.executable) != 0;
+		}
+
+		window_changed = class_diff || title_diff || exe_diff || (cfg.priority != gc->config.priority);
+	} else if (cfg.mode != gc->config.mode) {
+		window_changed = true;
+	}
+
 	free_config(&gc->config);
 	gc->config = cfg;
 	gc->retry_interval = DEFAULT_RETRY_INTERVAL * hook_rate_to_float(gc->config.hook_rate);
@@ -605,6 +668,11 @@ static void game_capture_update(void *data, obs_data_t *settings)
 	//PRISM/Xiewei/20230712/NoIssue/add debug log
 	const char *fields[][2] = {{PTS_LOG_TYPE, PTS_TYPE_EVENT}, {"source_name", obs_source_get_name(gc->source)}};
 
+	//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+	if (window_changed) {
+		pls_source_send_notify(gc->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_STATUS_SUCCESS);
+	}
+
 	do_logex(false, LOG_INFO, fields, 2,
 		 "game updated.\n"
 		 "\ttitle: %s\n"
@@ -623,13 +691,15 @@ static void game_capture_update(void *data, obs_data_t *settings)
 		 cfg.capture_overlays, cfg.hook_rate);
 }
 
-extern void wait_for_hook_initialization(void);
+//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+extern void wait_for_hook_initialization(bool to_shutdown);
 
 static void *game_capture_create(obs_data_t *settings, obs_source_t *source)
 {
 	struct game_capture *gc = bzalloc(sizeof(*gc));
 
-	wait_for_hook_initialization();
+	//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+	wait_for_hook_initialization(false);
 
 	gc->source = source;
 	gc->initial_config = true;
@@ -820,8 +890,21 @@ static inline void reset_frame_interval(struct game_capture *gc)
 	gc->global_hook_info->frame_interval = interval;
 }
 
+//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+extern bool init_offset_done;
+
 static inline bool init_hook_info(struct game_capture *gc)
 {
+	//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+	if (!init_offset_done) {
+		static unsigned long cnt = 0;
+		++cnt;
+		if (0 == (cnt % 300)) {
+			warn("init_hook_info: offset is not completed");
+		}
+		return false;
+	}
+
 	gc->global_hook_info_map = open_hook_info(gc);
 	if (!gc->global_hook_info_map) {
 		warn("init_hook_info: get_hook_info failed: %lu", GetLastError());
@@ -975,9 +1058,52 @@ static inline bool create_inject_process(struct game_capture *gc, const char *in
 
 extern char *get_hook_path(bool b64);
 
-//PRISM/Xiewei/20230505/add game capture hook failed log
-static void log_game_capture_failed(struct game_capture *gc, enum obs_source_event_type type, const char *reason)
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+static const char *get_game_capture_failed_reason_string(enum obs_source_failed_status_sub_code code)
 {
+	switch (code) {
+	case OBS_SOURCE_STATUS_SUCCESS:
+		return "game captured";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_OPEN_TARGET_PROCESS:
+		return "open_target_process";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_BLACKLISTED_PROCESS:
+		return "blacklisted_process";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_TARGET_SUSPENDED:
+		return "target_suspended";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_PIPE:
+		return "init_pipe";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_HOOK_DIRECT_FAIL:
+		return "hook_direct fail";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_HOOK_DIRECT_HELPER_FAIL:
+		return "hook_direct helper fail";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_CAPTURE_DATA_FAIL:
+		return "init capture data fail";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_CREATE_TEXTURE_FAIL:
+		return "create texture fail";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_OPEN_SHARED_HANDLE_FAIL:
+		return "open shared_handle fail";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_NO_INJECT_HELPER:
+		return "no inject helper";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_NO_INJECT_DLL:
+		return "no inject dll";
+	case OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_KEEPALIVE:
+		return "init_keepalive";
+	default:
+		return "unknown_error";
+	}
+}
+
+//PRISM/Xiewei/20230505/add game capture hook failed log
+static void log_game_capture_failed(struct game_capture *gc, enum obs_source_event_type type,
+				    enum obs_source_failed_status_sub_code code)
+{
+	//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+	pls_source_send_notify(gc->source, OBS_SOURCE_FAILED_STATUS, code);
+
+	//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+	pls_update_source_loading(gc->source, false);
+	pls_game_failed_push(gc->next_window);
+
 	//PRISM/FanZirong/20240730/PRISM_PC-801/add game capture exe log
 	struct dstr exe = {0};
 	char exe_version[100] = "0";
@@ -1009,7 +1135,8 @@ static void log_game_capture_failed(struct game_capture *gc, enum obs_source_eve
 
 done:
 	obs_data_t *log = obs_data_create();
-
+	//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+	const char *reason = get_game_capture_failed_reason_string(code);
 	obs_data_set_string(log, "game_exe", exe.array);
 	obs_data_set_string(log, "game_version", exe_version);
 	obs_data_set_string(log, "game_title", gc->game_title);
@@ -1035,12 +1162,14 @@ static inline bool inject_hook(struct game_capture *gc)
 
 	if (!check_file_integrity(gc, inject_path, "inject helper")) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "no inject helper");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_NO_INJECT_HELPER);
 		goto cleanup;
 	}
 	if (!check_file_integrity(gc, hook_path, "graphics hook")) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "no inject dll");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_NO_INJECT_DLL);
 		goto cleanup;
 	}
 
@@ -1055,7 +1184,8 @@ static inline bool inject_hook(struct game_capture *gc)
 		success = hook_direct(gc, hook_path);
 		if (!success) {
 			//PRISM/Xiewei/20230505/add game capture hook failed log
-			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "hook_direct fail");
+			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+						OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_HOOK_DIRECT_FAIL);
 		}
 	} else {
 		info("using helper (%s hook)", use_anticheat(gc) ? "compatibility" : "direct");
@@ -1122,6 +1252,9 @@ static bool init_hook(struct game_capture *gc)
 	struct dstr exe = {0};
 	bool blacklisted_process = false;
 
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_get_window_exe");
+
 	if (gc->config.mode == CAPTURE_MODE_ANY) {
 		if (ms_get_window_exe(&exe, gc->next_window)) {
 			info("attempting to hook fullscreen process: %s", exe.array);
@@ -1132,6 +1265,9 @@ static bool init_hook(struct game_capture *gc)
 		}
 	}
 
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_get_window_exe", time_ns_3ms);
+
 	blacklisted_process = is_blacklisted_exe(exe.array);
 	if (blacklisted_process)
 		info("cannot capture %s due to being blacklisted", exe.array);
@@ -1139,40 +1275,86 @@ static bool init_hook(struct game_capture *gc)
 
 	if (blacklisted_process) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "blacklisted_process");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_BLACKLISTED_PROCESS);
 		return false;
 	}
+
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_target_suspended");
+
 	if (target_suspended(gc)) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "target_suspended");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_TARGET_SUSPENDED);
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_target_suspended", time_ns_3ms);
 		return false;
 	}
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_target_suspended", time_ns_3ms);
+
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_open_target_process");
+
 	if (!open_target_process(gc)) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "open_target_process");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_OPEN_TARGET_PROCESS);
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_open_target_process", time_ns_3ms);
 		return false;
 	}
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_open_target_process", time_ns_3ms);
+
 	if (!init_keepalive(gc)) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "init_keepalive");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_KEEPALIVE);
 		return false;
 	}
+
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_pipe");
+
 	if (!init_pipe(gc)) {
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "init_pipe");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+					OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_PIPE);
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_pipe", time_ns_3ms);
 		return false;
 	}
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_pipe", time_ns_3ms);
+
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_inject_hook");
 	if (!attempt_existing_hook(gc)) {
 		if (!inject_hook(gc)) {
+			//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+			pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_inject_hook", time_ns_3ms);
 			return false;
 		}
 	}
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_inject_hook", time_ns_3ms);
+
 	if (!init_texture_mutexes(gc)) {
 		return false;
 	}
+
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_hook_info");
 	if (!init_hook_info(gc)) {
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_hook_info", time_ns_3ms);
 		return false;
 	}
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_hook_info", time_ns_3ms);
+
 	if (!init_events(gc)) {
 		return false;
 	}
@@ -1280,6 +1462,14 @@ static void get_fullscreen_window(struct game_capture *gc)
 
 	if (rect.left == mi.rcMonitor.left && rect.right == mi.rcMonitor.right && rect.bottom == mi.rcMonitor.bottom &&
 	    rect.top == mi.rcMonitor.top) {
+		//PRISM/FanZirong/20260316/PRISM_PC-5528/In fullscreen mode do not capture blacklisted games, skip this window
+		struct dstr exe = {0};
+		if (ms_get_window_exe(&exe, window) && is_blacklisted_exe(exe.array)) {
+			dstr_free(&exe);
+			gc->wait_for_target_startup = true;
+			return;
+		}
+		dstr_free(&exe);
 		setup_window(gc, window);
 	} else {
 		gc->wait_for_target_startup = true;
@@ -1308,14 +1498,26 @@ static void get_selected_window(struct game_capture *gc)
 
 static void try_hook(struct game_capture *gc)
 {
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_get_window");
+
 	if (gc->config.mode == CAPTURE_MODE_ANY) {
 		get_fullscreen_window(gc);
 	} else {
 		get_selected_window(gc);
 	}
 
+	//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+	pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_get_window", time_ns_3ms);
+
 	if (gc->next_window) {
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_get_window_process");
+
 		gc->thread_id = GetWindowThreadProcessId(gc->next_window, &gc->process_id);
+
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_get_window_process", time_ns_3ms);
 
 		// Make sure we never try to hook ourselves (projector)
 		if (gc->process_id == GetCurrentProcessId())
@@ -1331,9 +1533,16 @@ static void try_hook(struct game_capture *gc)
 			return;
 		}
 
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_begin_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_hook");
+
 		if (!init_hook(gc)) {
 			stop_capture(gc);
 		}
+
+		//PRISM/FanZirong/20251027/PRISM_PC-4304/upload taken time
+		pls_end_taken_time(gc->source, obs_source_get_id(gc->source), "game_init_hook", time_ns_3ms);
+
 	} else {
 		gc->active = false;
 	}
@@ -1668,6 +1877,10 @@ static void copy_shmem_tex(struct game_capture *gc)
 		}
 
 		gs_texture_unmap(gc->texture);
+
+		//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+		pls_update_source_loading(gc->source, false);
+		pls_game_failed_remove(gc->next_window);
 	}
 
 	ReleaseMutex(mutex);
@@ -1765,6 +1978,11 @@ static inline bool init_shtex_capture(struct game_capture *gc)
 			gc->linear_sample = linear_sample;
 			gc->extra_texture = extra_texture;
 			gc->extra_texrender = extra_texrender;
+
+			//PRISM/wangshaohui/20260416/PRISM_PC-5469/add preview loading
+			pls_update_source_loading(gc->source, false);
+			pls_game_failed_remove(gc->next_window);
+
 		} else {
 			gs_texture_destroy(texture);
 		}
@@ -1792,23 +2010,25 @@ static bool start_capture(struct game_capture *gc)
 	if (gc->global_hook_info->type == CAPTURE_TYPE_MEMORY) {
 		if (!init_shmem_capture(gc)) {
 			//PRISM/Xiewei/20230505/add game capture hook failed log
-			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "create texture fail");
+			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+						OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_CREATE_TEXTURE_FAIL);
 			return false;
 		}
 
 		info("memory capture successful");
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_SUCCESS_MSG, "game captured");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_SUCCESS_MSG, OBS_SOURCE_STATUS_SUCCESS);
 	} else {
 		if (!init_shtex_capture(gc)) {
 			//PRISM/Xiewei/20230505/add game capture hook failed log
-			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "open shared_handle fail");
+			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+						OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_OPEN_SHARED_HANDLE_FAIL);
 			return false;
 		}
 
 		info("shared texture capture successful");
 		//PRISM/Xiewei/20230505/add game capture hook failed log
-		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_SUCCESS_MSG, "game captured");
+		log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_SUCCESS_MSG, OBS_SOURCE_STATUS_SUCCESS);
 	}
 
 	return true;
@@ -1898,7 +2118,8 @@ static void game_capture_tick(void *data, float seconds)
 			warn("inject process failed: %ld", (long)exit_code);
 			gc->error_acquiring = true;
 			//PRISM/Xiewei/20230505/add game capture hook failed log
-			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "hook_direct helper fail");
+			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+						OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_HOOK_DIRECT_HELPER_FAIL);
 
 		} else if (!gc->capturing) {
 			gc->retry_interval = ERROR_RETRY_INTERVAL * hook_rate_to_float(gc->config.hook_rate);
@@ -1914,7 +2135,8 @@ static void game_capture_tick(void *data, float seconds)
 			gc->capturing = start_capture(gc);
 		else {
 			debug("init_capture_data failed");
-			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG, "init capture data fail");
+			log_game_capture_failed(gc, PLS_SOURCE_GAME_CAPTURE_FAILED_MSG,
+						OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_CAPTURE_DATA_FAIL);
 		}
 
 		// If capture was successful, send a hooked signal
@@ -2228,6 +2450,10 @@ static void game_capture_render(void *data, gs_effect_t *unused)
 
 		gs_set_linear_srgb(previous);
 	}
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/FanZirong/20260112/PRISM_PC-5167/action log
+	pls_on_source_property_render(gc->source, 0);
+#endif
 }
 
 static uint32_t game_capture_width(void *data)
@@ -2377,6 +2603,9 @@ static obs_properties_t *game_capture_properties(void *data)
 
 	obs_properties_t *ppts = obs_properties_create();
 	obs_property_t *p;
+
+	//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+	p = pls_properties_add_capture_guide(ppts, SETTINGS_GUIDANCE, "", GUIDANCE_URL);
 
 	p = obs_properties_add_list(ppts, SETTING_MODE, TEXT_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 

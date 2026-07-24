@@ -44,6 +44,9 @@ extern bool load_graphics_offsets(bool is32bit, bool use_hook_address_cache, con
 
 static const bool use_hook_address_cache = false;
 
+//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+bool init_offset_done = false;
+
 static DWORD WINAPI init_hooks(LPVOID param)
 {
 	char *config_path = param;
@@ -57,21 +60,44 @@ static DWORD WINAPI init_hooks(LPVOID param)
 		load_graphics_offsets(!IS32BIT, use_hook_address_cache, config_path);
 	}
 
+	//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+	init_offset_done = true;
+	blog(LOG_INFO, "%s complete init offset for game source", __FUNCTION__);
+
 	bfree(config_path);
 	return 0;
 }
 
-void wait_for_hook_initialization(void)
+//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+void wait_for_hook_initialization(bool to_shutdown)
 {
 	static bool initialized = false;
 
 	if (!initialized) {
 		if (init_hooks_thread) {
-			WaitForSingleObject(init_hooks_thread, INFINITE);
-			CloseHandle(init_hooks_thread);
-			init_hooks_thread = NULL;
+			//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+			//WaitForSingleObject(init_hooks_thread, INFINITE);
+			//CloseHandle(init_hooks_thread);
+			//init_hooks_thread = NULL;
+			DWORD waitResult = WaitForSingleObject(init_hooks_thread, 5000);
+			if (waitResult == WAIT_OBJECT_0) {
+				CloseHandle(init_hooks_thread);
+				init_hooks_thread = NULL;
+				initialized = true;
+			} else {
+				if (to_shutdown) {
+					blog(LOG_WARNING, "terminate the thread for loading offset");
+					// if we do't terminate thread, process will be blocked on exiting.
+					if (TerminateThread(init_hooks_thread, 2)) {
+						CloseHandle(init_hooks_thread); 
+						init_hooks_thread = NULL;
+						initialized = true;
+					}
+				}
+			}
 		}
-		initialized = true;
+		//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+		//initialized = true;
 	}
 }
 
@@ -155,7 +181,8 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
-	wait_for_hook_initialization();
+	//PRISM/wangshaohui/20260415/PRISM_PC-5729/avoid ui block
+	wait_for_hook_initialization(true);
 	update_info_destroy(update_info);
 	compat_json_free();
 }

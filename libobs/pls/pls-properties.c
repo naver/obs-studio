@@ -144,6 +144,11 @@ struct text_content_data {
 	char *content;
 };
 
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+struct capture_guide_data {
+	char *url;
+};
+
 #define pls_property_xx_item_xx(name, key, type)                                            \
 	const char *pls_property_##name##_item_##key(obs_property_t *p, size_t idx)         \
 	{                                                                                   \
@@ -161,6 +166,8 @@ static inline size_t get_pls_property_size(enum pls_property_type type)
 		return sizeof(struct line_data);
 	case PLS_PROPERTY_TEXT_CONTENT:
 		return sizeof(struct text_content_data);
+	case PLS_PROPERTY_CAPTURE_GUIDE: //PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+		return sizeof(struct capture_guide_data);
 	case PLS_PROPERTY_BOOL_GROUP:
 		return sizeof(struct bool_group_data);
 	case PLS_PROPERTY_BUTTON_GROUP:
@@ -1853,6 +1860,29 @@ const char *pls_property_get_text_content(obs_property_t *p)
 
 	return data ? data->content : NULL;
 }
+
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance--start
+obs_property_t *pls_properties_add_capture_guide(obs_properties_t *props, const char *name, const char *desc,
+						 const char *url)
+{
+	if (!props)
+		return NULL;
+
+	struct obs_property *p = new_pls_prop(props, name, desc, PLS_PROPERTY_CAPTURE_GUIDE);
+
+	struct capture_guide_data *data = get_property_data(p);
+	data->url = bstrdup(url);
+
+	return p;
+}
+
+const char *pls_property_get_capture_guide_url(obs_property_t *p)
+{
+	struct capture_guide_data *data = get_pls_type_data(p, PLS_PROPERTY_CAPTURE_GUIDE);
+
+	return data ? data->url : NULL;
+}
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance--end
 
 obs_property_t *pls_properties_add_chzzk_sponsor(obs_properties_t *props, const char *name)
 {

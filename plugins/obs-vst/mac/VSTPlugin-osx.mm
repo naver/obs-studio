@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #import <AppKit/AppKit.h>
 //PRISM/aiguanghua/20250331/PRISM_PC_NELO-225/unloadLibrary crash
 #import "VSTPluginMacWeakBundle.h"
+#include "pls/pls-obs-api.h"
 
 AEffect *VSTPlugin::loadEffect(const std::string &path)
 {
@@ -93,6 +94,11 @@ AEffect *VSTPlugin::loadEffect(const std::string &path)
 void VSTPlugin::unloadLibrary()
 {
     //PRISM/aiguanghua/20250331/PRISM_PC_NELO-225/unloadLibrary crash
+    if (pls_get_obs_exiting()) {
+	NSString *pointer = @"OBS is exiting, do not release the Bundle object.";
+	blog(LOG_INFO, "%s", [pointer UTF8String]);
+	return;
+    }
     if (weakBundlePtr) {
         VSTPluginMacWeakBundle *macPlugin = (__bridge VSTPluginMacWeakBundle *) weakBundlePtr;
         NSString *pointer = [NSString

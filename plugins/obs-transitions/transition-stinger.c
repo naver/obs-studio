@@ -51,6 +51,8 @@ struct stinger_info {
 
 	float (*mix_a)(void *data, float t);
 	float (*mix_b)(void *data, float t);
+	//PRISM/lizhiyong/20251023/PRISM_PC-4243/transition memory
+	bool pre_track_matte_enabled;
 };
 
 static const char *stinger_get_name(void *type_data)
@@ -64,6 +66,29 @@ static float mix_b_fade_in_out(void *data, float t);
 static float mix_a_cross_fade(void *data, float t);
 static float mix_b_cross_fade(void *data, float t);
 
+//PRISM/lizhiyong/20251023/PRISM_PC-4243/transition memory
+static bool media_source_settings_changed(obs_source_t *media_source, obs_data_t *new_settings,
+					  bool track_matte_enabled, bool pre_track_matte_enabled)
+{
+	if (!media_source)
+		return true;
+
+	obs_data_t *cur_settings = obs_source_get_settings(media_source);
+
+	const char *cur_file = obs_data_get_string(cur_settings, "local_file");
+	bool cur_hw_decode = obs_data_get_bool(cur_settings, "hw_decode");
+	bool cur_full_decode = obs_data_get_bool(cur_settings, "full_decode");
+
+	const char *new_file = obs_data_get_string(new_settings, "local_file");
+	bool new_hw_decode = obs_data_get_bool(new_settings, "hw_decode");
+	bool new_full_decode = obs_data_get_bool(new_settings, "full_decode");
+
+	bool changed = strcmp(cur_file, new_file) != 0 || cur_hw_decode != new_hw_decode ||
+		       cur_full_decode != new_full_decode || pre_track_matte_enabled != track_matte_enabled;
+
+	obs_data_release(cur_settings);
+	return changed;
+}
 static void stinger_update(void *data, obs_data_t *settings)
 {
 	struct stinger_info *s = data;
@@ -79,12 +104,20 @@ static void stinger_update(void *data, obs_data_t *settings)
 	obs_data_set_bool(media_settings, "is_stinger", true);
 	obs_data_set_bool(media_settings, "is_track_matte", s->track_matte_enabled);
 
-	obs_source_release(s->media_source);
-	struct dstr name;
-	dstr_init_copy(&name, obs_source_get_name(s->source));
-	dstr_cat(&name, " (Stinger)");
-	s->media_source = obs_source_create_private("ffmpeg_source", name.array, media_settings);
-	dstr_free(&name);
+	//PRISM/lizhiyong/20251023/PRISM_PC-4243/transition memory
+	bool need_recreate = media_source_settings_changed(s->media_source, media_settings, s->track_matte_enabled,
+							   s->pre_track_matte_enabled);
+
+	if (need_recreate) {
+		obs_source_release(s->media_source);
+		struct dstr name;
+		dstr_init_copy(&name, obs_source_get_name(s->source));
+		dstr_cat(&name, " (Stinger)");
+		s->media_source = obs_source_create_private("ffmpeg_source", name.array, media_settings);
+		dstr_free(&name);
+	}
+	s->pre_track_matte_enabled = s->track_matte_enabled;
+
 	obs_data_release(media_settings);
 
 	int64_t point = obs_data_get_int(settings, "transition_point");

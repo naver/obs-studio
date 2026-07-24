@@ -128,6 +128,16 @@ else()
   set(_OUTPUT_NAME virtualcam-module32)
 endif()
 
+#PRISM/wangshaohui/20251016/#PRISM_PC-4223/save SHA256 for vcam dll -------------- start
+set(HASH_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../data")
+if(NOT EXISTS "${HASH_OUTPUT_DIR}")
+    message(FATAL_ERROR "no data folder of win-dshow : ${HASH_OUTPUT_DIR}")
+endif()
+add_custom_command(TARGET obs-virtualcam-module POST_BUILD
+  COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/do-hash.bat" "$(TargetPath)" "${HASH_OUTPUT_DIR}/$(TargetName).hash"
+)
+#PRISM/wangshaohui/20251016/#PRISM_PC-4223/save SHA256 for vcam dll -------------- end
+
 target_sources(obs-virtualcam-module PRIVATE cmake/windows/${_OUTPUT_NAME}.def)
 
 configure_file(virtualcam-install.bat.in virtualcam-install.bat)

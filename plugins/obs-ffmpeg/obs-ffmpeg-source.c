@@ -24,6 +24,22 @@
 
 #include <media-playback/media-playback.h>
 #include <pls/pls-source.h>
+#include <pls/pls-base.h>
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+// Global async destroy system
+struct destroy_task {
+	media_playback_t *media;
+	struct destroy_task *next;
+};
+
+static pthread_t g_destroy_thread;
+static pthread_mutex_t g_destroy_mutex;
+static os_event_t *g_destroy_stop_event;
+static struct destroy_task *g_destroy_queue_head = NULL;
+static struct destroy_task *g_destroy_queue_tail = NULL;
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end
 
 #define FF_LOG_S(source, level, format, ...) \
 	blog(level, "[Media Source '%s']: " format, obs_source_get_name(source), ##__VA_ARGS__)
@@ -72,7 +88,86 @@ struct ffmpeg_source {
 	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 	// if a source is force released, we can not allow it to play again unless its file path is reset
 	bool is_force_released;
+
+	//PRISM/chenguoxi/20251017/PRISM_PC-3683/notify got first video frame
+	volatile bool notify_first_video;
 };
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+// Async destroy thread worker
+static void *async_destroy_thread(void *data)
+{
+	UNUSED_PARAMETER(data);
+
+	while (true) {
+		// Wait for 100ms or until stop event is signaled
+		int wait_result = os_event_timedwait(g_destroy_stop_event, 100);
+
+		// If event was signaled (ETIMEDOUT means timeout, which is normal)
+		if (wait_result == 0) {
+			// Stop event was signaled, exit thread after processing remaining tasks
+			blog(LOG_INFO, "Async destroy thread: Stop event signaled, processing remaining tasks");
+			break;
+		}
+
+		// Get task from queue
+		pthread_mutex_lock(&g_destroy_mutex);
+		struct destroy_task *task = g_destroy_queue_head;
+		if (task) {
+			g_destroy_queue_head = task->next;
+			if (g_destroy_queue_head == NULL)
+				g_destroy_queue_tail = NULL;
+		}
+		pthread_mutex_unlock(&g_destroy_mutex);
+
+		if (task) {
+			if (task->media) {
+				media_playback_destroy(task->media);
+			}
+			bfree(task);
+		}
+	}
+
+	// Clean up remaining tasks
+	pthread_mutex_lock(&g_destroy_mutex);
+	while (g_destroy_queue_head) {
+		struct destroy_task *task = g_destroy_queue_head;
+		g_destroy_queue_head = task->next;
+		if (task->media) {
+			media_playback_destroy(task->media);
+		}
+		bfree(task);
+	}
+	g_destroy_queue_tail = NULL;
+	pthread_mutex_unlock(&g_destroy_mutex);
+
+	return NULL;
+}
+
+// Submit media for async destroy
+static void async_destroy_media(media_playback_t *media)
+{
+	if (!media)
+		return;
+
+	media_playback_disconnect(media);
+	media_playback_stop(media);
+
+	struct destroy_task *task = bzalloc(sizeof(struct destroy_task));
+	task->media = media;
+	task->next = NULL;
+
+	pthread_mutex_lock(&g_destroy_mutex);
+	if (g_destroy_queue_tail) {
+		g_destroy_queue_tail->next = task;
+		g_destroy_queue_tail = task;
+	} else {
+		g_destroy_queue_head = task;
+		g_destroy_queue_tail = task;
+	}
+	pthread_mutex_unlock(&g_destroy_mutex);
+}
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end
 
 // Used to safely cancel and join any active reconnect threads
 // Use this to join any finished reconnect thread too!
@@ -95,9 +190,26 @@ static void set_media_state(void *data, enum obs_media_state state)
 {
 	struct ffmpeg_source *s = data;
 	s->state = state;
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	{
+		const char *state_str = "OBS_MEDIA_STATE_UNKNOWN";
+		switch (state) {
+		case OBS_MEDIA_STATE_NONE: state_str = "OBS_MEDIA_STATE_NONE"; break;
+		case OBS_MEDIA_STATE_PLAYING: state_str = "OBS_MEDIA_STATE_PLAYING"; break;
+		case OBS_MEDIA_STATE_OPENING: state_str = "OBS_MEDIA_STATE_OPENING"; break;
+		case OBS_MEDIA_STATE_BUFFERING: state_str = "OBS_MEDIA_STATE_BUFFERING"; break;
+		case OBS_MEDIA_STATE_PAUSED: state_str = "OBS_MEDIA_STATE_PAUSED"; break;
+		case OBS_MEDIA_STATE_STOPPED: state_str = "OBS_MEDIA_STATE_STOPPED"; break;
+		case OBS_MEDIA_STATE_ENDED: state_str = "OBS_MEDIA_STATE_ENDED"; break;
+		case OBS_MEDIA_STATE_ERROR: state_str = "OBS_MEDIA_STATE_ERROR"; break;
+		default: break;
+		}
+		FF_BLOG(LOG_INFO, "%s: set_media_state: %s", __FUNCTION__, state_str);
+	}
 }
 
-static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
+//PRISM/chenguoxi/20260121/none/ui action log
+static bool is_local_file_modified(void *data, obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
 {
 	UNUSED_PARAMETER(prop);
 
@@ -118,6 +230,11 @@ static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop
 	obs_property_set_visible(speed, enabled);
 	obs_property_set_visible(seekable, !enabled);
 	obs_property_set_visible(reconnect_delay_sec, !enabled);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_updated(data);
+#endif
 
 	return true;
 }
@@ -154,7 +271,8 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 	// use this when obs allows non-readonly paths
 	prop = obs_properties_add_bool(props, "is_local_file", obs_module_text("LocalFile"));
 
-	obs_property_set_modified_callback(prop, is_local_file_modified);
+	//PRISM/chenguoxi/20260121/none/ui action log
+	obs_property_set_modified_callback2(prop, is_local_file_modified, s->source);
 
 	dstr_copy(&filter, obs_module_text("MediaFileFilter.AllMediaFiles"));
 	dstr_cat(&filter, media_filter);
@@ -249,6 +367,22 @@ static void get_frame(void *opaque, struct obs_source_frame *f)
 {
 	struct ffmpeg_source *s = opaque;
 	obs_source_output_video(s->source, f);
+
+	//PRISM/chenguoxi/20251017/PRISM_PC-3683/notify got first video frame
+	if (!s->notify_first_video) {
+		struct calldata data = {0};
+		calldata_set_ptr(&data, "source", s->source);
+		signal_handler_signal(obs_get_signal_handler(), "source_got_first_video_frame", &data);
+		calldata_free(&data);
+		blog(LOG_INFO, "Sending signal 'source_got_first_video_frame' for source %p", s->source);
+		s->notify_first_video = true;
+
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/chenguoxi/20260121/none/ui action log
+		pls_on_source_property_updated(s->source);
+#endif
+
+	}
 }
 
 static void preload_frame(void *opaque, struct obs_source_frame *f)
@@ -291,6 +425,8 @@ static void media_stopped(void *opaque)
 
 	if (s->state != OBS_MEDIA_STATE_STOPPED) {
 		set_media_state(s, OBS_MEDIA_STATE_ENDED);
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		FF_BLOG(LOG_INFO, "%s: dosignal media_ended, source %p", __FUNCTION__, (void *)s->source);
 		obs_source_media_ended(s->source);
 	}
 }
@@ -329,6 +465,9 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 
 static void ffmpeg_source_start(struct ffmpeg_source *s)
 {
+	//PRISM/chenguoxi/20251017/PRISM_PC-3683/notify got first video frame
+	s->notify_first_video = false;
+
 	if (!s->media)
 		ffmpeg_source_open(s);
 
@@ -342,6 +481,8 @@ static void ffmpeg_source_start(struct ffmpeg_source *s)
 		obs_source_output_video(s->source, NULL);
 
 	set_media_state(s, OBS_MEDIA_STATE_PLAYING);
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	FF_BLOG(LOG_INFO, "%s: dosignal media_started, source %p", __FUNCTION__, (void *)s->source);
 	obs_source_media_started(s->source);
 }
 
@@ -370,22 +511,43 @@ static void ffmpeg_source_tick(void *data, float seconds)
 	struct ffmpeg_source *s = data;
 	if (s->destroy_media) {
 		if (s->media) {
+			//PRISM/wangshaohui/20251028/PRISM_PC-4303/upload taken time
+			pls_begin_taken_time(s->source, obs_source_get_id(s->source), "media_playback_destroy");
+
 			media_playback_destroy(s->media);
 			s->media = NULL;
+
+			//PRISM/wangshaohui/20251028/PRISM_PC-4303/upload taken time
+			pls_end_taken_time(s->source, obs_source_get_id(s->source), "media_playback_destroy",
+					   time_ns_3ms);
 		}
 
 		s->destroy_media = false;
 
 		if (!s->is_local_file) {
+			//PRISM/wangshaohui/20251028/PRISM_PC-4303/upload taken time
+			pls_begin_taken_time(s->source, obs_source_get_id(s->source), "lock_reconnect_mutex");
+
 			pthread_mutex_lock(&s->reconnect_mutex);
 			if (!os_atomic_set_bool(&s->reconnecting, true))
 				FF_BLOG(LOG_WARNING, "Disconnected. "
 						     "Reconnecting...");
+
+			//PRISM/wangshaohui/20251028/PRISM_PC-4303/upload taken time
+			pls_end_taken_time(s->source, obs_source_get_id(s->source), "lock_reconnect_mutex", time_ns_3ms);
+
 			if (s->reconnect_thread_valid) {
+				//PRISM/wangshaohui/20251028/PRISM_PC-4303/upload taken time
+				pls_begin_taken_time(s->source, obs_source_get_id(s->source), "complete_thread");
+
 				os_event_signal(s->reconnect_stop_event);
 				pthread_join(s->reconnect_thread, NULL);
 				s->reconnect_thread_valid = false;
 				os_event_reset(s->reconnect_stop_event);
+
+				//PRISM/wangshaohui/20251028/PRISM_PC-4303/upload taken time
+				pls_end_taken_time(s->source, obs_source_get_id(s->source), "complete_thread",
+						   time_ns_3ms);
 			}
 			if (pthread_create(&s->reconnect_thread, NULL, ffmpeg_source_reconnect, s) != 0) {
 				FF_BLOG(LOG_WARNING, "Could not create "
@@ -397,6 +559,11 @@ static void ffmpeg_source_tick(void *data, float seconds)
 			pthread_mutex_unlock(&s->reconnect_mutex);
 		}
 	}
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_render(s->source, 0);
+#endif
 }
 
 #define RIST_PROTO "rist"
@@ -536,8 +703,11 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	}
 
 	if (s->media && should_restart_media) {
-		media_playback_destroy(s->media);
+		//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+		// media_playback_destroy(s->media);
+		async_destroy_media(s->media);
 		s->media = NULL;
+		//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end
 	}
 
 	/* directly set options if media is playing */
@@ -551,6 +721,14 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	dump_source_info(s, input, input_format);
 	if ((!s->restart_on_activate || active) && should_restart_media)
 		ffmpeg_source_start(s);
+
+#ifdef PLS_UI_ACTION_STATS
+	//PRISM/chenguoxi/20260121/none/ui action log
+	if (should_restart_media) {
+		pls_set_property_update_delay(s->source);
+	}
+	
+#endif
 }
 
 static const char *ffmpeg_source_getname(void *unused)
@@ -568,8 +746,11 @@ static void restart_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, b
 		return;
 
 	struct ffmpeg_source *s = data;
-	if (obs_source_showing(s->source))
+	if (obs_source_showing(s->source)) {
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		FF_BLOG(LOG_INFO, "%s: queue media_restart (will dosignal media_restart), source %p", __FUNCTION__, (void *)s->source);
 		obs_source_media_restart(s->source);
+	}
 }
 
 static void restart_proc(void *data, calldata_t *cd)
@@ -617,6 +798,8 @@ static bool ffmpeg_source_play_hotkey(void *data, obs_hotkey_pair_id id, obs_hot
 	if (s->state == OBS_MEDIA_STATE_PLAYING || !obs_source_showing(s->source))
 		return false;
 
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	FF_BLOG(LOG_INFO, "%s: queue media_play_pause(false) (will dosignal media_play), source %p", __FUNCTION__, (void *)s->source);
 	obs_source_media_play_pause(s->source, false);
 	return true;
 }
@@ -634,6 +817,8 @@ static bool ffmpeg_source_pause_hotkey(void *data, obs_hotkey_pair_id id, obs_ho
 	if (s->state != OBS_MEDIA_STATE_PLAYING || !obs_source_showing(s->source))
 		return false;
 
+	//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+	FF_BLOG(LOG_INFO, "%s: queue media_play_pause(true) (will dosignal media_pause), source %p", __FUNCTION__, (void *)s->source);
 	obs_source_media_play_pause(s->source, true);
 	return true;
 }
@@ -648,14 +833,20 @@ static void ffmpeg_source_stop_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t
 
 	struct ffmpeg_source *s = data;
 
-	if (obs_source_showing(s->source))
+	if (obs_source_showing(s->source)) {
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		FF_BLOG(LOG_INFO, "%s: queue media_stop (will dosignal media_stopped), source %p", __FUNCTION__, (void *)s->source);
 		obs_source_media_stop(s->source);
+	}
 }
 
 static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
 {
 	struct ffmpeg_source *s = bzalloc(sizeof(struct ffmpeg_source));
 	s->source = source;
+
+	//PRISM/chenguoxi/20251017/PRISM_PC-3683/notify got first video frame
+	s->notify_first_video = false;
 
 	// Manual type since the event can be signalled without an active thread
 	if (os_event_init(&s->reconnect_stop_event, OS_EVENT_TYPE_MANUAL)) {
@@ -700,6 +891,7 @@ static void ffmpeg_source_destroy(void *data)
 
 	if (s->hotkey)
 		obs_hotkey_unregister(s->hotkey);
+	//PRISM/chenguoxi/20260424/PRISM_PC-5977/temp workaround: revert PRISM_PC-5263 in destroy path to avoid UAF (async destroy is kept in ffmpeg_source_update)
 	if (s->media)
 		media_playback_destroy(s->media);
 
@@ -715,8 +907,11 @@ static void ffmpeg_source_activate(void *data)
 {
 	struct ffmpeg_source *s = data;
 
-	if (s->restart_on_activate)
+	if (s->restart_on_activate) {
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		FF_BLOG(LOG_INFO, "%s: queue media_restart (will dosignal media_restart), source %p", __FUNCTION__, (void *)s->source);
 		obs_source_media_restart(s->source);
+	}
 }
 
 static void ffmpeg_source_deactivate(void *data)
@@ -748,15 +943,32 @@ static void ffmpeg_source_play_pause(void *data, bool pause)
 	if (!s->media)
 		return;
 
+#ifdef PLS_UI_ACTION_STATS
+	pls_on_source_property_changed(s->source, "play_pause");
+#endif
+
 	media_playback_play_pause(s->media, pause);
 
 	if (pause) {
 
 		set_media_state(s, OBS_MEDIA_STATE_PAUSED);
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/chenguoxi/20260121/none/ui action log
+		pls_on_source_property_updated(s->source);
+		pls_on_source_property_render(s->source, 0);
+#endif
+
 	} else {
 
 		set_media_state(s, OBS_MEDIA_STATE_PLAYING);
+		//PRISM/chenguoxi/20260210/PRISM_PC-5125/add logs
+		FF_BLOG(LOG_INFO, "%s: dosignal media_started, source %p", __FUNCTION__, (void *)s->source);
 		obs_source_media_started(s->source);
+
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/chenguoxi/20260121/none/ui action log
+		pls_set_property_update_delay(s->source);
+#endif
 	}
 }
 
@@ -768,6 +980,12 @@ static void ffmpeg_source_stop(void *data)
 		media_playback_stop(s->media);
 		obs_source_output_video(s->source, NULL);
 		set_media_state(s, OBS_MEDIA_STATE_STOPPED);
+
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/chenguoxi/20260121/none/ui action log
+		pls_on_source_property_updated(s->source);
+		pls_on_source_property_render(s->source, 0);
+#endif
 	}
 }
 
@@ -775,13 +993,31 @@ static void ffmpeg_source_restart(void *data)
 {
 	struct ffmpeg_source *s = data;
 
+	//PRISM/chenguoxi/20251017/PRISM_PC-3683/notify got first video frame
+	s->notify_first_video = false;
+
 	//PRISM/chenguoxi/20250422/PRISM_PC-2756/delete occupied resources
 	if (s->is_force_released) {
 		return;
 	}
 
-	if (obs_source_showing(s->source))
+#ifdef PLS_UI_ACTION_STATS
+	pls_on_source_property_changed(s->source, "restart");
+#endif
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	if (obs_source_showing(s->source)) {
 		ffmpeg_source_start(s);
+		pls_set_property_update_delay(s->source);
+	}
+	else
+	{
+#ifdef PLS_UI_ACTION_STATS
+		//PRISM/chenguoxi/20260121/none/ui action log
+		pls_on_source_property_updated(s->source);
+		pls_on_source_property_render(s->source, 0);
+#endif
+	}
 
 	set_media_state(s, OBS_MEDIA_STATE_PLAYING);
 }
@@ -879,3 +1115,46 @@ struct obs_source_info ffmpeg_source = {
 	.media_set_time = ffmpeg_source_set_time,
 	.media_get_state = ffmpeg_source_get_state,
 };
+
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- begin
+// Initialize async destroy system
+bool init_async_destroy_system(void)
+{
+	if (pthread_mutex_init(&g_destroy_mutex, NULL) != 0) {
+		blog(LOG_ERROR, "Failed to initialize destroy mutex");
+		return false;
+	}
+
+	if (os_event_init(&g_destroy_stop_event, OS_EVENT_TYPE_MANUAL) != 0) {
+		blog(LOG_ERROR, "Failed to initialize destroy stop event");
+		pthread_mutex_destroy(&g_destroy_mutex);
+		return false;
+	}
+
+	if (pthread_create(&g_destroy_thread, NULL, async_destroy_thread, NULL) != 0) {
+		blog(LOG_ERROR, "Failed to create async destroy thread");
+		os_event_destroy(g_destroy_stop_event);
+		pthread_mutex_destroy(&g_destroy_mutex);
+		return false;
+	}
+
+	blog(LOG_INFO, "Async destroy system initialized");
+	return true;
+}
+
+// Shutdown async destroy system
+void shutdown_async_destroy_system(void)
+{
+	// Signal thread to stop
+	os_event_signal(g_destroy_stop_event);
+
+	// Wait for thread to finish
+	pthread_join(g_destroy_thread, NULL);
+
+	// Clean up resources
+	os_event_destroy(g_destroy_stop_event);
+	pthread_mutex_destroy(&g_destroy_mutex);
+
+	blog(LOG_INFO, "Async destroy system shutdown");
+}
+//PRISM/chenguoxi/20251211/PRISM_PC-4473/async destory media player -- end

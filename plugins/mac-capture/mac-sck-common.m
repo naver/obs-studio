@@ -1,4 +1,5 @@
 #include "mac-sck-common.h"
+#include <pls/pls-obs-api.h>
 
 bool is_screen_capture_available(void)
 {
@@ -17,6 +18,9 @@ bool is_screen_capture_available(void)
 {
     if (self.sc != NULL) {
         if (type == SCStreamOutputTypeScreen && !self.sc->audio_only) {
+            //PRISM/sam.zhang/20251105/notify capture error
+            pls_source_send_distinct_notify(self.sc->source, OBS_SOURCE_FAILED_STATUS, OBS_SOURCE_STATUS_SUCCESS);
+
             screen_stream_video_update(self.sc, sampleBuffer);
         } else if (@available(macOS 13.0, *)) {
             if (type == SCStreamOutputTypeAudio) {
@@ -45,6 +49,12 @@ bool is_screen_capture_available(void)
 
     MACCAP_LOG(LOG_WARNING, "%s", errorMessage.UTF8String);
 
+    //PRISM/sam.zhang/20251105/notify capture error
+    if (!self.sc->audio_only) {
+        pls_source_send_notify(self.sc->source, OBS_SOURCE_FAILED_STATUS,
+                               OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
+    }
+
     self.sc->capture_failed = true;
     obs_source_update_properties(self.sc->source);
 }
@@ -55,6 +65,7 @@ bool is_screen_capture_available(void)
 
 void screen_capture_build_content_list(struct screen_capture *sc, bool display_capture)
 {
+    __block BOOL posted = NO;
     typedef void (^shareable_content_callback)(SCShareableContent *, NSError *);
     shareable_content_callback new_content_received = ^void(SCShareableContent *shareable_content, NSError *error) {
         if (error == nil && sc->shareable_content_available != NULL) {
@@ -66,8 +77,16 @@ void screen_capture_build_content_list(struct screen_capture *sc, bool display_c
 #endif
             MACCAP_LOG(LOG_WARNING, "Unable to get list of available applications or windows. "
                                     "Please check if OBS has necessary screen capture permissions.");
+            //PRISM/sam.zhang/20251105/notify capture error
+            if (!sc->audio_only) {
+                pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                                       OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_PERMISSION);
+            }
         }
-        os_sem_post(sc->shareable_content_available);
+        if (!posted) {
+            posted = YES;
+            os_sem_post(sc->shareable_content_available);
+        }
     };
 
     os_sem_wait(sc->shareable_content_available);
@@ -79,6 +98,18 @@ void screen_capture_build_content_list(struct screen_capture *sc, bool display_c
     BOOL onScreenWindowsOnly = (display_capture) ? NO : !sc->show_hidden_windows;
     [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:onScreenWindowsOnly
                                                  completionHandler:new_content_received];
+
+    //PRISM/sam.zhang/20260225/add timeout logic on macOS13-
+    if (@available(macOS 14.0, *)) {
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t) (1 * NSEC_PER_SEC)),
+                       dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                           if (!posted) {
+                               posted = YES;
+                               os_sem_post(sc->shareable_content_available);
+                           }
+                       });
+    }
 }
 
 bool build_display_list(struct screen_capture *sc, obs_properties_t *props)
@@ -305,6 +336,9 @@ API_AVAILABLE(macos(12.5)) void screen_stream_video_update(struct screen_capture
                 if (error) {
                     MACCAP_ERR("screen_stream_video_update: Failed to update stream properties with error %s\n",
                                [[error localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding]);
+                    //PRISM/sam.zhang/20251105/notify capture error
+                    pls_source_send_notify(sc->source, OBS_SOURCE_FAILED_STATUS,
+                                           OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN);
                 }
             }];
         }

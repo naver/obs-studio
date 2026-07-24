@@ -344,6 +344,8 @@ fail:
 	if (uc)
 		av_freep(&uc->priv_data);
 	av_freep(&uc);
+	//PRISM/chenguoxi/20250908/PRISM_PC-3827/avoid wild pointer for stream->h
+	stream->h = NULL;
 #if HAVE_WINSOCK2_H
 	WSACleanup();
 #endif

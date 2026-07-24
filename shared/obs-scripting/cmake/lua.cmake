@@ -35,6 +35,13 @@ if(ENABLE_SCRIPTING_LUA)
   )
 
   target_link_libraries(obs-scripting PRIVATE Luajit::Luajit)
+
+    # Workaround for LuaJIT crash with Xcode 16+ (Apple Clang 16)
+  # See: https://github.com/LuaJIT/LuaJIT/issues/1275
+  if(OS_MACOS AND XCODE_VERSION VERSION_GREATER_EQUAL 16)
+    target_link_options(obs-scripting PRIVATE "LINKER:-no_deduplicate")
+  endif()
+  
 else()
   target_disable_feature(obs-scripting "Lua scripting support")
 endif()

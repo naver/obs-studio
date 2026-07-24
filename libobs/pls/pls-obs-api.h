@@ -53,8 +53,64 @@ enum obs_source_event_type {
 	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS,
 	// game capture success msg
 	PLS_SOURCE_GAME_CAPTURE_SUCCESS_MSG,
-	//PRISM/Zengqin/20231229/#3744/notify ui to property param error status.
-	OBS_SOURCE_PROPERTY_ERROR_STATUS,
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	OBS_SOURCE_FAILED_STATUS,
+};
+
+//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+enum obs_source_failed_status_sub_code {
+	OBS_SOURCE_STATUS_SUCCESS = 0,
+	// game capture failed
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_OPEN_TARGET_PROCESS = 1,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_BLACKLISTED_PROCESS = 2,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_TARGET_SUSPENDED = 3,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_PIPE = 4,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_HOOK_DIRECT_FAIL = 5,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_HOOK_DIRECT_HELPER_FAIL = 6,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_CAPTURE_DATA_FAIL = 7,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_CREATE_TEXTURE_FAIL = 8,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_OPEN_SHARED_HANDLE_FAIL = 9,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_NO_INJECT_HELPER = 10,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_NO_INJECT_DLL = 11,
+	OBS_SOURCE_GAME_CAPTURE_FAILED_SUB_CODE_INIT_KEEPALIVE = 12,
+
+	// window capture failed
+	OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_WINDOW_INVALID = 201,
+	OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_WINDOW_INVISIBE = 202,
+	OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_UNKNOWN = 299,
+
+	// monitor capture failed
+	OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_MONITOR_INVALID = 301,
+	OBS_SOURCE_MONITOR_CAPTURE_FAILED_SUB_CODE_UNKNOWN = 399,
+
+	// mac capture failed
+	OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_PERMISSION = 401,
+	OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_NO_CONTENT = 402,
+	OBS_SOURCE_MAC_CAPTURE_FAILED_SUB_CODE_UNKNOWN = 499,
+
+	// win dshow capture failed
+	OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_REMOVED = 501,
+	OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_IN_USED = 502,
+	OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_FOUND = 503,
+	OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_HDR = 504,
+	OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_POPERTY = 505,
+	OBS_SOURCE_DSHOW_CAPTURE_FAILED_SUB_UNKNOWN = 599,
+
+	// mac av capture failed
+	OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NO_PERMISSION = 601,
+	OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_REMOVED = 602,
+	OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_IN_USED = 603,
+	OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NOT_FOUND = 604,
+	OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_DEVICE_NOT_SUPPORT_POPERTY = 605,
+	OBS_SOURCE_MAC_AVCAPTURE_FAILED_SUB_UNKNOWN = 699,
+
+	//win dhsow capture lens failed
+	OBS_SOURCE_DSHOW_CAPTURE_LENS_FAILED_SUB_NOT_ACTIVE = 701,
+	OBS_SOURCE_DSHOW_CAPTURE_LENS_FAILED_SUB_UNKNOWN = 799,
+
+	//mac av capture lens failed
+	OBS_SOURCE_MAC_AVCAPTURE_LENS_FAILED_SUB_NOT_ACTIVE = 801,
+	OBS_SOURCE_MAC_AVCAPTURE_LENS_FAILED_SUB_UNKNOWN = 899,
 };
 
 //PRISM/Zhangdewen/20230203/#/Chat Source Event
@@ -63,14 +119,16 @@ enum obs_chat_update_params_notify_sub_code {
 	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_EDIT_START,
 	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_LOADED,
 	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_CHECK_LIVE,
-	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_RESIZE_VIEW
+	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_RESIZE_VIEW,
+	OBS_SOURCE_CHAT_UPDATE_PARAMS_SUB_CODE_JSONLOADED
 };
 //PRISM/Chengbing/20230529/#/text template Source Event
 enum obs_text_template_update_params_notify_sub_code {
 	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS_SUB_CODE_UPDATE,
 	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS_SUB_CODE_EDIT_START,
 	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS_SUB_CODE_LOADED,
-	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS_SUB_CODE_SIZECHANGED
+	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS_SUB_CODE_SIZECHANGED,
+	OBS_SOURCE_TEXT_TEMPLATE_UPDATE_PARAMS_SUB_CODE_JSONLOADED
 };
 //PRISM/Zhangdewen/20230203/#/Viewer Count Source Event
 enum obs_viewer_count_update_params_notify_sub_code {
@@ -117,19 +175,31 @@ EXPORT void pls_vst_state_changed(const obs_source_t *source, const char *vst, e
 EXPORT void pls_set_wgc_borderless_enable(bool enable);
 EXPORT bool pls_get_wgc_borderless_enable();
 EXPORT void pls_source_send_notify(const obs_source_t *source, enum obs_source_event_type type, int sub_code);
+EXPORT void pls_source_send_distinct_notify(const obs_source_t *source, enum obs_source_event_type type, int sub_code);
 EXPORT void pls_source_send_message(const obs_source_t *source, enum obs_source_event_type type, obs_data_t *data);
+EXPORT void pls_source_property_update_notify(const obs_source_t *source, const char *name);
 EXPORT void pls_source_property_update_notify(const obs_source_t *source, const char *name);
 EXPORT void pls_source_cef_received_web_msg(const obs_source_t *source, const char *msg);
 EXPORT void pls_audio_output_get_info(uint32_t *samples_per_sec, int *speakers);
+//PRISM/FanZirong/20250819/PRISM_PC-3614/add flip horizontally
+EXPORT void obs_source_set_flip_horizontal(obs_source_t *source, bool flip_h);
+
+//PRISM/FanZirong/20251112/PRISM_PC-3577/source capture failed guidance
+EXPORT void pls_source_set_failed_status_sub_code(obs_source_t *source, enum obs_source_failed_status_sub_code code);
+EXPORT enum obs_source_failed_status_sub_code pls_source_get_failed_status_sub_code(obs_source_t *source);
 /*
 * DO NOT forget to free the memory
 */
 EXPORT char *pls_get_module_file_name_ptr(const char *module_name);
 //PRISM/Zhangdewen/20230117/#/load with filter
 typedef bool (*pls_load_module_filter_t)(const char *bin_path);
-EXPORT void pls_load_all_modules(pls_load_module_filter_t filter);
+typedef void (*pls_load_module_load_callback_t)(void *param, const struct obs_module_info2 *info);
+typedef void (*pls_load_module_load_t)(pls_load_module_load_callback_t callback, void *param,
+				       const struct obs_module_info2 *info);
+EXPORT void pls_load_all_modules(pls_load_module_filter_t filter, pls_load_module_load_t load);
 //PRISM/Zhangdewen/20230117/#/load with filter
-EXPORT void pls_load_all_modules2(struct obs_module_failure_info *mfi, pls_load_module_filter_t filter);
+EXPORT void pls_load_all_modules2(struct obs_module_failure_info *mfi, pls_load_module_filter_t filter,
+				  pls_load_module_load_t load);
 
 //PRISM/Liuying/20230131/#/add load sources callback
 typedef bool (*obs_load_pld_cb)(void *private_data, obs_source_t *source);
@@ -225,7 +295,10 @@ EXPORT bool pls_design_mode();
 EXPORT void stop_audio_thread(audio_t *audio);
 
 /** Create dual output scene **/
-EXPORT obs_scene_t *pls_create_vertical_scene(const char *name);
+EXPORT obs_scene_t *pls_create_vertical_scene(const char *name, bool is_group_ref);
+
+/** Set group-ref flag on existing vertical scene */
+EXPORT void pls_vertical_scene_set_group_ref(obs_scene_t *scene, bool is_group_ref);
 
 /** Enum scenes list (except scenes for dual output)**/
 EXPORT void pls_enum_all_scenes(bool (*enum_proc)(void *, obs_source_t *), void *param);
@@ -237,6 +310,27 @@ EXPORT void pls_set_local_log(bool local_log);
 EXPORT bool pls_is_local_log();
 
 EXPORT void pls_on_game_render_type(const char *game_title, const char *render_type);
+
+EXPORT void pls_add_id_module_map(const char *plugin_id, obs_module_t *plugin_module);
+EXPORT void pls_remove_id_module_map_by_key(const char *plugin_id);
+EXPORT void pls_remove_id_module_map_by_value(obs_module_t *plugin_module);
+EXPORT void pls_add_module_lookup_map(obs_module_t *plugin_module, lookup_t *lookup);
+EXPORT void pls_remove_module_lookup_map_by_key(obs_module_t *plugin_module);
+EXPORT void pls_remove_module_lookup_map_by_value(lookup_t *lookup);
+EXPORT lookup_t *pls_get_lookup_by_id(const char *plugin_id);
+EXPORT void pls_add_getstring_pointer_module_map(void *getstring_pointer, obs_module_t *plugin_module);
+EXPORT void pls_remove_getstring_pointer_module_map_by_key(void *getstring_pointer);
+EXPORT void pls_remove_getstring_pointer_module_map_by_value(obs_module_t *plugin_module);
+EXPORT lookup_t *pls_get_lookup_by_getstring_pointer(void *getstring_pointer);
+EXPORT void pls_add_text_lookup(lookup_t *lookup);
+EXPORT void pls_remove_text_lookup(lookup_t *lookup);
+EXPORT bool pls_is_valid_text_lookup(lookup_t *lookup);
+EXPORT const char *obs_output_get_last_english_error(obs_output_t *output);
+
+EXPORT void pls_update_pc_sleep(bool is_sleep);
+EXPORT bool pls_ignore_render_drop();
+
+EXPORT void pls_source_clear_async_video(obs_source_t *source);
 
 #ifdef __cplusplus
 }

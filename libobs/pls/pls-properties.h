@@ -75,7 +75,8 @@ enum pls_property_type {
 	PLS_PROPERTY_CT_BK_TEMPLATE_LIST, //chat source bk template list
 	PLS_PROPERTY_COLOR_TOOL_BUTTON,   //PLS_PROPERTY_COLOR_TOOL_BUTTON
 	PLS_PROPERTY_CHZZK_SPONSOR,       // chzzk sponsor
-
+	//PRISM/FanZirong/20251103/PRISM_PC-3577/source capture failed guidance
+	PLS_PROPERTY_CAPTURE_GUIDE, // capture guide hyperlink
 };
 
 //PRISM/Wangshaohui/20200927/#4868/for property UI
@@ -148,6 +149,12 @@ EXPORT obs_property_t *pls_properties_add_text_content(obs_properties_t *props, 
 						       const char *content);
 
 EXPORT const char *pls_property_get_text_content(obs_property_t *p);
+
+EXPORT obs_property_t *pls_properties_add_capture_guide(obs_properties_t *props, const char *name, const char *desc,
+							const char *url);
+
+EXPORT const char *pls_property_get_capture_guide_url(obs_property_t *p);
+
 #pragma endregion
 
 #pragma region bool_group

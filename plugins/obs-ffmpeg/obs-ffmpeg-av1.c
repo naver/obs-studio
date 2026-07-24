@@ -195,8 +195,14 @@ static void *av1_create_internal(obs_data_t *settings, obs_encoder_t *encoder, c
 
 	if (voi->format != VIDEO_FORMAT_P010 && voi->format != VIDEO_FORMAT_I010) {
 		if (voi->colorspace == VIDEO_CS_2100_PQ || voi->colorspace == VIDEO_CS_2100_HLG) {
-			//PRISM/WuLongyue/20231206/#3415/Change text
-			const char *const text = obs_module_text("AMF.16bitUnsupported");
+			//PRISM/chenguoxi/20260126/PRISM_PC-5195/check 16bit or 8bit
+			const char *text = NULL;
+			if (voi->format == VIDEO_FORMAT_P216 || voi->format == VIDEO_FORMAT_P416) {
+				//PRISM/WuLongyue/20231206/#3415/Change text
+				text = obs_module_text("AMF.16bitUnsupported");
+			} else {
+				text = obs_module_text("AV1.8bitUnsupportedHdr");
+			}
 			obs_encoder_set_last_error(encoder, text);
 			blog(LOG_ERROR, "[AV1 encoder] %s", text);
 			return NULL;

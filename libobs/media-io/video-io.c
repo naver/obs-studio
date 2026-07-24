@@ -29,6 +29,9 @@
 #include "video-frame.h"
 #include "video-scaler.h"
 
+//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+#include "pls/pls-base.h"
+
 extern profiler_name_store_t *obs_get_profiler_name_store(void);
 
 #define MAX_CONVERT_BUFFERS 3
@@ -641,6 +644,15 @@ void video_output_stop(video_t *video)
 		os_sem_post(video->update_semaphore);
 		pthread_join(video->thread, &thread_ret);
 	}
+
+	//PRISM/chenguoxi/20251021/PRISM_PC-4242/sre for encoder
+	int64_t requested_frames = video_output_get_total_frames(video);
+	int64_t dropped_frames = video_output_get_skipped_frames(video);
+	blog(LOG_INFO, "%p-%s: requested_frames=%llu, dropped_frames=%llu", video, __FUNCTION__, requested_frames,
+	     dropped_frames);
+
+	g_sre_frame_info.total_output_frames += requested_frames;
+	g_sre_frame_info.total_output_dropped_frames += dropped_frames;
 
 	//PRISM/WuLongyue/20231122/#2212/add logs
 	blog(LOG_INFO, "%p-%s: [Exit]", video, __FUNCTION__);

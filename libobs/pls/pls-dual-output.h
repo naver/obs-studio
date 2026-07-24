@@ -107,7 +107,10 @@ EXPORT bool pls_is_vertical_ovi(struct obs_video_info_v2 *ovi_v2);
 EXPORT bool pls_is_same_canvas(struct obs_video_info_v2 *ovi_v2_a, struct obs_video_info_v2 *ovi_v2_b);
 
 /** Create dual output scene **/
-EXPORT obs_scene_t *pls_create_vertical_scene(const char *name);
+EXPORT obs_scene_t *pls_create_vertical_scene(const char *name, bool is_group_ref);
+
+/** Set group-ref flag on existing vertical scene */
+EXPORT void pls_vertical_scene_set_group_ref(obs_scene_t *scene, bool is_group_ref);
 
 EXPORT bool pls_bind_vertical_scene(obs_scene_t *real_scene, obs_scene_t *fake_scene);
 
@@ -142,6 +145,8 @@ EXPORT void pls_get_sceneitem_hotkey_ids(struct obs_scene_item *item, PLS_SCENEI
 
 EXPORT void pls_obs_sceneitem_group_add_item(obs_sceneitem_t *group, obs_sceneitem_t *item,
 					     obs_sceneitem_t *insert_after);
+
+EXPORT void pls_source_video_render_vertical_when_render_display(obs_source_t *source);
 
 #ifdef __cplusplus
 }

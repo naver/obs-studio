@@ -1,6 +1,7 @@
 #include <graphics/math-defs.h>
 #include <util/platform.h>
 #include <util/util.hpp>
+#include <util/threading.h>
 #include <obs-module.h>
 #include <sys/stat.h>
 #include <combaseapi.h>
@@ -9,9 +10,14 @@
 #include <string>
 #include <memory>
 #include <locale>
+#include <atomic>
 
 //PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt.
 #include <pls/pls-obs-api.h>
+#include <pls/pls-base.h>
+
+//PRISM/chenguoxi/20260121/none/ui action log
+#include <pls/pls-source.h>
 
 using namespace std;
 using namespace Gdiplus;
@@ -210,20 +216,130 @@ enum class VAlign {
 	Bottom,
 };
 
+/* ------------------------------------------------------------------------- */
+
+static time_t get_modified_timestamp(const char *filename)
+{
+	struct stat stats;
+	if (os_stat(filename, &stats) != 0)
+		return -1;
+	return stats.st_mtime;
+}
+
+//PRISM/chenguoxi/20251218/PRISM_PC-4455/korean system newline measurement issue
+static bool IsKoreanSystem()
+{
+	LANGID langId = GetSystemDefaultLangID();
+	return PRIMARYLANGID(langId) == LANG_KOREAN;
+}
+
+static const char *GetMainString(const char *str, bool chatlog_mode, int chatlog_lines)
+{
+	if (!str)
+		return "";
+	if (!chatlog_mode || !chatlog_lines)
+		return str;
+
+	int lines = chatlog_lines;
+	size_t len = strlen(str);
+	if (!len)
+		return str;
+
+	const char *temp = str + len;
+
+	while (temp != str) {
+		temp--;
+
+		if (temp[0] == '\n' && temp[1] != 0) {
+			if (!--lines)
+				break;
+		}
+	}
+
+	return *temp == '\n' ? temp + 1 : temp;
+}
+
+static void TransformText(wstring &text, int text_transform)
+{
+	if (text.empty())
+		return;
+	const locale loc = locale(obs_get_locale());
+	const ctype<wchar_t> &f = use_facet<ctype<wchar_t>>(loc);
+	if (text_transform == S_TRANSFORM_UPPERCASE)
+		f.toupper(&text[0], &text[0] + text.size());
+	else if (text_transform == S_TRANSFORM_LOWERCASE)
+		f.tolower(&text[0], &text[0] + text.size());
+	else if (text_transform == S_TRANSFORM_STARTCASE) {
+		bool upper = true;
+		for (wstring::iterator it = text.begin(); it != text.end(); ++it) {
+			const wchar_t upper_char = f.toupper(*it);
+			const wchar_t lower_char = f.tolower(*it);
+			if (upper && lower_char != upper_char) {
+				upper = false;
+				*it = upper_char;
+			} else if (lower_char != upper_char) {
+				*it = lower_char;
+			} else {
+				upper = iswspace(*it);
+			}
+		}
+	}
+}
+
+/* ------------------------------------------------------------------------- */
+
+//PRISM/chenguoxi/20260327/none/async text rendering --begin
+
+struct RenderParams {
+	wstring text;
+	wstring face;
+	int face_size = 0;
+	bool bold = false;
+	bool italic = false;
+	bool underline = false;
+	bool strikeout = false;
+	uint32_t color = 0xFFFFFF;
+	uint32_t color2 = 0xFFFFFF;
+	float gradient_dir = 0;
+	uint32_t opacity = 100;
+	uint32_t opacity2 = 100;
+	uint32_t bk_color = 0;
+	uint32_t bk_opacity = 0;
+	Align align = Align::Left;
+	VAlign valign = VAlign::Top;
+	bool vertical = false;
+	bool antialiasing = true;
+	bool use_outline = false;
+	float outline_size = 0.0f;
+	uint32_t outline_color = 0;
+	uint32_t outline_opacity = 100;
+	bool use_extents = false;
+	bool old_extents = false;
+	bool wrap = false;
+	uint32_t extents_cx = 0;
+	uint32_t extents_cy = 0;
+	bool custom_font = false;
+	bool read_from_file = false;
+	string file;
+	int text_transform = S_TRANSFORM_NONE;
+	bool chatlog_mode = false;
+	int chatlog_lines = 6;
+};
+
+struct AsyncResult {
+	unique_ptr<uint8_t[]> bits;
+	uint32_t width = 0;
+	uint32_t height = 0;
+};
+
+/* ------------------------------------------------------------------------- */
+
 struct TextSource {
 	obs_source_t *source = nullptr;
 
 	gs_texture_t *tex = nullptr;
 	uint32_t cx = 0;
 	uint32_t cy = 0;
-
-	HDCObj hdc;
-	Graphics graphics;
-
-	HFONTObj hfont;
-	unique_ptr<Font> font;
-	//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
-	std::unique_ptr<FontFamily> fontFamily;
 
 	bool read_from_file = false;
 	string file;
@@ -269,26 +385,53 @@ struct TextSource {
 
 	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
 	bool custom_font = false;
-	Gdiplus::InstalledFontCollection installed_fonts;
+
+	pthread_t worker_thread;
+	pthread_mutex_t worker_mutex;
+	os_event_t *worker_event = nullptr;
+	std::atomic<bool> worker_running{false};
+	bool worker_started = false;
+
+	RenderParams pending_params;
+	bool render_requested = false;
+
+	AsyncResult async_result;
+	std::atomic<bool> result_ready{false};
 
 	/* --------------------------- */
 
-	inline TextSource(obs_source_t *source_, obs_data_t *settings, bool old_extents_)
-		: source(source_),
-		  hdc(CreateCompatibleDC(nullptr)),
-		  graphics(hdc),
-		  old_extents(old_extents_)
-	{
-		obs_source_update(source, settings);
-	}
+	TextSource(obs_source_t *source_, obs_data_t *settings, bool old_extents_);
+	~TextSource();
 
-	inline ~TextSource()
+	void ScheduleRender();
+	void ConsumeAsyncResult();
+	inline void Update(obs_data_t *settings);
+	inline void Tick(float seconds);
+	inline void Render();
+};
+
+/* ------------------------------------------------------------------------- */
+
+struct RenderContext : RenderParams {
+	obs_source_t *source;
+
+	HDCObj hdc;
+	Graphics graphics;
+
+	HFONTObj hfont;
+	unique_ptr<Font> font;
+	//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
+	unique_ptr<FontFamily> fontFamily;
+
+	//PRISM/Xiewei/20240607/#PRISM_PC-115/use Gdiplus::Fontcollection to load custom fonts
+	InstalledFontCollection installed_fonts;
+
+	RenderContext(obs_source_t *src, const RenderParams &params)
+		: RenderParams(params),
+		  source(src),
+		  hdc(CreateCompatibleDC(nullptr)),
+		  graphics(hdc)
 	{
-		if (tex) {
-			obs_enter_graphics();
-			gs_texture_destroy(tex);
-			obs_leave_graphics();
-		}
 	}
 
 	void UpdateFont();
@@ -296,16 +439,8 @@ struct TextSource {
 	void RemoveNewlinePadding(const StringFormat &format, RectF &box);
 	void CalculateTextSizes(const StringFormat &format, RectF &bounding_box, SIZE &text_size);
 	void RenderOutlineText(Graphics &graphics, const GraphicsPath &path, const Brush &brush);
-	void RenderText();
-	void LoadFileText();
-	void TransformText();
+	void DoRender(unique_ptr<uint8_t[]> &out_bits, uint32_t &out_cx, uint32_t &out_cy);
 	void SetAntiAliasing(Graphics &graphics_bitmap);
-
-	const char *GetMainString(const char *str);
-
-	inline void Update(obs_data_t *settings);
-	inline void Tick(float seconds);
-	inline void Render();
 
 	//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt.
 	bool FindFontInPrivateCollection(LOGFONT lf);
@@ -314,15 +449,11 @@ struct TextSource {
 	bool UpdateFontStyle(LOGFONT lf, const FontCollection *fontCollection);
 };
 
-static time_t get_modified_timestamp(const char *filename)
-{
-	struct stat stats;
-	if (os_stat(filename, &stats) != 0)
-		return -1;
-	return stats.st_mtime;
-}
+//PRISM/chenguoxi/20260327/none/async text rendering --end
 
-void TextSource::UpdateFont()
+/* ------------------------------------------------------------------------- */
+
+void RenderContext::UpdateFont()
 {
 	hfont = nullptr;
 	font.reset(nullptr);
@@ -353,14 +484,14 @@ void TextSource::UpdateFont()
 		}
 
 		if (result) {
-			blog(LOG_INFO, "%p-%p: '%s' Load custom font: '%s'.", (void *)source, (void *)this,
+			blog(LOG_INFO, "%p: '%s' Load custom font: '%s'.", (void *)source,
 			     obs_source_get_name(source), faceName);
 			return;
 		}
 
 		if (!pls_design_mode()) {
 
-			blog(LOG_INFO, "%p-%p: '%s' Failed to load custom font: '%s'.", (void *)source, (void *)this,
+			blog(LOG_INFO, "%p: '%s' Failed to load custom font: '%s'.", (void *)source,
 			     obs_source_get_name(source), faceName);
 		} else {
 			wchar_t tip[256];
@@ -407,7 +538,7 @@ void TextSource::UpdateFont()
 	}
 }
 
-void TextSource::GetStringFormat(StringFormat &format)
+void RenderContext::GetStringFormat(StringFormat &format)
 {
 	UINT flags = StringFormatFlagsNoFitBlackBox;
 
@@ -465,17 +596,67 @@ void TextSource::GetStringFormat(StringFormat &format)
  * calculating the texture size, so we have to calculate the size of '\n' to
  * remove the padding.  Because we always add a newline to the string, we
  * also remove the extra unused newline. */
-void TextSource::RemoveNewlinePadding(const StringFormat &format, RectF &box)
+void RenderContext::RemoveNewlinePadding(const StringFormat &format, RectF &box)
 {
 	RectF before;
 	RectF after;
 	Status stat;
 
-	stat = graphics.MeasureString(L"W", 2, font.get(), PointF(0.0f, 0.0f), &format, &before);
-	warn_stat("MeasureString (without newline)");
+	//PRISM/chenguoxi/20251218/PRISM_PC-4455/korean system newline measurement issue -- begin
+	if (!IsKoreanSystem()) {
 
-	stat = graphics.MeasureString(L"W\n", 3, font.get(), PointF(0.0f, 0.0f), &format, &after);
-	warn_stat("MeasureString (with newline)");
+		stat = graphics.MeasureString(L"W", 2, font.get(), PointF(0.0f, 0.0f), &format, &before);
+		warn_stat("MeasureString (without newline)");
+
+		stat = graphics.MeasureString(L"W\n", 3, font.get(), PointF(0.0f, 0.0f), &format, &after);
+		warn_stat("MeasureString (with newline)");
+	} else {
+
+		{
+			StringFormat formatCopy;
+			formatCopy.SetFormatFlags(format.GetFormatFlags());
+			formatCopy.SetAlignment(format.GetAlignment());
+			formatCopy.SetLineAlignment(format.GetLineAlignment());
+			formatCopy.SetTrimming(format.GetTrimming());
+
+			CharacterRange range(0, 1);
+			formatCopy.SetMeasurableCharacterRanges(1, &range);
+
+			RectF layoutRect(0.0f, 0.0f, 10000.0f, 10000.0f);
+			Region region;
+			INT count = 1;
+			stat = graphics.MeasureCharacterRanges(L"W", 1, font.get(), layoutRect, &formatCopy, count,
+							       &region);
+			warn_stat("MeasureCharacterRanges (one line)");
+
+			if (stat == Ok) {
+				region.GetBounds(&before, &graphics);
+			}
+		}
+
+		{
+			StringFormat formatCopy;
+			formatCopy.SetFormatFlags(format.GetFormatFlags());
+			formatCopy.SetAlignment(format.GetAlignment());
+			formatCopy.SetLineAlignment(format.GetLineAlignment());
+			formatCopy.SetTrimming(format.GetTrimming());
+
+			CharacterRange range(0, 3);
+			formatCopy.SetMeasurableCharacterRanges(1, &range);
+
+			RectF layoutRect(0.0f, 0.0f, 10000.0f, 10000.0f);
+			Region region;
+			INT count = 1;
+			stat = graphics.MeasureCharacterRanges(L"W\nW", 3, font.get(), layoutRect, &formatCopy, count,
+							       &region);
+			warn_stat("MeasureCharacterRanges (two lines)");
+
+			if (stat == Ok) {
+				region.GetBounds(&after, &graphics);
+			}
+		}
+	}
+	//PRISM/chenguoxi/20251218/PRISM_PC-4455/korean system newline measurement issue -- end
 
 	float offset_cx = after.Width - before.Width;
 	float offset_cy = after.Height - before.Height;
@@ -502,7 +683,7 @@ void TextSource::RemoveNewlinePadding(const StringFormat &format, RectF &box)
 	box.Height -= offset_cy;
 }
 
-void TextSource::CalculateTextSizes(const StringFormat &format, RectF &bounding_box, SIZE &text_size)
+void RenderContext::CalculateTextSizes(const StringFormat &format, RectF &bounding_box, SIZE &text_size)
 {
 	RectF layout_box;
 	RectF temp_box;
@@ -605,7 +786,7 @@ void TextSource::CalculateTextSizes(const StringFormat &format, RectF &bounding_
 	bounding_box.Height = temp_box.Height;
 }
 
-void TextSource::RenderOutlineText(Graphics &graphics, const GraphicsPath &path, const Brush &brush)
+void RenderContext::RenderOutlineText(Graphics &graphics, const GraphicsPath &path, const Brush &brush)
 {
 	DWORD outline_rgba = calc_color(outline_color, outline_opacity);
 	Status stat;
@@ -621,23 +802,62 @@ void TextSource::RenderOutlineText(Graphics &graphics, const GraphicsPath &path,
 	warn_stat("graphics.FillPath");
 }
 
-void TextSource::RenderText()
+void RenderContext::SetAntiAliasing(Graphics &graphics_bitmap)
 {
+	if (!antialiasing) {
+		graphics_bitmap.SetTextRenderingHint(TextRenderingHintSingleBitPerPixel);
+		graphics_bitmap.SetSmoothingMode(SmoothingModeNone);
+		return;
+	}
+
+	graphics_bitmap.SetTextRenderingHint(TextRenderingHintAntiAlias);
+	graphics_bitmap.SetSmoothingMode(SmoothingModeAntiAlias);
+}
+
+void RenderContext::DoRender(unique_ptr<uint8_t[]> &out_bits, uint32_t &out_cx, uint32_t &out_cy)
+{
+	out_bits = nullptr;
+	out_cx = 0;
+	out_cy = 0;
+
+	if (!font)
+		return;
+
+	if (text.empty() && !use_extents)
+		return;
+
 	StringFormat format(StringFormat::GenericTypographic());
 	Status stat;
 
 	RectF box;
-	SIZE size;
+	SIZE size = {};
 
 	GetStringFormat(format);
 	CalculateTextSizes(format, box, size);
 
+	if (size.cx <= 0 || size.cy <= 0)
+		return;
+
 	unique_ptr<uint8_t[]> bits(new uint8_t[size.cx * size.cy * 4]);
 	Bitmap bitmap(size.cx, size.cy, 4 * size.cx, PixelFormat32bppARGB, bits.get());
+	stat = bitmap.GetLastStatus();
+	warn_stat("Bitmap");
+	if (stat != Ok)
+		return;
 
 	Graphics graphics_bitmap(&bitmap);
+	stat = graphics_bitmap.GetLastStatus();
+	warn_stat("Graphics(bitmap)");
+	if (stat != Ok)
+		return;
+
 	LinearGradientBrush brush(RectF(0, 0, (float)size.cx, (float)size.cy), Color(calc_color(color, opacity)),
 				  Color(calc_color(color2, opacity2)), gradient_dir, 1);
+	stat = brush.GetLastStatus();
+	warn_stat("LinearGradientBrush");
+	if (stat != Ok)
+		return;
+
 	DWORD full_bk_color = bk_color & 0xFFFFFF;
 
 	if (!text.empty() || use_extents)
@@ -663,13 +883,11 @@ void TextSource::RenderText()
 			box.Offset(outline_size / 2, outline_size / 2);
 
 			//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
-			//FontFamily family;
 			GraphicsPath path;
 
 			//PRISM/Xiewei/20240116/#4023/crashed at destructor of FontFamily
-			//font->GetFamily(&family);
 			if (!fontFamily) {
-				blog(LOG_INFO, "Failed to use_outline: Invalid fontFamily!");
+				blog(LOG_WARNING, "Failed to use_outline: Invalid fontFamily!");
 				return;
 			}
 			stat = path.AddString(text.c_str(), (int)text.size(), fontFamily.get(), font->GetStyle(),
@@ -684,96 +902,266 @@ void TextSource::RenderText()
 		}
 	}
 
-	if (!tex || (LONG)cx != size.cx || (LONG)cy != size.cy) {
-		obs_enter_graphics();
-		if (tex)
-			gs_texture_destroy(tex);
-
-		const uint8_t *data = (uint8_t *)bits.get();
-		tex = gs_texture_create(size.cx, size.cy, GS_BGRA, 1, &data, GS_DYNAMIC);
-
-		obs_leave_graphics();
-
-		cx = (uint32_t)size.cx;
-		cy = (uint32_t)size.cy;
-
-	} else if (tex) {
-		obs_enter_graphics();
-		gs_texture_set_image(tex, bits.get(), size.cx * 4, false);
-		obs_leave_graphics();
-	}
+	out_bits = std::move(bits);
+	out_cx = (uint32_t)size.cx;
+	out_cy = (uint32_t)size.cy;
 }
 
-const char *TextSource::GetMainString(const char *str)
+//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. start
+bool RenderContext::FindFontInPrivateCollection(LOGFONT lf)
 {
-	if (!str)
-		return "";
-	if (!chatlog_mode || !chatlog_lines)
-		return str;
+	auto privateFontCollection = static_cast<PrivateFontCollection *>(pls_get_private_font_collection());
+	if (!privateFontCollection)
+		return false;
 
-	int lines = chatlog_lines;
-	size_t len = strlen(str);
-	if (!len)
-		return str;
+	return UpdateFontStyle(lf, privateFontCollection);
+}
 
-	const char *temp = str + len;
+bool RenderContext::FindFontInInstalledCollection(LOGFONT lf)
+{
+	return UpdateFontStyle(lf, &installed_fonts);
+}
 
-	while (temp != str) {
-		temp--;
+bool RenderContext::UpdateFontStyle(LOGFONT lf, const FontCollection *fontCollection)
+{
+	if (!fontCollection)
+		return false;
 
-		if (temp[0] == '\n' && temp[1] != 0) {
-			if (!--lines)
-				break;
+	fontFamily.reset(new FontFamily(lf.lfFaceName, fontCollection));
+	if (auto status = fontFamily->GetLastStatus(); status != Gdiplus::Ok)
+		return false;
+
+	int fontstyle = Gdiplus::FontStyleRegular;
+	if (bold && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold))
+		fontstyle = Gdiplus::FontStyleBold;
+	if (lf.lfItalic && fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
+		fontstyle = Gdiplus::FontStyleItalic;
+	if (bold && lf.lfItalic && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold) &&
+	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
+		fontstyle = Gdiplus::FontStyleBoldItalic;
+	if (lf.lfUnderline && fontFamily->IsStyleAvailable(Gdiplus::FontStyleUnderline))
+		fontstyle |= Gdiplus::FontStyleUnderline;
+	if (lf.lfStrikeOut && fontFamily->IsStyleAvailable(Gdiplus::FontStyleStrikeout))
+		fontstyle |= Gdiplus::FontStyleStrikeout;
+	font.reset(new Font(fontFamily.get(), static_cast<REAL>(lf.lfHeight), fontstyle, Gdiplus::UnitPixel));
+	if (font->GetLastStatus() != Gdiplus::Ok)
+		return false;
+	return true;
+}
+//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. end
+
+/* ------------------------------------------------------------------------- */
+
+//PRISM/chenguoxi/20260327/none/async text rendering worker thread --begin
+static void *text_worker_thread(void *arg)
+{
+	TextSource *ts = static_cast<TextSource *>(arg);
+
+	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	os_set_thread_name("obs-text: render thread");
+
+	bool skip_wait = false;
+
+	while (ts->worker_running.load(std::memory_order_relaxed)) {
+		if (!skip_wait)
+			os_event_wait(ts->worker_event);
+		skip_wait = false;
+
+		if (!ts->worker_running.load(std::memory_order_relaxed))
+			break;
+
+		RenderParams params;
+		pthread_mutex_lock(&ts->worker_mutex);
+		if (!ts->render_requested) {
+			pthread_mutex_unlock(&ts->worker_mutex);
+			continue;
 		}
-	}
+		params = ts->pending_params;
+		ts->render_requested = false;
+		pthread_mutex_unlock(&ts->worker_mutex);
 
-	return *temp == '\n' ? temp + 1 : temp;
-}
-
-void TextSource::LoadFileText()
-{
-	BPtr<char> file_text = os_quick_read_utf8_file(file.c_str());
-	text = to_wide(GetMainString(file_text));
-
-	if (!text.empty() && text.back() != '\n')
-		text.push_back('\n');
-}
-
-void TextSource::TransformText()
-{
-	const locale loc = locale(obs_get_locale());
-	const ctype<wchar_t> &f = use_facet<ctype<wchar_t>>(loc);
-	if (text_transform == S_TRANSFORM_UPPERCASE)
-		f.toupper(&text[0], &text[0] + text.size());
-	else if (text_transform == S_TRANSFORM_LOWERCASE)
-		f.tolower(&text[0], &text[0] + text.size());
-	else if (text_transform == S_TRANSFORM_STARTCASE) {
-		bool upper = true;
-		for (wstring::iterator it = text.begin(); it != text.end(); ++it) {
-			const wchar_t upper_char = f.toupper(*it);
-			const wchar_t lower_char = f.tolower(*it);
-			if (upper && lower_char != upper_char) {
-				upper = false;
-				*it = upper_char;
-			} else if (lower_char != upper_char) {
-				*it = lower_char;
-			} else {
-				upper = iswspace(*it);
+		try {
+			if (params.read_from_file) {
+				BPtr<char> file_text = os_quick_read_utf8_file(params.file.c_str());
+				params.text = to_wide(
+					GetMainString(file_text, params.chatlog_mode, params.chatlog_lines));
+				if (!params.text.empty() && params.text.back() != '\n')
+					params.text.push_back('\n');
 			}
+			TransformText(params.text, params.text_transform);
+
+			RenderContext ctx(ts->source, params);
+			ctx.UpdateFont();
+
+			unique_ptr<uint8_t[]> bits;
+			uint32_t w = 0, h = 0;
+			ctx.DoRender(bits, w, h);
+
+			pthread_mutex_lock(&ts->worker_mutex);
+			ts->async_result.bits = std::move(bits);
+			ts->async_result.width = w;
+			ts->async_result.height = h;
+			ts->result_ready.store(true, std::memory_order_release);
+			skip_wait = ts->render_requested;
+			pthread_mutex_unlock(&ts->worker_mutex);
+		} catch (const std::exception &e) {
+			blog(LOG_ERROR, "[%s] obs-text render thread exception: %s",
+			     obs_source_get_name(ts->source), e.what());
+		} catch (...) {
+			blog(LOG_ERROR, "[%s] obs-text render thread unknown exception",
+			     obs_source_get_name(ts->source));
 		}
+	}
+
+	CoUninitialize();
+	return nullptr;
+}
+//PRISM/chenguoxi/20260327/none/async text rendering worker thread --end
+
+/* ------------------------------------------------------------------------- */
+
+TextSource::TextSource(obs_source_t *source_, obs_data_t *settings, bool old_extents_)
+	: source(source_), old_extents(old_extents_)
+{
+	if (pthread_mutex_init(&worker_mutex, nullptr) != 0) {
+		blog(LOG_ERROR, "[obs-text] pthread_mutex_init failed");
+		goto finish;
+	}
+
+	if (os_event_init(&worker_event, OS_EVENT_TYPE_AUTO) != 0) {
+		blog(LOG_ERROR, "[obs-text] os_event_init failed");
+		pthread_mutex_destroy(&worker_mutex);
+		goto finish;
+	}
+
+	worker_running.store(true, std::memory_order_relaxed);
+
+	if (pthread_create(&worker_thread, nullptr, text_worker_thread, this) != 0) {
+		blog(LOG_ERROR, "[obs-text] pthread_create failed");
+		worker_running.store(false, std::memory_order_relaxed);
+		os_event_destroy(worker_event);
+		worker_event = nullptr;
+		pthread_mutex_destroy(&worker_mutex);
+		goto finish;
+	}
+
+	worker_started = true;
+
+finish:
+	obs_source_update(source, settings);
+}
+
+TextSource::~TextSource()
+{
+	if (worker_started) {
+		worker_running.store(false, std::memory_order_relaxed);
+		os_event_signal(worker_event);
+		pthread_join(worker_thread, nullptr);
+
+		os_event_destroy(worker_event);
+		pthread_mutex_destroy(&worker_mutex);
+	}
+
+	if (tex) {
+		obs_enter_graphics();
+		gs_texture_destroy(tex);
+		obs_leave_graphics();
 	}
 }
 
-void TextSource::SetAntiAliasing(Graphics &graphics_bitmap)
+void TextSource::ScheduleRender()
 {
-	if (!antialiasing) {
-		graphics_bitmap.SetTextRenderingHint(TextRenderingHintSingleBitPerPixel);
-		graphics_bitmap.SetSmoothingMode(SmoothingModeNone);
+	if (!worker_started)
+		return;
+
+	RenderParams params;
+	params.text = text;
+	params.face = face;
+	params.face_size = face_size;
+	params.bold = bold;
+	params.italic = italic;
+	params.underline = underline;
+	params.strikeout = strikeout;
+	params.color = color;
+	params.color2 = color2;
+	params.gradient_dir = gradient_dir;
+	params.opacity = opacity;
+	params.opacity2 = opacity2;
+	params.bk_color = bk_color;
+	params.bk_opacity = bk_opacity;
+	params.align = align;
+	params.valign = valign;
+	params.vertical = vertical;
+	params.antialiasing = antialiasing;
+	params.use_outline = use_outline;
+	params.outline_size = outline_size;
+	params.outline_color = outline_color;
+	params.outline_opacity = outline_opacity;
+	params.use_extents = use_extents;
+	params.old_extents = old_extents;
+	params.wrap = wrap;
+	params.extents_cx = extents_cx;
+	params.extents_cy = extents_cy;
+	params.custom_font = custom_font;
+	params.read_from_file = read_from_file;
+	params.file = file;
+	params.text_transform = text_transform;
+	params.chatlog_mode = chatlog_mode;
+	params.chatlog_lines = chatlog_lines;
+
+	pthread_mutex_lock(&worker_mutex);
+	pending_params = std::move(params);
+	render_requested = true;
+	pthread_mutex_unlock(&worker_mutex);
+	os_event_signal(worker_event);
+}
+
+void TextSource::ConsumeAsyncResult()
+{
+	if (!result_ready.load(std::memory_order_acquire))
+		return;
+
+	unique_ptr<uint8_t[]> bits;
+	uint32_t new_cx = 0, new_cy = 0;
+
+	pthread_mutex_lock(&worker_mutex);
+	bits = std::move(async_result.bits);
+	new_cx = async_result.width;
+	new_cy = async_result.height;
+	result_ready.store(false, std::memory_order_relaxed);
+	pthread_mutex_unlock(&worker_mutex);
+
+	if (!bits || new_cx == 0 || new_cy == 0) {
+		obs_enter_graphics();
+		if (tex) {
+			gs_texture_destroy(tex);
+			tex = nullptr;
+		}
+		cx = 0;
+		cy = 0;
+		obs_leave_graphics();
 		return;
 	}
 
-	graphics_bitmap.SetTextRenderingHint(TextRenderingHintAntiAlias);
-	graphics_bitmap.SetSmoothingMode(SmoothingModeAntiAlias);
+	obs_enter_graphics();
+	if (!tex || cx != new_cx || cy != new_cy) {
+		const uint8_t *data = bits.get();
+		gs_texture_t *new_tex =
+			gs_texture_create(new_cx, new_cy, GS_BGRA, 1, &data, GS_DYNAMIC);
+		if (new_tex) {
+			if (tex)
+				gs_texture_destroy(tex);
+			tex = new_tex;
+			cx = new_cx;
+			cy = new_cy;
+		} else {
+			blog(LOG_ERROR, "[%s] obs-text: failed to create texture (%ux%u)",
+			     obs_source_get_name(source), new_cx, new_cy);
+		}
+	} else if (tex) {
+		gs_texture_set_image(tex, bits.get(), new_cx * 4, false);
+	}
+	obs_leave_graphics();
 }
 
 #define obs_data_get_uint32 (uint32_t) obs_data_get_int
@@ -827,20 +1215,12 @@ inline void TextSource::Update(obs_data_t *s)
 
 	/* ----------------------------- */
 
-	wstring new_face = to_wide(font_face);
-
-	if (new_face != face || face_size != font_size || new_bold != bold || new_italic != italic ||
-	    new_underline != underline || new_strikeout != strikeout) {
-
-		face = new_face;
-		face_size = font_size;
-		bold = new_bold;
-		italic = new_italic;
-		underline = new_underline;
-		strikeout = new_strikeout;
-
-		UpdateFont();
-	}
+	face = to_wide(font_face);
+	face_size = font_size;
+	bold = new_bold;
+	italic = new_italic;
+	underline = new_underline;
+	strikeout = new_strikeout;
 
 	/* ----------------------------- */
 
@@ -875,13 +1255,12 @@ inline void TextSource::Update(obs_data_t *s)
 	chatlog_mode = new_chat_mode;
 	chatlog_lines = new_chat_lines;
 
+	
 	if (read_from_file) {
 		file = new_file;
 		file_timestamp = get_modified_timestamp(new_file);
-		LoadFileText();
-
 	} else {
-		text = to_wide(GetMainString(new_text));
+		text = to_wide(GetMainString(new_text, chatlog_mode, chatlog_lines));
 
 		/* all text should end with newlines due to the fact that GDI+
 		 * treats strings without newlines differently in terms of
@@ -889,7 +1268,6 @@ inline void TextSource::Update(obs_data_t *s)
 		if (!text.empty())
 			text.push_back('\n');
 	}
-	TransformText();
 
 	use_outline = new_outline;
 	outline_color = new_o_color;
@@ -910,7 +1288,9 @@ inline void TextSource::Update(obs_data_t *s)
 	else
 		valign = VAlign::Top;
 
-	RenderText();
+	//PRISM/chenguoxi/20260327/none/async text rendering: schedule render instead of synchronous RenderText()
+	ScheduleRender();
+
 	update_time_elapsed = 0.0f;
 
 	//PRISM/Xiewei/20240325/#4640/add log
@@ -932,6 +1312,9 @@ inline void TextSource::Update(obs_data_t *s)
 
 inline void TextSource::Tick(float seconds)
 {
+	//PRISM/chenguoxi/20260327/none/async text rendering: consume async result on tick
+	ConsumeAsyncResult();
+
 	if (!read_from_file)
 		return;
 
@@ -942,9 +1325,8 @@ inline void TextSource::Tick(float seconds)
 		update_time_elapsed = 0.0f;
 
 		if (update_file) {
-			LoadFileText();
-			TransformText();
-			RenderText();
+			//PRISM/chenguoxi/20260327/none/async text rendering: schedule render instead of synchronous LoadFileText+RenderText
+			ScheduleRender();
 			update_file = false;
 		}
 
@@ -957,6 +1339,9 @@ inline void TextSource::Tick(float seconds)
 
 inline void TextSource::Render()
 {
+	//PRISM/chenguoxi/20260327/none/async text rendering: consume async result on render for earliest texture availability
+	ConsumeAsyncResult();
+
 	if (!tex)
 		return;
 
@@ -976,50 +1361,10 @@ inline void TextSource::Render()
 	gs_technique_end(tech);
 
 	gs_enable_framebuffer_srgb(previous);
+
+	//PRISM/chenguoxi/20260121/none/ui action log
+	pls_on_source_property_render(source, 0);
 }
-
-//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. start
-bool TextSource::FindFontInPrivateCollection(LOGFONT lf)
-{
-	auto privateFontCollection = static_cast<PrivateFontCollection *>(pls_get_private_font_collection());
-	if (!privateFontCollection)
-		return false;
-
-	return UpdateFontStyle(lf, privateFontCollection);
-}
-
-bool TextSource::FindFontInInstalledCollection(LOGFONT lf)
-{
-	return UpdateFontStyle(lf, &installed_fonts);
-}
-
-bool TextSource::UpdateFontStyle(LOGFONT lf, const FontCollection *fontCollection)
-{
-	if (!fontCollection)
-		return false;
-
-	fontFamily.reset(new FontFamily(lf.lfFaceName, fontCollection));
-	if (auto status = fontFamily->GetLastStatus(); status != Gdiplus::Ok)
-		return false;
-
-	int fontstyle = Gdiplus::FontStyleRegular;
-	if (bold && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold))
-		fontstyle = Gdiplus::FontStyleBold;
-	if (lf.lfItalic && fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
-		fontstyle = Gdiplus::FontStyleItalic;
-	if (bold && lf.lfItalic && fontFamily->IsStyleAvailable(Gdiplus::FontStyleBold) &&
-	    fontFamily->IsStyleAvailable(Gdiplus::FontStyleItalic))
-		fontstyle = Gdiplus::FontStyleBoldItalic;
-	if (lf.lfUnderline && fontFamily->IsStyleAvailable(Gdiplus::FontStyleUnderline))
-		fontstyle |= Gdiplus::FontStyleUnderline;
-	if (lf.lfStrikeOut && fontFamily->IsStyleAvailable(Gdiplus::FontStyleStrikeout))
-		fontstyle |= Gdiplus::FontStyleStrikeout;
-	font.reset(new Font(fontFamily.get(), static_cast<REAL>(lf.lfHeight), fontstyle, Gdiplus::UnitPixel));
-	if (font->GetLastStatus() != Gdiplus::Ok)
-		return false;
-	return true;
-}
-//PRISM/Xiewei/20231206/#3403/fix a issue where unable to load application fonts added by Qt. end
 
 /* ------------------------------------------------------------------------- */
 

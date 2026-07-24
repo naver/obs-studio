@@ -9,9 +9,16 @@
 #ifdef OBS_LEGACY
 #include "../../libobs/util/platform.h"
 #include "../../libobs-winrt/winrt-capture.h"
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+#include "../../libobs/pls/pls-obs-api.h"
+#include "../../libobs/pls/pls-properties.h"
 #else
 #include <util/platform.h>
 #include <winrt-capture.h>
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+#include <pls/pls-obs-api.h>
+#include "pls/pls-properties.h"
+#include "pls/pls-source.h"
 #endif
 
 /* clang-format off */
@@ -104,6 +111,10 @@ struct window_capture {
 	float check_window_timer;
 	float cursor_check_time;
 
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	int last_failed_code; // Last reported failure code
+	int current_failed_code;            // Current failure code     
+
 	HWND window;
 	RECT last_rect;
 
@@ -136,6 +147,10 @@ static const char *wgc_whole_match_classes[] = {
 	"SDL_app",
 	NULL,
 };
+
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+#define GUIDANCE_URL "https://guide.prismlive.com/desktop/guides/error-solution/source/how-to-fix-window-display-capture-failure"
+#define SETTINGS_GUIDANCE "guidance"
 
 static enum window_capture_method choose_method(enum window_capture_method method, bool wgc_supported,
 						const char *current_class)
@@ -320,6 +335,12 @@ static void *wc_create(obs_data_t *settings, obs_source_t *source)
 
 	pthread_mutex_init(&wc->update_mutex, NULL);
 
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	wc->last_failed_code = OBS_SOURCE_STATUS_SUCCESS;
+
+	//PRISM/chenguoxi/20260105/PRISM_PC-4944/create windows handler at beginning
+	wc->check_window_timer = WC_CHECK_TIMER;
+
 	if (graphics_uses_d3d11) {
 		static const char *const module = "libobs-winrt";
 		wc->winrt_module = os_dlopen(module);
@@ -397,6 +418,30 @@ static void wc_destroy(void *data)
 	obs_queue_task(OBS_TASK_GRAPHICS, wc_actual_destroy, wc, false);
 }
 
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+// Send failure status notification to UI
+static void wc_send_failed_status(struct window_capture *wc, int code)
+{
+	const char *error_desc = "Unknown error";
+	switch (code) {
+	case OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_WINDOW_INVALID:
+		error_desc = "Window invalid";
+		break;
+	case OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_WINDOW_INVISIBE:
+		error_desc = "Window invisible";
+		break;
+	case OBS_SOURCE_STATUS_SUCCESS:
+		error_desc = "Capture recovered";
+		break;
+	}
+
+	blog(LOG_WARNING, "[window-capture: '%s'] Capture status changed: %s (code=%d)",
+	     obs_source_get_name(wc->source), error_desc, code);
+
+	pls_source_send_notify(wc->source, OBS_SOURCE_FAILED_STATUS, code);
+}
+
+
 static void force_reset(struct window_capture *wc)
 {
 	wc->window = NULL;
@@ -405,6 +450,11 @@ static void force_reset(struct window_capture *wc)
 	wc->cursor_check_time = CURSOR_CHECK_TIME;
 
 	wc->previously_failed = false;
+
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	// Reset failure detection state	
+	wc_send_failed_status(wc, OBS_SOURCE_STATUS_SUCCESS);
+	wc->last_failed_code = OBS_SOURCE_STATUS_SUCCESS;
 }
 
 static void wc_update(void *data, obs_data_t *settings)
@@ -538,6 +588,9 @@ static obs_properties_t *wc_properties(void *data)
 
 	obs_property_t *p;
 
+	//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+	p = pls_properties_add_capture_guide(ppts, SETTINGS_GUIDANCE, "", GUIDANCE_URL);
+
 	p = obs_properties_add_list(ppts, "window", TEXT_WINDOW, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
 	/* Add "[Select a window]" on first use to prevent the properties list
@@ -632,9 +685,14 @@ static void wc_tick(void *data, float seconds)
 
 		wc->check_window_timer += seconds;
 
+		//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+		// Report window invalid error (whether previously invisible or not)
+		wc->current_failed_code = OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_WINDOW_INVALID;
+
 		if (wc->check_window_timer < WC_CHECK_TIMER) {
 			if (wc->capture.valid)
 				dc_capture_free(&wc->capture);
+
 			return;
 		}
 
@@ -645,15 +703,25 @@ static void wc_tick(void *data, float seconds)
 
 		wc->check_window_timer = 0.0f;
 
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(wc->source, obs_source_get_id(wc->source), "wc_find_window");
+
 		wc->window = (wc->method == METHOD_WGC) ? ms_find_window_top_level(INCLUDE_MINIMIZED, wc->priority,
 										   wc->class, wc->title, wc->executable)
 							: ms_find_window(INCLUDE_MINIMIZED, wc->priority, wc->class,
 									 wc->title, wc->executable);
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(wc->source, obs_source_get_id(wc->source), "wc_find_window", time_ns_3ms);
+
 		if (!wc->window) {
 			if (wc->capture.valid)
 				dc_capture_free(&wc->capture);
 			return;
 		}
+
+		//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+		wc->current_failed_code = OBS_SOURCE_STATUS_SUCCESS;
 
 		wc->previously_failed = false;
 		reset_capture = true;
@@ -665,6 +733,11 @@ static void wc_tick(void *data, float seconds)
 			blog(LOG_INFO, "[window-capture: '%s'] [obs_source:%p plugin_obj:%p] '%s' is invisible now.",
 			     obs_source_get_name(wc->source), wc->source, wc, wc->executable);
 		}
+
+		//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+		// Report window invisible error
+		wc->current_failed_code = OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_WINDOW_INVISIBE;
+
 		return; /* If HWND is invisible, WGC module can't be initialized successfully */
 	}
 
@@ -707,6 +780,9 @@ static void wc_tick(void *data, float seconds)
 	obs_enter_graphics();
 
 	if (wc->method == METHOD_BITBLT) {
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_begin_taken_time(wc->source, obs_source_get_id(wc->source), "bitblt_capture");
+
 		DPI_AWARENESS_CONTEXT previous = NULL;
 		if (wc->get_window_dpi_awareness_context != NULL) {
 			const DPI_AWARENESS_CONTEXT context = wc->get_window_dpi_awareness_context(wc->window);
@@ -763,14 +839,25 @@ static void wc_tick(void *data, float seconds)
 
 		if (previous)
 			wc->set_thread_dpi_awareness_context(previous);
+
+		//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+		pls_end_taken_time(wc->source, obs_source_get_id(wc->source), "bitblt_capture", time_ns_3ms);
+
 	} else if (wc->method == METHOD_WGC) {
 		if (wc->window && (wc->capture_winrt == NULL)) {
 			if (!wc->previously_failed) {
+				//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+				pls_begin_taken_time(wc->source, obs_source_get_id(wc->source), "wgc_init");
+
 				wc->capture_winrt = wc->exports.winrt_capture_init_window(
 					wc->cursor, wc->window, wc->client_area, wc->force_sdr);
 
 				if (!wc->capture_winrt) {
 					wc->previously_failed = true;
+					//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+					wc->current_failed_code =
+						OBS_SOURCE_WINDOW_CAPTURE_FAILED_SUB_CODE_UNKNOWN;
+
 				} else if (!wc->hooked) {
 					wc->hooked = true;
 
@@ -795,6 +882,9 @@ static void wc_tick(void *data, float seconds)
 					dstr_free(&executable);
 					calldata_free(&data);
 				}
+
+				//PRISM/wangshaohui/20251022/PRISM_PC-4238/upload taken time
+				pls_end_taken_time(wc->source, obs_source_get_id(wc->source), "wgc_init", time_ns_3ms);
 			}
 		}
 	}
@@ -802,11 +892,32 @@ static void wc_tick(void *data, float seconds)
 	obs_leave_graphics();
 }
 
+//PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
+static void wc_tick2(void *data, float seconds)
+{
+	struct window_capture *wc = data;
+
+	if (!obs_source_showing(wc->source)) {
+		wc->current_failed_code = wc->last_failed_code;
+	} else {
+		wc->current_failed_code = OBS_SOURCE_STATUS_SUCCESS;
+	}
+
+	wc_tick(data, seconds);
+
+	if (wc->current_failed_code != wc->last_failed_code) {
+		wc_send_failed_status(wc, wc->current_failed_code);
+		wc->last_failed_code = wc->current_failed_code;
+	}
+}
+
 static void wc_render(void *data, gs_effect_t *effect)
 {
 	struct window_capture *wc = data;
 
-	if (!window_normal(wc))
+	//PRISM/chenguoxi/20251225/PRISM_PC-4531/same windows check logic with tick
+	//if (!window_normal(wc))
+	if (!window_normal(wc) || !IsWindowVisible(wc->window))
 		return;
 
 	if (wc->method == METHOD_WGC) {
@@ -820,6 +931,9 @@ static void wc_render(void *data, gs_effect_t *effect)
 		}
 	} else {
 		dc_capture_render(&wc->capture, obs_source_get_texcoords_centered(wc->source));
+
+		//PRISM/wangshaohui/20260112/PRISM_PC-5037/action log
+		pls_on_source_property_render(wc->source, PROPERTY_RENDER_TIMEOUT);
 	}
 
 	UNUSED_PARAMETER(effect);
@@ -863,7 +977,7 @@ struct obs_source_info window_capture_info = {
 	.update = wc_update,
 	.video_render = wc_render,
 	.hide = wc_hide,
-	.video_tick = wc_tick,
+	.video_tick = wc_tick2, //PRISM/chenguoxi/20251103/PRISM_PC-3578/window and monitor capture failed guidance
 	.get_width = wc_width,
 	.get_height = wc_height,
 	.get_defaults = wc_defaults,
